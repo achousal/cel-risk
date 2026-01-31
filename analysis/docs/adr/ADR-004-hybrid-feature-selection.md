@@ -1,81 +1,50 @@
 # ADR-004: Hybrid Feature Selection
 
-**Status:** Accepted
-**Date:** 2026-01-20
-
-## Context
-
-With 2,920 proteins, feature selection is essential to:
-1. Reduce overfitting
-2. Improve computational efficiency
-3. Identify stable biomarker panels
-
-Multiple feature selection methods exist:
-- **Screening:** Univariate filters (fast, no interactions)
-- **KBest:** sklearn SelectKBest (fast, tunable k)
-- **Stability Selection:** Track features selected across CV folds
-
-Each method has strengths; combining them may yield better panels.
+**Status:** Accepted | **Date:** 2026-01-20
 
 ## Decision
 
-Use **hybrid feature selection**: Screening → KBest → Stability.
+**Hybrid pipeline: Screening → KBest (tuned) → Stability**
 
-**Pipeline:**
-1. **Screening** (Mann-Whitney U or F-statistic) → top 1,000 proteins
+1. **Screening** (Mann-Whitney U or F-stat) → top 1,000 proteins
 2. **KBest** (SelectKBest with f_classif) → tune k via inner CV
 3. **Stability** → extract proteins selected in ≥75% of CV folds
 
 Order configurable via `hybrid_kbest_first` flag (default: True).
 
-## Alternatives Considered
+## Rationale
 
-### Alternative A: KBest Only
-- Simplest approach
-- **Rejected:** Less stable panels, overfitting risk (k optimized per CV fold without stability constraint)
+- Screening reduces search space (2,920 → 1,000)
+- KBest provides tunable k optimization
+- Stability ensures robust panels across folds
+- Balances speed, tunability, robustness
 
-### Alternative B: Stability Only
-- Most robust panels
-- **Rejected:** Slower (requires full CV); no k tuning
+## Alternatives
 
-### Alternative C: Screening Only
-- Fastest
-- **Rejected:** No multivariate optimization; ignores feature interactions
-
-### Alternative D: L1 Regularization (Lasso)
-- Embedded feature selection
-- **Rejected:** Model-specific; hybrid approach is model-agnostic
+| Alternative | Rejected Because |
+|-------------|------------------|
+| KBest only | Less stable, overfitting risk |
+| Stability only | Slower (requires full CV), no k tuning |
+| Screening only | No multivariate optimization |
+| L1 (Lasso) | Model-specific, not model-agnostic |
 
 ## Consequences
 
-### Positive
-- Screening reduces search space (2,920 → 1,000)
-- KBest optimizes k via CV
-- Stability ensures robust panels (≥75% selection rate)
-- Hybrid approach balances speed, tunability, and robustness
-
-### Negative
-- More complex than single-method selection
-- Stability requires tracking selections across CV folds (memory overhead)
+| Positive | Negative |
+|----------|----------|
+| Fast (2,920 → 1,000 → k → stable) | More complex than single method |
+| Tunable k via CV | Stability tracking overhead |
+| Robust panels (≥75% threshold) | |
 
 ## Evidence
 
-### Code Pointers
-- [config/schema.py:83-105](../../src/ced_ml/config/schema.py#L83-L105) - `FeatureConfig` class
-- [features/screening.py](../../src/ced_ml/features/screening.py) - Screening methods
-- [features/kbest.py](../../src/ced_ml/features/kbest.py) - KBest wrapper
-- [features/stability.py:124-216](../../src/ced_ml/features/stability.py#L124-L216) - `extract_stable_panel`
+**Code:** [schema.py:83-105](../../src/ced_ml/config/schema.py#L83-L105) - `FeatureConfig`
+[screening.py](../../src/ced_ml/features/screening.py), [kbest.py](../../src/ced_ml/features/kbest.py), [stability.py:124-216](../../src/ced_ml/features/stability.py#L124-L216)
+**Tests:** `test_features_screening.py`, `test_features_kbest.py`, `test_features_stability.py`
+**Refs:** Meinshausen & Bühlmann (2010). Stability selection. *JRSS-B*, 72(4), 417-473
 
-### Test Coverage
-- `tests/test_features_screening.py` - Validates screening methods
-- `tests/test_features_kbest.py` - Validates KBest wrapper
-- `tests/test_features_stability.py` - Validates stability extraction
+## Related
 
-### References
-- Meinshausen, N., & Bühlmann, P. (2010). Stability selection. *Journal of the Royal Statistical Society: Series B*, 72(4), 417-473.
-
-## Related ADRs
-
-- **Part of:** [ADR-013: Four-Strategy Feature Selection Framework](ADR-013-four-strategy-feature-selection.md) (Strategy 1: Hybrid Stability)
-- Supports: [ADR-005: Stability Panel](ADR-005-stability-panel.md)
-- Depends on: [ADR-006: Nested CV Structure](ADR-006-nested-cv.md) (provides CV folds for stability)
+- Part of: ADR-013 (Strategy 1: Hybrid Stability)
+- Supports: ADR-005 (stability panel extraction)
+- Depends: ADR-006 (nested CV provides folds)

@@ -1,69 +1,46 @@
 # ADR-011: Threshold Selection on VAL
 
-**Status:** Accepted
-**Date:** 2026-01-20
-
-## Context
-
-Binary classifiers output continuous probabilities; a decision threshold converts probabilities to binary predictions. The threshold must be chosen to optimize a specific criterion (e.g., Youden's J, max F1, fixed specificity).
-
-Threshold selection requires data:
-- **TRAIN:** Biased (model trained on this data)
-- **VAL:** Unbiased for threshold selection (not used for hyperparameter tuning)
-- **TEST:** Must remain completely held-out for final evaluation
-
-Selecting threshold on TEST leads to optimistic bias in reported TEST metrics (leakage).
+**Status:** Accepted | **Date:** 2026-01-20
 
 ## Decision
 
-**Select threshold on VAL set**, never on TEST.
+**Select decision threshold on VAL set, never TEST.**
 
-TEST remains completely held-out until final evaluation. Threshold selected on VAL is then applied to TEST for unbiased performance estimation.
+TEST remains held-out for unbiased final evaluation.
 
-## Alternatives Considered
+## Rationale
 
-### Alternative A: Threshold on TEST
-- Simpler (no VAL set needed)
-- **Rejected:** Optimistic bias in TEST metrics (threshold tuned to TEST data)
+- TRAIN: Biased (model trained on it)
+- VAL: Unbiased for threshold selection
+- TEST: Must remain completely held-out
+- Threshold on TEST → optimistic bias (leakage)
 
-### Alternative B: Threshold on TRAIN (OOF Predictions)
-- No need for VAL set
-- **Rejected:** TRAIN may be overfitted; threshold may not generalize to VAL/TEST
+## Alternatives
 
-### Alternative C: Fixed Threshold (e.g., 0.5)
-- No tuning needed
-- **Rejected:** Arbitrary threshold may be suboptimal; ignores class imbalance and cost considerations
-
-### Alternative D: Nested Threshold Selection (Inner CV)
-- Threshold tuned during hyperparameter tuning
-- **Rejected:** Couples threshold to hyperparameters; less flexible for post-hoc threshold adjustment
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Threshold on TEST | Optimistic bias (tuned to TEST) |
+| Threshold on TRAIN (OOF) | TRAIN overfitted, may not generalize |
+| Fixed threshold (0.5) | Arbitrary, ignores imbalance/costs |
+| Nested threshold (inner CV) | Couples threshold to hyperparameters |
 
 ## Consequences
 
-### Positive
-- VAL provides unbiased threshold selection
-- TEST remains completely held-out (no leakage)
-- Threshold can be adjusted post-hoc without retraining
-
-### Negative
-- Requires 3-way split (reduces TRAIN size)
-- VAL size (25%) must be large enough for stable threshold selection
+| Positive | Negative |
+|----------|----------|
+| Unbiased threshold selection | Requires 3-way split |
+| TEST held-out (no leakage) | VAL must be large enough (25%) |
+| Post-hoc threshold adjustment | |
 
 ## Evidence
 
-### Code Pointers
-- [config/schema.py:198-208](../../src/ced_ml/config/schema.py#L198-L208) - `ThresholdConfig.threshold_source`
-- [cli/train.py](../../src/ced_ml/cli/train.py) - Threshold selection logic
-- [metrics/thresholds.py:326-377](../../src/ced_ml/metrics/thresholds.py#L326-L377) - `choose_threshold_objective`
+**Code:** [schema.py:198-208](../../src/ced_ml/config/schema.py#L198-L208) - `ThresholdConfig.threshold_source`
+[train.py](../../src/ced_ml/cli/train.py) - threshold selection
+[thresholds.py:326-377](../../src/ced_ml/metrics/thresholds.py#L326-L377) - `choose_threshold_objective`
+**Tests:** `test_choose_threshold_on_val`, `test_threshold_source_validation`
+**Refs:** Steyerberg (2019) Ch 11
 
-### Test Coverage
-- `tests/test_metrics_thresholds.py::test_choose_threshold_on_val` - Validates threshold selection on VAL
-- `tests/test_config.py::test_threshold_source_validation` - Enforces `threshold_source='val'`
+## Related
 
-### References
-- Steyerberg, E. W. (2019). *Clinical Prediction Models* (2nd ed.), Chapter 11 (Choosing Between Alternative Strategies).
-
-## Related ADRs
-
-- Depends on: [ADR-001: Split Strategy](ADR-001-split-strategy.md) (provides VAL set)
-- Supports: [ADR-010: Fixed Spec 95%](ADR-010-fixed-spec-95.md) (threshold objective)
+- Depends: ADR-001 (provides VAL set)
+- Supports: ADR-012 (threshold objective: fixed spec 95%)

@@ -1,64 +1,46 @@
-# ADR-002: Prevalent Cases in TRAIN Only
+# ADR-002: Prevalent Cases → TRAIN Only
 
-**Status:** Accepted
-**Date:** 2026-01-20
-
-## Context
-
-The dataset contains two types of Celiac Disease (CeD) cases:
-- **Incident cases** (n=148): Diagnosed *after* plasma sample collection (prospective)
-- **Prevalent cases** (n=150): Diagnosed *before* plasma sample collection (retrospective)
-
-Prevalent cases provide additional positive signal but represent a different distribution than the prospective screening scenario. Including prevalent cases in VAL/TEST would make evaluation non-representative of real-world prospective screening.
+**Status:** Accepted | **Date:** 2026-01-20
 
 ## Decision
 
-**Add prevalent cases to TRAIN set only**, sampled at 50% to balance signal enrichment vs. distribution shift. VAL and TEST sets remain incident-only to maintain prospective evaluation.
+**Add prevalent cases (n=150) to TRAIN only at 50% sampling.** VAL/TEST remain incident-only.
 
-## Alternatives Considered
+- **Incident cases** (n=148): Biomarkers collected *before* diagnosis (prospective)
+- **Prevalent cases** (n=150): Biomarkers collected *after* diagnosis (retrospective)
+- **TRAIN positives:** 148 incident + 75 prevalent (50% sampled) = 223 total
+- **VAL/TEST:** Incident-only → prospective evaluation
 
-### Alternative A: Exclude Prevalent Cases Entirely
-- Simplest approach (incident-only throughout)
-- **Rejected:** Wastes 150 positive samples with signal enrichment potential
+## Rationale
 
-### Alternative B: Include Prevalent in All Splits
-- More training data for VAL/TEST as well
-- **Rejected:** VAL/TEST no longer representative of prospective screening; evaluation not clinically relevant
+- Prevalent cases provide training signal but represent different distribution
+- VAL/TEST must reflect prospective screening (incident-only)
+- 50% sampling balances signal enrichment vs distribution shift
 
-### Alternative C: Separate Prevalent Model
-- Train two models: incident-only and incident+prevalent
-- **Rejected:** Adds complexity; prevalent signal can be leveraged in training without contaminating evaluation
+## Alternatives
 
-### Alternative D: 100% Prevalent Sampling (All Prevalent to TRAIN)
-- Maximum signal enrichment
-- **Rejected:** Larger distribution shift between TRAIN and VAL/TEST; 50% sampling balances signal vs. shift
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Exclude prevalent entirely | Wastes 150 positive samples |
+| Prevalent in all splits | VAL/TEST no longer prospective |
+| Separate prevalent model | Unnecessary complexity |
+| 100% prevalent sampling | Larger distribution shift |
 
 ## Consequences
 
-### Positive
-- Training benefits from additional positive signal (150 → 148+75 = 223 total TRAIN positives)
-- VAL/TEST remain prospective (incident-only) → clinically relevant evaluation
-- 50% sampling balances signal enrichment vs. distribution shift
-
-### Negative
-- Distribution mismatch between TRAIN (incident+prevalent) and VAL/TEST (incident-only)
-- Requires careful prevalence adjustment for deployment (see [ADR-005](ADR-005-prevalence-adjustment.md))
+| Positive | Negative |
+|----------|----------|
+| +75 TRAIN positives (signal boost) | TRAIN ≠ VAL/TEST distribution |
+| VAL/TEST remain clinically relevant | Requires prevalence adjustment |
+| Balanced signal vs shift (50%) | |
 
 ## Evidence
 
-### Code Pointers
-- [data/splits.py:326-366](../../src/ced_ml/data/splits.py#L326-L366) - `add_prevalent_to_train` function
-- [data/schema.py:49](../../src/ced_ml/data/schema.py#L49) - `SCENARIO_DEFINITIONS` constant
-- [cli/save_splits.py](../../src/ced_ml/cli/save_splits.py) - Split generation CLI
+**Code:** [splits.py:326-366](../../src/ced_ml/data/splits.py#L326-L366) - `add_prevalent_to_train`
+[schema.py:49](../../src/ced_ml/data/schema.py#L49) - `SCENARIO_DEFINITIONS`
+**Tests:** `test_add_prevalent_to_train`, `test_prevalent_never_in_val_test`
 
-### Test Coverage
-- `tests/test_data_splits.py::test_add_prevalent_to_train` - Validates prevalent handling
-- `tests/test_data_splits.py::test_prevalent_never_in_val_test` - Enforces leakage prevention
+## Related
 
-### References
-- Project memory: `project_overview` - "IncidentPlusPrevalent scenario: Prevalent in TRAIN only"
-
-## Related ADRs
-
-- Depends on: [ADR-001: Split Strategy](ADR-001-split-strategy.md)
-- Supports: [ADR-005: Prevalence Adjustment](ADR-005-prevalence-adjustment.md)
+- Depends: ADR-001 (split strategy)
+- Supports: ADR-010 (prevalence adjustment)

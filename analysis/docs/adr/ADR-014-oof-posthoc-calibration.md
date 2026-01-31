@@ -1,108 +1,61 @@
-# ADR-014: OOF Posthoc Calibration Strategy
+# ADR-014: OOF Posthoc Calibration
 
-**Status:** Accepted
-**Date:** 2026-01-22
-
-## Context
-
-The pipeline supports probability calibration to improve alignment between predicted probabilities and true event frequencies. The original implementation used `per_fold` calibration, which applies `CalibratedClassifierCV` inside each nested CV fold.
-
-**Problem with `per_fold` strategy:**
-- Calibration is fitted on the same data used for hyperparameter selection
-- This introduces subtle optimistic bias (~0.5-1% in Brier score)
-- The calibrator "sees" the validation data indirectly through the model selection process
-- Bias is small but compounds across CV folds
-
-**Need:**
-- A calibration strategy that eliminates this subtle leakage
-- Maintain full data efficiency (no additional holdout set)
-- Support per-model strategy selection
+**Status:** Accepted | **Date:** 2026-01-22
 
 ## Decision
 
-Add `oof_posthoc` calibration strategy as an alternative to `per_fold`:
+**Add `oof_posthoc` calibration strategy** as alternative to `per_fold`.
 
-1. **`per_fold`** (default, existing): Apply CalibratedClassifierCV inside each CV fold
-2. **`oof_posthoc`** (new): Collect raw OOF predictions from all CV folds, then fit a single calibrator post-hoc on the aggregated OOF predictions
-3. **`none`**: No calibration applied
+**Strategies:**
+1. **`per_fold`** (default): CalibratedClassifierCV inside each CV fold
+2. **`oof_posthoc`** (new): Fit single calibrator on aggregated OOF predictions
+3. **`none`**: No calibration
 
-**Implementation:**
-- New classes: `OOFCalibrator`, `OOFCalibratedModel`
-- Config-driven: `CalibrationConfig.strategy` field
-- Per-model overrides via `CalibrationConfig.per_model` dict
-- Backward compatible: existing configs default to `per_fold`
-
-**Strategy Comparison:**
-
-| Approach | Data Efficiency | Leakage Risk | Optimism Bias | Stability |
+| Strategy | Data Efficiency | Leakage Risk | Optimism Bias | Stability |
 |----------|-----------------|--------------|---------------|-----------|
-| `per_fold` | Full | Subtle (~0.5-1%) | ~0.5-1% | Lower |
+| `per_fold` | Full | Subtle | Subtle | Lower |
 | `oof_posthoc` | Full | None | None | Higher |
 | 4-way split | Reduced | None | None | Medium |
 
-## Alternatives Considered
+## Rationale
 
-1. **4-way split (train/val/calibration/test):**
-   - Dedicated calibration holdout set
-   - Rejected: Reduces training data, problematic for small datasets
+**Problem with `per_fold`:**
+- Calibrator fitted on same data used for hyperparameter selection
+- Subtle optimistic bias in Brier score
+- Calibrator indirectly "sees" validation data
 
-2. **Nested calibration within inner CV:**
-   - Calibrate inside inner CV loop
-   - Rejected: Excessive complexity, minimal benefit over oof_posthoc
+**OOF posthoc advantages:**
+- Eliminates leakage (calibrator on pure OOF predictions)
+- Higher stability (single calibrator vs per-fold)
+- Full data efficiency (no additional holdout)
 
-3. **Always use oof_posthoc:**
-   - Replace per_fold entirely
-   - Rejected: Per_fold has lower variance for some model types; choice should be configurable
+## Alternatives
 
-4. **Temperature scaling:**
-   - Single-parameter calibration (Guo et al., 2017)
-   - Rejected: Less flexible than isotonic; doesn't address fundamental leakage issue
+| Alternative | Rejected Because |
+|-------------|------------------|
+| 4-way split | Reduces training data (problematic for small datasets) |
+| Nested calibration in inner CV | Excessive complexity |
+| Always use oof_posthoc | Per_fold has lower variance for some models |
+| Temperature scaling | Less flexible, doesn't address leakage |
 
 ## Consequences
 
-### Positive
-- Eliminates ~0.5-1% optimistic bias in Brier score
-- Higher stability: single calibrator vs. multiple per-fold calibrators
-- Full data efficiency maintained (no additional holdout)
-- Per-model flexibility: can use different strategies for different models
-- Backward compatible: existing configs unchanged
-
-### Negative
-- Slightly higher variance in calibration for small datasets
-- Additional complexity in calibration pipeline
-- OOF predictions must be stored during training (already done for other reasons)
-- May show slightly worse calibration curves for well-calibrated base models
+| Positive | Negative |
+|----------|----------|
+| Eliminates optimistic bias | Slightly higher variance (small datasets) |
+| Higher stability (single calibrator) | Additional pipeline complexity |
+| Full data efficiency | Worse calibration for well-calibrated base models |
+| Per-model flexibility | |
+| Backward compatible | |
 
 ## Evidence
 
-### Code Pointers
-- [models/calibration.py](../../src/ced_ml/models/calibration.py) - `OOFCalibrator`, `OOFCalibratedModel`
-- [config/schema.py:301-337](../../src/ced_ml/config/schema.py#L301-L337) - `CalibrationConfig` with strategy field
-- [models/training.py](../../src/ced_ml/models/training.py) - Strategy-aware calibration in CV loop
+**Code:** [calibration.py](../../src/ced_ml/models/calibration.py) - `OOFCalibrator`, `OOFCalibratedModel`
+[schema.py:301-337](../../src/ced_ml/config/schema.py#L301-L337) - `CalibrationConfig.strategy`
+**Tests:** `test_models_calibration.py` - 24 tests for strategies
+**Refs:** Guo (2017) ICML. Van Calster (2019) BMC Medicine. Steyerberg (2019) Ch 15
 
-### Test Coverage
-- `tests/test_models_calibration.py` - 24 tests for calibration strategies
-- Tests validate: strategy selection, OOF collection, posthoc fitting, prediction flow
+## Related
 
-### Configuration Example
-```yaml
-calibration:
-  enabled: true
-  strategy: oof_posthoc  # or per_fold or none
-  method: isotonic       # or sigmoid
-  per_model:             # Optional per-model overrides
-    LR_EN: oof_posthoc
-    RF: per_fold
-    XGBoost: oof_posthoc
-```
-
-### References
-- Guo, C., et al. (2017). On Calibration of Modern Neural Networks. ICML.
-- Van Calster, B., et al. (2019). Calibration: the Achilles heel of predictive analytics. BMC Medicine.
-- Steyerberg, E.W. (2019). Clinical Prediction Models (2nd ed.), Chapter 15.
-
-## Related ADRs
-
-- Depends on: [ADR-006: Nested CV Structure](ADR-006-nested-cv.md) - Provides OOF predictions
-- Complements: [ADR-010: Prevalence Adjustment](ADR-010-prevalence-adjustment.md) - Applied after calibration
-- Related: [ADR-013: Prevalence Wrapper](ADR-013-prevalence-wrapper.md) - Final model wrapping
+- Depends: ADR-006 (provides OOF predictions)
+- Complements: ADR-010 (prevalence adjustment after calibration)

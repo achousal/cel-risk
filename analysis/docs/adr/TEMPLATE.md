@@ -1,41 +1,35 @@
 # ADR-XXX: Title
 
-**Status:** Accepted
-**Date:** YYYY-MM-DD
-
-## Context
-
-What problem does this decision address?
+**Status:** Accepted | **Date:** YYYY-MM-DD
 
 ## Decision
 
-What was decided?
+[What was chosen - 1-3 sentences max]
 
-## Alternatives Considered
+## Rationale
 
-1. Alternative A: ...
-2. Alternative B: ...
+[Why this solves the problem - bullet points]
+
+## Alternatives
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| A: Description | Reason |
+| B: Description | Reason |
 
 ## Consequences
 
-### Positive
-- ...
-
-### Negative
-- ...
+| Positive | Negative |
+|----------|----------|
+| + Benefit | - Cost |
 
 ## Evidence
 
-### Code Pointers
-- [module/file.py:L-L](../../src/ced_ml/path/to/file.py#L-L) - description
+**Code:** [file.py:L-L](../../src/ced_ml/path#L-L)
+**Tests:** `test_*.py` - what validated
+**Refs:** Citation (if external)
 
-### Test Coverage
-- `tests/test_*.py` - what it validates
+## Related
 
-### References
-- External papers/docs (if applicable)
-
-## Related ADRs
-
-- Depends on: ADR-XXX
-- Supersedes: ADR-XXX (if applicable)
+- Depends: ADR-X
+- Supports: ADR-Y

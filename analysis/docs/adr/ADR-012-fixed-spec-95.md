@@ -1,71 +1,45 @@
-# ADR-012: Fixed Specificity Objective (95%)
+# ADR-012: Fixed Specificity (95%)
 
-**Status:** Accepted
-**Date:** 2026-01-20
-
-## Context
-
-Threshold selection requires choosing an objective function. Common objectives:
-- **Youden's J:** Sensitivity + Specificity - 1 (balances both)
-- **Max F1:** Maximize F1 score (balances precision and recall)
-- **Fixed Specificity:** Achieve target specificity (e.g., 95%)
-- **Fixed PPV:** Achieve target positive predictive value
-
-For **clinical screening**, high specificity minimizes false positives:
-- False positives → unnecessary follow-up tests, anxiety, costs
-- High specificity (95%) → only 5% of controls flagged
+**Status:** Accepted | **Date:** 2026-01-20
 
 ## Decision
 
-Support **fixed specificity objective** with default 95% specificity target.
+**Support fixed specificity objective (default 95%) for threshold selection.**
 
-This objective selects the threshold that achieves the closest specificity to the target (e.g., 95%), prioritizing specificity over sensitivity.
+Threshold chosen to achieve target specificity (minimize false positives).
 
-**Note:** Youden and max_f1 are also supported for comparison.
+**Note:** Youden and max_f1 also supported for comparison.
 
-## Alternatives Considered
+## Rationale
 
-### Alternative A: Youden's J Only
-- Balances sensitivity and specificity equally
-- **Rejected:** May yield lower specificity than desired for screening (e.g., 85% spec, 80% sens)
+- Clinical screening prioritizes high specificity
+- False positives → unnecessary tests, anxiety, costs
+- 95% specificity → only 5% of controls flagged
+- Configurable target (90%, 95%, 99%)
 
-### Alternative B: Max F1 Only
-- Optimizes F1 score (harmonic mean of precision and recall)
-- **Rejected:** F1 emphasizes precision/recall balance, not specificity
+## Alternatives
 
-### Alternative C: Fixed PPV
-- Targets positive predictive value instead of specificity
-- **Rejected:** PPV depends on prevalence; less stable across deployment scenarios
-
-### Alternative D: Hard-Coded 95% Specificity
-- No configurability
-- **Rejected:** Inflexible; different use cases may require different specificity targets
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Youden only | May yield lower specificity (e.g., 85%) |
+| Max F1 only | Emphasizes precision/recall, not specificity |
+| Fixed PPV | PPV depends on prevalence, less stable |
+| Hard-coded 95% | Inflexible for different use cases |
 
 ## Consequences
 
-### Positive
-- 95% specificity minimizes false positives for screening
-- Configurable target allows flexibility (e.g., 90%, 95%, 99%)
-- Clinical interpretation: "Only 5% of controls flagged for follow-up"
-
-### Negative
-- Lower sensitivity than Youden or max_f1 (trade-off)
-- Specificity target may not be achievable (model may plateau at lower spec)
+| Positive | Negative |
+|----------|----------|
+| Minimizes false positives | Lower sensitivity vs Youden/max_f1 |
+| Configurable target | Target may not be achievable |
+| Clinical interpretation clear | |
 
 ## Evidence
 
-### Code Pointers
-- [config/schema.py:198-208](../../src/ced_ml/config/schema.py#L198-L208) - `ThresholdConfig.fixed_spec` parameter
-- [metrics/thresholds.py:326-377](../../src/ced_ml/metrics/thresholds.py#L326-L377) - `choose_threshold_objective` (supports `fixed_spec`)
-- Example config: `docs/examples/training_config.yaml` - `thresholds.objective: fixed_spec`, `fixed_spec: 0.95`
+**Code:** [schema.py:198-208](../../src/ced_ml/config/schema.py#L198-L208) - `ThresholdConfig.fixed_spec`
+[thresholds.py:326-377](../../src/ced_ml/metrics/thresholds.py#L326-L377) - `choose_threshold_objective`
+**Tests:** `test_choose_threshold_fixed_spec`, `test_threshold_config_fixed_spec`
 
-### Test Coverage
-- `tests/test_metrics_thresholds.py::test_choose_threshold_fixed_spec` - Validates fixed_spec objective
-- `tests/test_config.py::test_threshold_config_fixed_spec` - Validates config validation
+## Related
 
-### References
-- Clinical screening guidelines typically target high specificity (90-99%) to minimize false positives.
-
-## Related ADRs
-
-- Depends on: [ADR-009: Threshold on VAL](ADR-009-threshold-on-val.md) (threshold source)
+- Depends: ADR-011 (threshold on VAL)
