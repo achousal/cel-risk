@@ -271,7 +271,6 @@ def hpc_config(tmp_path):
         "execution": {
             "models": ["LR_EN", "RF"],
             "n_boot": 100,
-            "overwrite_splits": False,
         },
     }
 

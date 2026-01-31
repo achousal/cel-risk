@@ -68,6 +68,22 @@ def save_optuna_plots(
 
     logger.info(f"Generating Optuna plots for {n_trials} trials")
 
+    # Detect if multi-objective study
+    is_multi_objective = len(study.directions) > 1
+    target = None
+    target_name = None
+
+    if is_multi_objective:
+        # For multi-objective, use first objective as primary target
+        target = lambda t: t.values[0]  # noqa: E731
+        target_name = (
+            study.directions[0].name if hasattr(study.directions[0], "name") else "objective_0"
+        )
+        logger.info(
+            f"Multi-objective study detected ({len(study.directions)} objectives). "
+            f"Plotting primary objective: {target_name}"
+        )
+
     # Try plotly-based plots first (more interactive)
     try:
         from optuna.visualization import (
@@ -79,7 +95,10 @@ def save_optuna_plots(
 
         # 1. Optimization history
         try:
-            fig = plot_optimization_history(study)
+            if is_multi_objective:
+                fig = plot_optimization_history(study, target=target, target_name=target_name)
+            else:
+                fig = plot_optimization_history(study)
             fig.update_layout(title=f"Optimization History ({n_trials} trials)")
             out_path = out_dir / f"{prefix}optuna_history.{plot_format}"
             if plot_format == "html":
@@ -93,7 +112,10 @@ def save_optuna_plots(
         # 2. Parameter importances (requires multiple trials)
         if n_trials >= 2:
             try:
-                fig = plot_param_importances(study)
+                if is_multi_objective:
+                    fig = plot_param_importances(study, target=target, target_name=target_name)
+                else:
+                    fig = plot_param_importances(study)
                 fig.update_layout(title="Parameter Importances")
                 out_path = out_dir / f"{prefix}optuna_importances.{plot_format}"
                 if plot_format == "html":
@@ -107,7 +129,10 @@ def save_optuna_plots(
         # 3. Parallel coordinate plot
         if n_trials >= 2:
             try:
-                fig = plot_parallel_coordinate(study)
+                if is_multi_objective:
+                    fig = plot_parallel_coordinate(study, target=target, target_name=target_name)
+                else:
+                    fig = plot_parallel_coordinate(study)
                 fig.update_layout(title="Parallel Coordinate Plot")
                 out_path = out_dir / f"{prefix}optuna_parallel.{plot_format}"
                 if plot_format == "html":
@@ -121,7 +146,10 @@ def save_optuna_plots(
         # 4. Slice plot (parameter vs objective)
         if n_trials >= 2:
             try:
-                fig = plot_slice(study)
+                if is_multi_objective:
+                    fig = plot_slice(study, target=target, target_name=target_name)
+                else:
+                    fig = plot_slice(study)
                 fig.update_layout(title="Slice Plot (Parameter vs Objective)")
                 out_path = out_dir / f"{prefix}optuna_slice.{plot_format}"
                 if plot_format == "html":

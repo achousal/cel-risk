@@ -22,18 +22,19 @@ def _ensure_splits_exist(
     split_dir: Path,
     infile: Path,
     config_file: Path | None,
-    overwrite: bool,
     overrides: list[str] | None = None,
     log_level: int | None = None,
     logger: logging.Logger | None = None,
 ) -> None:
     """Generate splits if needed, otherwise use existing.
 
+    Reads the ``overwrite`` flag from splits_config.yaml to decide whether
+    to regenerate splits when they already exist.
+
     Args:
         split_dir: Directory for split files
         infile: Input data file path
         config_file: Optional splits config file
-        overwrite: Force regeneration even if splits exist
         overrides: Optional config overrides
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
         logger: Optional logger instance
@@ -42,8 +43,14 @@ def _ensure_splits_exist(
         This is the single source for split generation logic used by both
         local and HPC pipeline modes. Scenario is determined by splits_config.yaml.
     """
+    from ced_ml.config.loader import load_splits_config
+
     if logger is None:
         logger = logging.getLogger(__name__)
+
+    # Load splits config to check overwrite flag
+    splits_config = load_splits_config(config_file=config_file, overrides=overrides or [])
+    overwrite = splits_config.overwrite
 
     # Check if splits need to be generated
     needs_generation = overwrite or not any(split_dir.glob("train_idx_*_seed*.csv"))
@@ -53,7 +60,6 @@ def _ensure_splits_exist(
         splits_cli_args = {
             "infile": str(infile),
             "outdir": str(split_dir),
-            "overwrite": overwrite,
         }
         run_save_splits(
             config_file=config_file,
@@ -72,7 +78,6 @@ _PIPELINE_DEFAULTS: dict[str, Any] = {
     "ensemble": True,
     "consensus": True,
     "optimize_panel": True,
-    "overwrite_splits": False,
     "n_boot": 500,
     "dry_run": False,
 }
@@ -136,7 +141,6 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
         "ensemble",
         "consensus",
         "optimize_panel",
-        "overwrite_splits",
         "n_boot",
         "dry_run",
     ):
@@ -298,7 +302,6 @@ def _run_hpc_mode(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
-    overwrite_splits: bool,
     hpc_config_file: Path | None,
     dry_run: bool,
     log_level: int,
@@ -307,6 +310,10 @@ def _run_hpc_mode(
 
     Generates splits locally, then submits per-seed training jobs and a
     post-processing job that depends on all training jobs completing.
+
+    Note:
+        Panel optimization and consensus generation are automatically skipped
+        when using feature_selection_strategy='fixed_panel'.
     """
     from datetime import datetime
 
@@ -316,6 +323,17 @@ def _run_hpc_mode(
     )
 
     hpc_logger = setup_logger("ced_ml.hpc", level=log_level)
+
+    # Detect if using fixed panel strategy and auto-disable optimization/consensus
+    using_fixed_panel = _detect_fixed_panel_strategy(config_file, hpc_logger)
+    if using_fixed_panel:
+        if enable_optimize_panel or enable_consensus:
+            hpc_logger.info(
+                "Detected feature_selection_strategy='fixed_panel' - "
+                "disabling panel optimization and consensus generation"
+            )
+        enable_optimize_panel = False
+        enable_consensus = False
 
     # Load HPC config
     if hpc_config_file is None:
@@ -370,7 +388,6 @@ def _run_hpc_mode(
         split_dir=split_dir,
         infile=infile,
         config_file=splits_config_file,
-        overwrite=overwrite_splits,
         overrides=[],
         log_level=log_level,
         logger=hpc_logger,
@@ -440,6 +457,36 @@ def _run_hpc_mode(
     hpc_logger.info("=" * 70)
 
 
+def _detect_fixed_panel_strategy(config_file: Path | None, logger: logging.Logger) -> bool:
+    """
+    Detect if training config uses fixed_panel feature selection strategy.
+
+    Args:
+        config_file: Path to training config YAML
+        logger: Logger instance
+
+    Returns:
+        True if feature_selection_strategy is 'fixed_panel', False otherwise
+    """
+    if config_file is None or not config_file.exists():
+        return False
+
+    try:
+        from ced_ml.config.loader import load_training_config
+
+        # Load config without overrides (just check base config)
+        config = load_training_config(
+            config_file=config_file,
+            overrides=[],
+        )
+        strategy = config.features.feature_selection_strategy
+        logger.debug(f"Detected feature_selection_strategy: {strategy}")
+        return strategy == "fixed_panel"
+    except Exception as e:
+        logger.warning(f"Could not detect feature selection strategy: {e}")
+        return False
+
+
 def run_pipeline(
     config_file: Path | None,
     splits_config_file: Path | None,
@@ -452,7 +499,6 @@ def run_pipeline(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
-    overwrite_splits: bool,
     log_file: Path | None,
     cli_args: dict,
     overrides: list[str],
@@ -470,8 +516,13 @@ def run_pipeline(
     3. Aggregate results per model
     4. Train ensemble (if enabled)
     5. Aggregate ensemble results
-    6. Optimize panel per model (if enabled)
-    7. Generate consensus panel (if enabled)
+    6. Optimize panel per model (if enabled and not using fixed_panel)
+    7. Generate consensus panel (if enabled and not using fixed_panel)
+
+    Note:
+        Panel optimization and consensus generation are automatically skipped
+        when using feature_selection_strategy='fixed_panel', since the panel
+        is pre-specified and cannot be optimized.
 
     Args:
         config_file: Path to training config YAML
@@ -485,7 +536,6 @@ def run_pipeline(
         enable_ensemble: Train stacking ensemble
         enable_consensus: Generate cross-model consensus panel
         enable_optimize_panel: Run panel optimization
-        overwrite_splits: Regenerate splits if they exist
         log_file: Path to save pipeline logs (None for console only)
         cli_args: Additional CLI arguments for training
         overrides: Config override strings
@@ -505,7 +555,6 @@ def run_pipeline(
             enable_ensemble=enable_ensemble,
             enable_consensus=enable_consensus,
             enable_optimize_panel=enable_optimize_panel,
-            overwrite_splits=overwrite_splits,
             hpc_config_file=hpc_config_file,
             dry_run=dry_run,
             log_level=log_level,
@@ -528,6 +577,19 @@ def run_pipeline(
         infile = _discover_input_file(config_file, outdir, logger)
         logger.info(f"Using input file: {infile}")
 
+    # Detect if using fixed panel strategy
+    using_fixed_panel = _detect_fixed_panel_strategy(config_file, logger)
+
+    # Auto-disable panel optimization and consensus for fixed panels
+    if using_fixed_panel:
+        if enable_optimize_panel or enable_consensus:
+            logger.info(
+                "Detected feature_selection_strategy='fixed_panel' - "
+                "disabling panel optimization and consensus generation"
+            )
+        enable_optimize_panel = False
+        enable_consensus = False
+
     logger.info("=" * 70)
     logger.info("CeD-ML Full Pipeline")
     logger.info("=" * 70)
@@ -537,6 +599,8 @@ def run_pipeline(
     logger.info(f"Ensemble: {'enabled' if enable_ensemble else 'disabled'}")
     logger.info(f"Consensus panel: {'enabled' if enable_consensus else 'disabled'}")
     logger.info(f"Panel optimization: {'enabled' if enable_optimize_panel else 'disabled'}")
+    if using_fixed_panel:
+        logger.info("Feature selection: fixed_panel (optimization/consensus N/A)")
     logger.info("=" * 70)
 
     # Step 1: Generate splits (if needed)
@@ -551,7 +615,6 @@ def run_pipeline(
         split_dir=split_dir,
         infile=infile,
         config_file=splits_config_file,
-        overwrite=overwrite_splits,
         overrides=overrides,
         log_level=log_level,
         logger=logger,
@@ -590,9 +653,14 @@ def run_pipeline(
                 # Read run_metadata.json to get the auto-generated run_id
                 import json
 
-                metadata_pattern = list(outdir.glob("run_*/run_metadata.json"))
-                if metadata_pattern:
-                    with open(metadata_pattern[0]) as f:
+                # Sort by modification time (most recent first) to get the just-created run
+                metadata_files = sorted(
+                    outdir.glob("run_*/run_metadata.json"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if metadata_files:
+                    with open(metadata_files[0]) as f:
                         metadata = json.load(f)
                         shared_run_id = metadata.get("run_id")
                         logger.info(f"Using auto-generated run_id: {shared_run_id}")

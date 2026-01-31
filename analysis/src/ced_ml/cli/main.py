@@ -1292,10 +1292,6 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     enable_optimize_panel = _pick(
         kwargs.get("optimize_panel"), "optimize_panel", _PIPELINE_DEFAULTS["optimize_panel"]
     )
-    overwrite_splits = _pick(
-        kwargs.get("overwrite_splits"), "overwrite_splits", _PIPELINE_DEFAULTS["overwrite_splits"]
-    )
-
     # Collect remaining CLI args
     cli_args = {}
     overrides = list(kwargs.get("override", []))
@@ -1313,7 +1309,6 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
             enable_ensemble=enable_ensemble,
             enable_consensus=enable_consensus,
             enable_optimize_panel=enable_optimize_panel,
-            overwrite_splits=overwrite_splits,
             log_file=log_file,
             cli_args=cli_args,
             overrides=overrides,

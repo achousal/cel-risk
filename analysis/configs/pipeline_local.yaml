@@ -26,6 +26,5 @@ pipeline:
   ensemble: true
   consensus: true
   optimize_panel: true
-  overwrite_splits: false
   n_boot: 200  # Bootstrap iterations (adequate for ranking)
   dry_run: false

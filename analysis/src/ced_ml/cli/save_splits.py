@@ -90,8 +90,8 @@ def run_save_splits(
                 # Skip scenarios - handle separately
                 if key == "scenarios":
                     continue
-                # Skip overwrite and train_controls_incident_only - not part of SplitsConfig
-                if key in ("overwrite", "train_controls_incident_only"):
+                # Skip train_controls_incident_only - not part of SplitsConfig
+                if key in ("train_controls_incident_only",):
                     continue
                 # Map temporal_column CLI flag to temporal_col config field
                 if key == "temporal_column":
@@ -147,8 +147,8 @@ def run_save_splits(
     df = read_proteomics_file(infile, validate=True)
     # Loaded message logged by read_proteomics_file()
 
-    # Extract flags from cli_args
-    overwrite = cli_args.get("overwrite", False) if cli_args else False
+    # Overwrite flag: config is source of truth, CLI --overwrite overrides via config
+    overwrite = config.overwrite
     train_controls_incident_only = (
         cli_args.get("train_controls_incident_only", False) if cli_args else False
     )
