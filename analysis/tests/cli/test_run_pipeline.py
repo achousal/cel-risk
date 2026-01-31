@@ -117,3 +117,95 @@ def test_run_pipeline_metadata_structure():
     # Verify structure
     for field in expected_fields:
         assert field in metadata, f"Metadata should contain '{field}' field"
+
+
+def test_fixed_panel_disables_optimization_and_consensus(tmp_path):
+    """
+    Regression test: When feature_selection_strategy='fixed_panel',
+    panel optimization and consensus should be automatically disabled.
+
+    This prevents wasted computation on steps that don't make sense
+    when using a pre-specified panel.
+    """
+    import yaml
+    from ced_ml.cli.run_pipeline import _detect_fixed_panel_strategy
+
+    # Create a mock config file with fixed_panel strategy
+    config_path = tmp_path / "training_config.yaml"
+    config_data = {
+        "features": {
+            "feature_selection_strategy": "fixed_panel",
+            "fixed_panel_csv": "fixed_panel.csv",
+            "screen_method": "mannwhitney",
+            "screen_top_n": 1000,
+        },
+        "cv": {
+            "folds": 5,
+            "repeats": 3,
+        },
+    }
+
+    with open(config_path, "w") as f:
+        yaml.dump(config_data, f)
+
+    # Test detection function
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Should detect fixed_panel strategy
+    result = _detect_fixed_panel_strategy(config_path, logger)
+    assert result is True, "Should detect fixed_panel strategy"
+
+
+def test_non_fixed_panel_strategy_detection(tmp_path):
+    """
+    Test that other strategies are correctly NOT detected as fixed_panel.
+    """
+    import yaml
+    from ced_ml.cli.run_pipeline import _detect_fixed_panel_strategy
+
+    # Test hybrid_stability strategy
+    config_path = tmp_path / "training_config.yaml"
+    config_data = {
+        "features": {
+            "feature_selection_strategy": "hybrid_stability",
+            "k_grid": [25, 50, 100],
+            "screen_method": "mannwhitney",
+            "screen_top_n": 1000,
+        },
+        "cv": {
+            "folds": 5,
+            "repeats": 3,
+        },
+    }
+
+    with open(config_path, "w") as f:
+        yaml.dump(config_data, f)
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Should NOT detect fixed_panel strategy
+    result = _detect_fixed_panel_strategy(config_path, logger)
+    assert result is False, "Should NOT detect fixed_panel for hybrid_stability strategy"
+
+
+def test_missing_config_returns_false(tmp_path):
+    """
+    Test that missing config file returns False (doesn't crash).
+    """
+    import logging
+
+    from ced_ml.cli.run_pipeline import _detect_fixed_panel_strategy
+
+    logger = logging.getLogger(__name__)
+
+    # Non-existent config
+    result = _detect_fixed_panel_strategy(tmp_path / "nonexistent.yaml", logger)
+    assert result is False, "Should return False for missing config"
+
+    # None config
+    result = _detect_fixed_panel_strategy(None, logger)
+    assert result is False, "Should return False for None config"

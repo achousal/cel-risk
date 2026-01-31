@@ -11,7 +11,7 @@ test_size: 0.25
 holdout_size: 0.30  # Only used when mode=holdout
 
 # Repeated splits
-n_splits: 2  # Single split for 1-hour multi-objective run
+n_splits: 3  # Single split for 1-hour multi-objective run
 seed_start: 0
 
 # Prevalent case handling
@@ -30,3 +30,4 @@ eval_control_per_case: 5  # 5 controls in VAL/TEST
 # Output control
 # outdir: splits  # Directory for split files (relative to analysis/)
 save_indices_only: false  # Save only indices (not full data)
+overwrite: true  # Regenerate splits even if they exist

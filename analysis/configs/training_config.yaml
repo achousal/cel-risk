@@ -23,6 +23,10 @@ cv:
 optuna:
   enabled: true  # Set to true to use Optuna instead of RandomizedSearchCV
   n_trials: 400
+    # Multi-objective optimization (optional)
+  multi_objective: true  # Set to true to optimize multiple metrics
+  objectives: ["roc_auc", "neg_brier_score"]  # Metrics to optimize (requires multi_objective=true and 2+ objectives)
+  pareto_selection: "knee"  # How to pick from Pareto frontier: knee (closest to ideal), extreme_auroc (max AUROC), balanced (max sum of normalized metrics)
   timeout: null  # Optional timeout in seconds (null = no limit)
   sampler: tpe  # Options: tpe, random, cmaes, grid
   sampler_seed: 42  # Seed for reproducibility
@@ -40,7 +44,7 @@ optuna:
 # All parameters for all strategies are defined below
 features:
   # Strategy selection (change this to switch methods)
-  feature_selection_strategy: hybrid_stability  # Options: hybrid_stability, rfecv, fixed_panel, none
+  feature_selection_strategy: fixed_panel  # Options: hybrid_stability, rfecv, fixed_panel, none
   # - hybrid_stability: Fast (~30 min), screen -> k-best -> stability -> corr-prune
   # - rfecv: Rigorous (~4-5h with k-best=100), screen -> RFE with CV
   # - fixed_panel: Use pre-specified panel from CSV (see fixed_panel_csv below)
@@ -51,7 +55,7 @@ features:
   screen_top_n: 1000  # Stage 1: Mann-Whitney -> keep top 1000
 
   # Strategy 1: Hybrid Stability parameters (used if strategy=hybrid_stability)
-  k_grid: [25, 50, 100, 150, 200, 300, 400]  # K-best tuning grid
+  k_grid: [100, 150, 200, 300, 400]  # K-best tuning grid
   stability_thresh: 0.70  # Stability selection threshold
   stable_corr_thresh: 0.85  # Remove features with r > 0.85
 
@@ -68,7 +72,7 @@ features:
   # Each model type uses its own inductive bias (L1 coefficients, tree importances)
   # to produce genuinely model-specific feature subsets for meaningful consensus
   model_selector: true  # Set to true to enable (opt-in, backward compatible)
-  model_selector_threshold: "median"  # Threshold for SelectFromModel (median, mean, or numeric)
+  model_selector_threshold: "mean"  # Threshold for SelectFromModel (median, mean, or numeric)
   model_selector_max_features: null  # Max features to keep (null = no limit)
   model_selector_min_features: 10  # Minimum features floor (prevents empty selection)
 

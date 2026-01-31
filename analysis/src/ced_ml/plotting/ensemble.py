@@ -336,14 +336,12 @@ def plot_aggregated_weights(
         n_splits_with_model = sum(1 for cd in coefs_per_split.values() if sorted_names[i] in cd)
         ax.text(x_pos, i, f"{m:.3f} (n={n_splits_with_model})", va="center", ha=ha, fontsize=9)
 
-    # Title
+    # Title - use subtitle if provided, otherwise show n_splits
     n_splits = len(coefs_per_split)
-    full_title = title
     if subtitle:
-        full_title += f"\n{subtitle}"
+        ax.set_title(f"{title}\n{subtitle}", fontsize=12, fontweight="bold")
     else:
-        full_title += f"\n(n_splits={n_splits})"
-    ax.set_title(full_title, fontsize=12, fontweight="bold")
+        ax.set_title(f"{title}\n(n_splits={n_splits})", fontsize=12, fontweight="bold")
 
     # Add summary statistics to metadata
     base_meta_lines = meta_lines or []
@@ -355,13 +353,11 @@ def plot_aggregated_weights(
     all_meta_lines = base_meta_lines + summary_lines
 
     # Apply metadata lines
-    if all_meta_lines:
-        from ced_ml.plotting.dca import apply_plot_metadata
+    from ced_ml.plotting.dca import apply_plot_metadata
 
-        apply_plot_metadata(fig, all_meta_lines)
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    bottom_margin = apply_plot_metadata(fig, all_meta_lines)
+    plt.subplots_adjust(left=0.15, right=0.9, top=0.92, bottom=bottom_margin)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.8)
     plt.close(fig)
     logger.info(f"Aggregated weights plot saved: {out_path}")
 
