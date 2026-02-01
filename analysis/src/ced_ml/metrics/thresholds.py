@@ -10,9 +10,12 @@ All functions operate on true labels (y_true) and predicted probabilities (p).
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 import numpy as np
+
+from ced_ml.utils.constants import DEFAULT_TARGET_SPEC
 
 logger = logging.getLogger(__name__)
 
@@ -214,14 +217,14 @@ def threshold_youden(y_true: np.ndarray, p: np.ndarray) -> float:
 
 
 def threshold_for_specificity(
-    y_true: np.ndarray, p: np.ndarray, target_spec: float = 0.90
+    y_true: np.ndarray, p: np.ndarray, target_spec: float = DEFAULT_TARGET_SPEC
 ) -> float:
     """Find threshold achieving target specificity with highest sensitivity.
 
     Args:
         y_true: True binary labels (0/1)
         p: Predicted probabilities [0, 1]
-        target_spec: Target specificity (0-1), default 0.90
+        target_spec: Target specificity (0-1), default 0.95
 
     Returns:
         Threshold achieving target specificity (float in [0, 1])
@@ -345,7 +348,38 @@ def threshold_from_controls(p_controls: np.ndarray, target_spec: float) -> float
     return thr
 
 
-def binary_metrics_at_threshold(y_true: np.ndarray, p: np.ndarray, thr: float) -> dict[str, Any]:
+@dataclass
+class BinaryMetrics:
+    """Classification metrics at a specific threshold.
+
+    Attributes:
+        threshold: Applied threshold
+        precision: TP / (TP + FP)
+        sensitivity: TP / (TP + FN) = recall = TPR
+        f1: F1-score
+        specificity: TN / (TN + FP)
+        fpr: False positive rate = 1 - specificity
+        tpr: True positive rate = sensitivity
+        tp: True positives count
+        fp: False positives count
+        tn: True negatives count
+        fn: False negatives count
+    """
+
+    threshold: float
+    precision: float
+    sensitivity: float
+    f1: float
+    specificity: float
+    fpr: float
+    tpr: float
+    tp: int
+    fp: int
+    tn: int
+    fn: int
+
+
+def binary_metrics_at_threshold(y_true: np.ndarray, p: np.ndarray, thr: float) -> BinaryMetrics:
     """Compute classification metrics at a specific threshold.
 
     Args:
@@ -354,15 +388,7 @@ def binary_metrics_at_threshold(y_true: np.ndarray, p: np.ndarray, thr: float) -
         thr: Classification threshold (predictions >= thr -> positive)
 
     Returns:
-        Dictionary containing:
-        - threshold: Applied threshold
-        - precision: TP / (TP + FP)
-        - sensitivity: TP / (TP + FN) = recall = TPR
-        - f1: F1-score
-        - specificity: TN / (TN + FP)
-        - fpr: False positive rate = 1 - specificity
-        - tpr: True positive rate = sensitivity
-        - tp, fp, tn, fn: Confusion matrix counts
+        BinaryMetrics dataclass with all metrics
 
     Notes:
         - Uses zero_division=0 for precision/recall when no positive predictions
@@ -377,19 +403,19 @@ def binary_metrics_at_threshold(y_true: np.ndarray, p: np.ndarray, thr: float) -
     f1 = f1_score(y_true, y_hat, zero_division=0)
     spec = (tn / (tn + fp)) if (tn + fp) > 0 else np.nan
     fpr = 1.0 - spec if not np.isnan(spec) else np.nan
-    return {
-        "threshold": float(thr),
-        "precision": float(prec),
-        "sensitivity": float(rec),
-        "f1": float(f1),
-        "specificity": float(spec),
-        "fpr": float(fpr) if not np.isnan(fpr) else np.nan,
-        "tpr": float(rec),  # TPR = sensitivity = recall
-        "tp": int(tp),
-        "fp": int(fp),
-        "tn": int(tn),
-        "fn": int(fn),
-    }
+    return BinaryMetrics(
+        threshold=float(thr),
+        precision=float(prec),
+        sensitivity=float(rec),
+        f1=float(f1),
+        specificity=float(spec),
+        fpr=float(fpr) if not np.isnan(fpr) else np.nan,
+        tpr=float(rec),
+        tp=int(tp),
+        fp=int(fp),
+        tn=int(tn),
+        fn=int(fn),
+    )
 
 
 def top_risk_capture(y_true: np.ndarray, p: np.ndarray, frac: float = 0.01) -> dict[str, Any]:
@@ -444,7 +470,7 @@ def choose_threshold_objective(
     p: np.ndarray,
     objective: str | None,
     fbeta: float = 1.0,
-    fixed_spec: float = 0.90,
+    fixed_spec: float = DEFAULT_TARGET_SPEC,
     fixed_ppv: float = 0.5,
     log_details: bool = False,
 ) -> tuple[str, float]:
@@ -456,7 +482,7 @@ def choose_threshold_objective(
         objective: One of ['max_f1', 'max_fbeta', 'youden', 'fixed_spec', 'fixed_ppv'].
             If None, defaults to 'youden' with a warning.
         fbeta: Beta parameter for F-beta score (default 1.0)
-        fixed_spec: Target specificity for 'fixed_spec' objective (default 0.90)
+        fixed_spec: Target specificity for 'fixed_spec' objective (default 0.95)
         fixed_ppv: Target precision for 'fixed_ppv' objective (default 0.5)
         log_details: Whether to log threshold selection details
 
@@ -511,17 +537,17 @@ def choose_threshold_objective(
         if obj_name == "fixed_spec":
             logger.info(f"Threshold selection: {obj_name}={fixed_spec:.2f}")
             logger.info(
-                f"  Selected threshold: {threshold:.3f} (sens={metrics['sensitivity']:.2f}, spec={metrics['specificity']:.2f})"
+                f"  Selected threshold: {threshold:.3f} (sens={metrics.sensitivity:.2f}, spec={metrics.specificity:.2f})"
             )
         elif obj_name == "fixed_ppv":
             logger.info(f"Threshold selection: {obj_name}={fixed_ppv:.2f}")
             logger.info(
-                f"  Selected threshold: {threshold:.3f} (sens={metrics['sensitivity']:.2f}, prec={metrics['precision']:.2f})"
+                f"  Selected threshold: {threshold:.3f} (sens={metrics.sensitivity:.2f}, prec={metrics.precision:.2f})"
             )
         else:
             logger.info(f"Threshold selection: {obj_name}")
             logger.info(
-                f"  Selected threshold: {threshold:.3f} (sens={metrics['sensitivity']:.2f}, spec={metrics['specificity']:.2f})"
+                f"  Selected threshold: {threshold:.3f} (sens={metrics.sensitivity:.2f}, spec={metrics.specificity:.2f})"
             )
 
         # Compute alternative thresholds for comparison
@@ -530,10 +556,10 @@ def choose_threshold_objective(
 
         logger.info("  Alternative thresholds:")
         if obj_name != "youden":
-            j_stat = youden_metrics["tpr"] - youden_metrics["fpr"]
+            j_stat = youden_metrics.tpr - youden_metrics.fpr
             logger.info(
-                f"    Youden: {youden_thr:.3f} (sens={youden_metrics['sensitivity']:.2f}, "
-                f"spec={youden_metrics['specificity']:.2f}, J={j_stat:.2f})"
+                f"    Youden: {youden_thr:.3f} (sens={youden_metrics.sensitivity:.2f}, "
+                f"spec={youden_metrics.specificity:.2f}, J={j_stat:.2f})"
             )
 
         # Log rationale
@@ -591,9 +617,9 @@ def compute_multi_target_specificity_metrics(
         thr = threshold_for_specificity(y_true, y_pred, target_spec=target_spec)
         binary_metrics = binary_metrics_at_threshold(y_true, y_pred, thr)
         metrics[f"thr_ctrl_{spec_key}"] = thr
-        metrics[f"sens_ctrl_{spec_key}"] = binary_metrics["sensitivity"]
-        metrics[f"prec_ctrl_{spec_key}"] = binary_metrics["precision"]
-        metrics[f"spec_ctrl_{spec_key}"] = binary_metrics["specificity"]
+        metrics[f"sens_ctrl_{spec_key}"] = binary_metrics.sensitivity
+        metrics[f"prec_ctrl_{spec_key}"] = binary_metrics.precision
+        metrics[f"spec_ctrl_{spec_key}"] = binary_metrics.specificity
     return metrics
 
 
@@ -638,29 +664,29 @@ def compute_threshold_bundle(
     bundle: ThresholdBundle = {
         "youden": {
             "threshold": youden_thr,
-            "fpr": youden_metrics["fpr"],
-            "tpr": youden_metrics["tpr"],
-            "sensitivity": youden_metrics["sensitivity"],
-            "specificity": youden_metrics["specificity"],
-            "precision": youden_metrics["precision"],
-            "f1": youden_metrics["f1"],
-            "tp": youden_metrics["tp"],
-            "fp": youden_metrics["fp"],
-            "tn": youden_metrics["tn"],
-            "fn": youden_metrics["fn"],
+            "fpr": youden_metrics.fpr,
+            "tpr": youden_metrics.tpr,
+            "sensitivity": youden_metrics.sensitivity,
+            "specificity": youden_metrics.specificity,
+            "precision": youden_metrics.precision,
+            "f1": youden_metrics.f1,
+            "tp": youden_metrics.tp,
+            "fp": youden_metrics.fp,
+            "tn": youden_metrics.tn,
+            "fn": youden_metrics.fn,
         },
         "spec_target": {
             "threshold": spec_thr,
-            "fpr": spec_metrics["fpr"],
-            "tpr": spec_metrics["tpr"],
-            "sensitivity": spec_metrics["sensitivity"],
-            "specificity": spec_metrics["specificity"],
-            "precision": spec_metrics["precision"],
-            "f1": spec_metrics["f1"],
-            "tp": spec_metrics["tp"],
-            "fp": spec_metrics["fp"],
-            "tn": spec_metrics["tn"],
-            "fn": spec_metrics["fn"],
+            "fpr": spec_metrics.fpr,
+            "tpr": spec_metrics.tpr,
+            "sensitivity": spec_metrics.sensitivity,
+            "specificity": spec_metrics.specificity,
+            "precision": spec_metrics.precision,
+            "f1": spec_metrics.f1,
+            "tp": spec_metrics.tp,
+            "fp": spec_metrics.fp,
+            "tn": spec_metrics.tn,
+            "fn": spec_metrics.fn,
         },
         "target_spec": target_spec,
         "youden_threshold": youden_thr,
@@ -672,16 +698,16 @@ def compute_threshold_bundle(
         dca_metrics = binary_metrics_at_threshold(y_true, y_pred, dca_threshold)
         bundle["dca"] = {
             "threshold": dca_threshold,
-            "fpr": dca_metrics["fpr"],
-            "tpr": dca_metrics["tpr"],
-            "sensitivity": dca_metrics["sensitivity"],
-            "specificity": dca_metrics["specificity"],
-            "precision": dca_metrics["precision"],
-            "f1": dca_metrics["f1"],
-            "tp": dca_metrics["tp"],
-            "fp": dca_metrics["fp"],
-            "tn": dca_metrics["tn"],
-            "fn": dca_metrics["fn"],
+            "fpr": dca_metrics.fpr,
+            "tpr": dca_metrics.tpr,
+            "sensitivity": dca_metrics.sensitivity,
+            "specificity": dca_metrics.specificity,
+            "precision": dca_metrics.precision,
+            "f1": dca_metrics.f1,
+            "tp": dca_metrics.tp,
+            "fp": dca_metrics.fp,
+            "tn": dca_metrics.tn,
+            "fn": dca_metrics.fn,
         }
         bundle["dca_threshold"] = dca_threshold
 

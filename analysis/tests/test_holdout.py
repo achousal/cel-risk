@@ -36,12 +36,12 @@ class TestLoadHoldoutIndices:
         idx_file = tmp_path / "holdout_idx.csv"
         pd.DataFrame({"idx": [0, 10, 20, 30]}).to_csv(idx_file, index=False)
 
-        indices, metadata = load_holdout_indices(str(idx_file))
-        assert isinstance(indices, np.ndarray)
-        assert len(indices) == 4
-        assert indices.dtype == np.int64
-        np.testing.assert_array_equal(indices, [0, 10, 20, 30])
-        assert isinstance(metadata, dict)
+        result = load_holdout_indices(str(idx_file))
+        assert isinstance(result.indices, np.ndarray)
+        assert len(result.indices) == 4
+        assert result.indices.dtype == np.int64
+        np.testing.assert_array_equal(result.indices, [0, 10, 20, 30])
+        assert isinstance(result.metadata, dict)
 
     def test_missing_idx_column(self, tmp_path):
         idx_file = tmp_path / "holdout_idx.csv"
@@ -54,9 +54,9 @@ class TestLoadHoldoutIndices:
         idx_file = tmp_path / "holdout_idx.csv"
         pd.DataFrame({"idx": []}).to_csv(idx_file, index=False)
 
-        indices, metadata = load_holdout_indices(str(idx_file))
-        assert len(indices) == 0
-        assert isinstance(metadata, dict)
+        result = load_holdout_indices(str(idx_file))
+        assert len(result.indices) == 0
+        assert isinstance(result.metadata, dict)
 
 
 class TestLoadModelArtifact:

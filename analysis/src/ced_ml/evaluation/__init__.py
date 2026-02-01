@@ -1,6 +1,7 @@
 """Evaluation module for model performance assessment."""
 
 from ced_ml.evaluation.holdout import (
+    HoldoutResult,
     compute_holdout_metrics,
     compute_top_risk_capture,
     evaluate_holdout,
@@ -29,6 +30,7 @@ __all__ = [
     "predict_on_test",
     "predict_on_holdout",
     "evaluate_holdout",
+    "HoldoutResult",
     "load_holdout_indices",
     "load_model_artifact",
     "extract_holdout_data",

@@ -26,6 +26,7 @@ from ced_ml.metrics.discrimination import (
     youden_j,
 )
 from ced_ml.metrics.thresholds import (
+    BinaryMetrics,
     ThresholdBundle,
     ThresholdMetrics,
     binary_metrics_at_threshold,
@@ -60,6 +61,7 @@ __all__ = [
     "top_risk_capture",
     "choose_threshold_objective",
     # Threshold bundle (standardized interface for plotting)
+    "BinaryMetrics",
     "ThresholdBundle",
     "ThresholdMetrics",
     "compute_threshold_bundle",

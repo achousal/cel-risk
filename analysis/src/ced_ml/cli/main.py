@@ -11,6 +11,7 @@ Provides subcommands:
 import click
 
 from ced_ml import __version__
+from ced_ml.data.schema import ModelName
 
 
 @click.group()
@@ -201,7 +202,7 @@ def save_splits(ctx, config, **kwargs):
 )
 @click.option(
     "--model",
-    default="LR_EN",
+    default=ModelName.LR_EN,
     help="Model to train (LR, LR_EN, RF, XGBoost, LinSVM_cal, etc.)",
 )
 @click.option(

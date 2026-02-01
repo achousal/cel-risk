@@ -234,8 +234,8 @@ def test_compute_scale_pos_weight_edge_case():
     """Test scale_pos_weight with all positives."""
     y = np.array([1, 1, 1])
     spw = compute_scale_pos_weight_from_y(y)
-    # All positive: neg=0 -> max(1, 0) = 1, pos=3 -> spw = 1/3
-    assert np.isclose(spw, 1 / 3)
+    # All positive: neg=0, pos=3 -> spw = 0/3 = 0 -> max(1.0, 0) = 1.0
+    assert np.isclose(spw, 1.0)
 
 
 # ----------------------------

@@ -10,13 +10,26 @@ Creates publication-quality risk score distribution plots with:
 from collections.abc import Sequence
 from pathlib import Path
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 from scipy.stats import gaussian_kde
 
+from ced_ml.data.schema import CONTROL_LABEL
+from ced_ml.utils.math_utils import EPSILON_BOUNDS
+
 from .dca import apply_plot_metadata
+from .style import (
+    COLOR_PRIMARY,
+    COLOR_SECONDARY,
+    COLOR_TERTIARY,
+    DPI,
+    FONT_LEGEND,
+    FONT_TITLE,
+    LW_PRIMARY,
+    LW_SECONDARY,
+    configure_backend,
+)
 
 
 def compute_distribution_stats(scores: np.ndarray) -> dict[str, float]:
@@ -58,7 +71,7 @@ def _normalize_threshold(value: float | None) -> float | None:
         Normalized threshold in [0, 1], or None if invalid
 
     Notes:
-        - Allows small epsilon (1e-6) tolerance outside [0, 1]
+        - Allows small epsilon (EPSILON_BOUNDS=1e-6) tolerance outside [0, 1]
         - Clamps values to [0, 1] range
         - Returns None for non-finite or severely out-of-range values
     """
@@ -72,8 +85,7 @@ def _normalize_threshold(value: float | None) -> float | None:
         return None
 
     # Allow small epsilon outside [0, 1] for floating point precision
-    eps = 1e-6
-    if thresh < 0.0 - eps or thresh > 1.0 + eps:
+    if thresh < 0.0 - EPSILON_BOUNDS or thresh > 1.0 + EPSILON_BOUNDS:
         return None
 
     # Clamp to [0, 1]
@@ -91,9 +103,8 @@ def plot_risk_distribution(
     meta_lines: Sequence[str] | None = None,
     category_col: np.ndarray | None = None,
     dca_threshold: float | None = None,
-    spec95_threshold: float | None = None,
+    spec_target_threshold: float | None = None,
     youden_threshold: float | None = None,
-    alpha_threshold: float | None = None,
     metrics_at_thresholds: dict[str, dict[str, float]] | None = None,
     x_limits: tuple[float, float] | None = None,
     target_spec: float = 0.95,
@@ -118,9 +129,8 @@ def plot_risk_distribution(
         meta_lines: Metadata lines for bottom of figure
         category_col: Array of category labels ("Controls", "Incident", "Prevalent")
         dca_threshold: DCA zero-crossing threshold (0-1) [deprecated, use threshold_bundle]
-        spec95_threshold: Specificity threshold (0-1) [deprecated, use threshold_bundle]
+        spec_target_threshold: Target specificity threshold (0-1) [deprecated, use threshold_bundle]
         youden_threshold: Youden's J statistic threshold (0-1) [deprecated, use threshold_bundle]
-        alpha_threshold: Alpha/target specificity threshold (0-1) [deprecated, use threshold_bundle]
         metrics_at_thresholds: Performance metrics at each threshold [deprecated, use threshold_bundle]
         x_limits: Optional tuple (xmin, xmax) for x-axis range
         target_spec: Target specificity value for annotation label (default: 0.95)
@@ -136,7 +146,7 @@ def plot_risk_distribution(
     # If threshold_bundle provided, extract values (preferred interface)
     if threshold_bundle is not None:
         youden_threshold = threshold_bundle.get("youden_threshold")
-        spec95_threshold = threshold_bundle.get("spec_target_threshold")
+        spec_target_threshold = threshold_bundle.get("spec_target_threshold")
         dca_threshold = threshold_bundle.get("dca_threshold")
         target_spec = threshold_bundle.get("target_spec", 0.95)
 
@@ -158,9 +168,6 @@ def plot_risk_distribution(
                 "fp": m.get("fp"),
                 "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
             }
-            # Also set spec95 and alpha for backward compat
-            metrics_at_thresholds["spec95"] = metrics_at_thresholds["spec_target"]
-            metrics_at_thresholds["alpha"] = metrics_at_thresholds["spec_target"]
         if "dca" in threshold_bundle:
             m = threshold_bundle["dca"]
             metrics_at_thresholds["dca"] = {
@@ -170,18 +177,14 @@ def plot_risk_distribution(
                 "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
             }
 
-    # Handle alpha_threshold fallback (deprecated parameter)
-    if spec95_threshold is None and alpha_threshold is not None:
-        spec95_threshold = alpha_threshold
-
     # Normalize thresholds to [0, 1] with epsilon tolerance
     # This handles edge cases where threshold computation may produce values
     # slightly outside [0, 1] due to floating point arithmetic (e.g., max(p) + 1e-12)
-    spec95_threshold = _normalize_threshold(spec95_threshold)
+    spec_target_threshold = _normalize_threshold(spec_target_threshold)
     youden_threshold = _normalize_threshold(youden_threshold)
     dca_threshold = _normalize_threshold(dca_threshold)
 
-    matplotlib.use("Agg")
+    configure_backend()
 
     s = np.asarray(scores).astype(float)
 
@@ -248,7 +251,7 @@ def plot_risk_distribution(
             bins=bins,
             density=True,
             alpha=0.7,
-            color="steelblue",
+            color=COLOR_PRIMARY,
             edgecolor="white",
         )
     elif category_col is not None:
@@ -261,9 +264,9 @@ def plot_risk_distribution(
 
         # Define three categories with distinct colors
         categories = [
-            ("Controls", "steelblue", "Controls"),
-            ("Incident", "firebrick", "Incident"),
-            ("Prevalent", "darkorange", "Prevalent"),
+            ("Controls", COLOR_PRIMARY, "Controls"),
+            ("Incident", COLOR_TERTIARY, "Incident"),
+            ("Prevalent", COLOR_SECONDARY, "Prevalent"),
         ]
 
         for label, color, cat_name in categories:
@@ -281,7 +284,7 @@ def plot_risk_distribution(
             )
 
         if ax_main.get_legend_handles_labels()[0]:
-            ax_main.legend(loc="upper right", fontsize=10)
+            ax_main.legend(loc="upper right", fontsize=FONT_LEGEND)
     else:
         y = np.asarray(y_true).astype(int)
         mask = np.isfinite(s) & np.isfinite(y)
@@ -292,8 +295,8 @@ def plot_risk_distribution(
             return
         bins = min(60, max(10, int(np.sqrt(len(s)))))
         for label, color, target in [
-            ("Control", "steelblue", 0),
-            (pos_label, "firebrick", 1),
+            (CONTROL_LABEL, COLOR_PRIMARY, 0),
+            (pos_label, COLOR_TERTIARY, 1),
         ]:
             vals = s[y == target]
             if len(vals) == 0:
@@ -308,7 +311,7 @@ def plot_risk_distribution(
                 label=label,
             )
         if ax_main.get_legend_handles_labels()[0]:
-            ax_main.legend(loc="upper right", fontsize=10)
+            ax_main.legend(loc="upper right", fontsize=FONT_LEGEND)
 
     # Add threshold lines (without labels - will be added to legend separately)
     # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
@@ -325,19 +328,19 @@ def plot_risk_distribution(
         return abs(t1 - t2) < overlap_eps
 
     # Compute offsets for each threshold to avoid overlap
-    spec95_offset = 0.0
+    spec_target_offset = 0.0
     youden_offset = 0.0
     dca_offset = 0.0
 
-    # Check spec95 vs youden overlap
-    if _thresholds_overlap(spec95_threshold, youden_threshold):
-        spec95_offset = -offset_amount  # Shift spec95 left
+    # Check spec_target vs youden overlap
+    if _thresholds_overlap(spec_target_threshold, youden_threshold):
+        spec_target_offset = -offset_amount  # Shift spec_target left
         youden_offset = offset_amount  # Shift youden right
 
-    # Check spec95 vs dca overlap (if not already offset)
-    if _thresholds_overlap(spec95_threshold, dca_threshold):
-        if spec95_offset == 0.0:
-            spec95_offset = -offset_amount
+    # Check spec_target vs dca overlap (if not already offset)
+    if _thresholds_overlap(spec_target_threshold, dca_threshold):
+        if spec_target_offset == 0.0:
+            spec_target_offset = -offset_amount
         dca_offset = offset_amount * 1.5  # Shift dca further right
 
     # Check youden vs dca overlap
@@ -349,14 +352,14 @@ def plot_risk_distribution(
 
     # Draw threshold lines with z-order to ensure visibility
     # Higher zorder = drawn on top
-    if spec95_threshold is not None:
+    if spec_target_threshold is not None:
         ax_main.axvline(
-            spec95_threshold + spec95_offset,
+            spec_target_threshold + spec_target_offset,
             color="red",
             linestyle="--",
-            linewidth=2,
+            linewidth=LW_PRIMARY,
             alpha=0.7,
-            zorder=10,  # Red (spec95) on top
+            zorder=10,  # Red (spec_target) on top
         )
 
     if youden_threshold is not None:
@@ -364,7 +367,7 @@ def plot_risk_distribution(
             youden_threshold + youden_offset,
             color="green",
             linestyle="--",
-            linewidth=2,
+            linewidth=LW_PRIMARY,
             alpha=0.7,
             zorder=9,  # Green (youden) middle
         )
@@ -372,11 +375,11 @@ def plot_risk_distribution(
     if dca_threshold is not None:
         ax_main.axvline(
             dca_threshold + dca_offset,
-            color="purple",
+            color=COLOR_SECONDARY,
             linestyle="--",
-            linewidth=2,
+            linewidth=LW_PRIMARY,
             alpha=0.7,
-            zorder=8,  # Purple (dca) bottom
+            zorder=8,
         )
 
     # Create comprehensive legend with threshold metrics
@@ -384,15 +387,10 @@ def plot_risk_distribution(
     threshold_handles = []
     threshold_labels = []
 
-    # Accept either "spec95" or "alpha" key for specificity threshold metrics
-    if spec95_threshold is not None:
-        m = (
-            metrics_at_thresholds.get("spec95") or metrics_at_thresholds.get("alpha")
-            if metrics_at_thresholds
-            else None
-        )
+    if spec_target_threshold is not None:
+        m = metrics_at_thresholds.get("spec_target") if metrics_at_thresholds else None
 
-        line_handle = Line2D([0], [0], color="red", linestyle="--", linewidth=2, alpha=0.7)
+        line_handle = Line2D([0], [0], color="red", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7)
         threshold_handles.append(line_handle)
 
         # Multi-line label format with each metric on separate line
@@ -408,7 +406,9 @@ def plot_risk_distribution(
     if youden_threshold is not None:
         m = metrics_at_thresholds.get("youden") if metrics_at_thresholds else None
 
-        line_handle = Line2D([0], [0], color="green", linestyle="--", linewidth=2, alpha=0.7)
+        line_handle = Line2D(
+            [0], [0], color="green", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
+        )
         threshold_handles.append(line_handle)
 
         # Multi-line label format with each metric on separate line
@@ -424,7 +424,9 @@ def plot_risk_distribution(
     if dca_threshold is not None:
         m = metrics_at_thresholds.get("dca") if metrics_at_thresholds else None
 
-        line_handle = Line2D([0], [0], color="purple", linestyle="--", linewidth=2, alpha=0.7)
+        line_handle = Line2D(
+            [0], [0], color=COLOR_SECONDARY, linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
+        )
         threshold_handles.append(line_handle)
 
         # Multi-line label format with each metric on separate line
@@ -448,14 +450,14 @@ def plot_risk_distribution(
             all_labels,
             loc="upper left",
             bbox_to_anchor=(1.05, 1),
-            fontsize=9,
+            fontsize=FONT_LEGEND,
             framealpha=0.9,
         )
 
     if subtitle:
-        ax_main.set_title(f"{title}\n{subtitle}", fontsize=12)
+        ax_main.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE)
     else:
-        ax_main.set_title(title, fontsize=12)
+        ax_main.set_title(title, fontsize=FONT_TITLE)
     ax_main.set_ylabel("Density")
     ax_main.grid(True, alpha=0.2)
 
@@ -481,8 +483,10 @@ def plot_risk_distribution(
                 kde = gaussian_kde(incident_scores, bw_method="scott")
                 x_range = np.linspace(0, 1, 200)
                 density = kde(x_range)
-                ax_incident.plot(x_range, density, color="firebrick", linewidth=2, alpha=0.8)
-                ax_incident.fill_between(x_range, density, alpha=0.3, color="firebrick")
+                ax_incident.plot(
+                    x_range, density, color=COLOR_TERTIARY, linewidth=LW_PRIMARY, alpha=0.8
+                )
+                ax_incident.fill_between(x_range, density, alpha=0.3, color=COLOR_TERTIARY)
             except Exception:
                 # Fallback to histogram if KDE fails (e.g., too few points)
                 ax_incident.hist(
@@ -490,18 +494,18 @@ def plot_risk_distribution(
                     bins=20,
                     density=True,
                     alpha=0.7,
-                    color="firebrick",
+                    color=COLOR_TERTIARY,
                     edgecolor="white",
                 )
 
         # Add threshold lines (no labels) with same offsets as main plot
         # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
-        if spec95_threshold is not None:
+        if spec_target_threshold is not None:
             ax_incident.axvline(
-                spec95_threshold + spec95_offset,
+                spec_target_threshold + spec_target_offset,
                 color="red",
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=10,
             )
@@ -510,16 +514,16 @@ def plot_risk_distribution(
                 youden_threshold + youden_offset,
                 color="green",
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=9,
             )
         if dca_threshold is not None:
             ax_incident.axvline(
                 dca_threshold + dca_offset,
-                color="purple",
+                color=COLOR_SECONDARY,
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=8,
             )
@@ -558,8 +562,10 @@ def plot_risk_distribution(
                 kde = gaussian_kde(prevalent_scores, bw_method="scott")
                 x_range = np.linspace(0, 1, 200)
                 density = kde(x_range)
-                ax_prevalent.plot(x_range, density, color="darkorange", linewidth=2, alpha=0.8)
-                ax_prevalent.fill_between(x_range, density, alpha=0.3, color="darkorange")
+                ax_prevalent.plot(
+                    x_range, density, color=COLOR_SECONDARY, linewidth=LW_PRIMARY, alpha=0.8
+                )
+                ax_prevalent.fill_between(x_range, density, alpha=0.3, color=COLOR_SECONDARY)
             except Exception:
                 # Fallback to histogram if KDE fails
                 ax_prevalent.hist(
@@ -567,18 +573,18 @@ def plot_risk_distribution(
                     bins=20,
                     density=True,
                     alpha=0.7,
-                    color="darkorange",
+                    color=COLOR_SECONDARY,
                     edgecolor="white",
                 )
 
         # Add threshold lines (no labels) with same offsets as main plot
         # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
-        if spec95_threshold is not None:
+        if spec_target_threshold is not None:
             ax_prevalent.axvline(
-                spec95_threshold + spec95_offset,
+                spec_target_threshold + spec_target_offset,
                 color="red",
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=10,
             )
@@ -587,16 +593,16 @@ def plot_risk_distribution(
                 youden_threshold + youden_offset,
                 color="green",
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=9,
             )
         if dca_threshold is not None:
             ax_prevalent.axvline(
                 dca_threshold + dca_offset,
-                color="purple",
+                color=COLOR_SECONDARY,
                 linestyle="--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 alpha=0.5,
                 zorder=8,
             )
@@ -632,5 +638,5 @@ def plot_risk_distribution(
     # Apply metadata and adjust layout
     bottom_margin = apply_plot_metadata(fig, meta_lines) if meta_lines else 0.1
     plt.subplots_adjust(left=0.12, right=0.70, top=0.92, bottom=bottom_margin, hspace=0.3)
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=DPI)
     plt.close()

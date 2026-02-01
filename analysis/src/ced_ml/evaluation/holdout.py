@@ -10,7 +10,8 @@ It handles:
 """
 
 import json
-import os
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -20,6 +21,8 @@ import pandas as pd
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import identify_protein_columns, read_proteomics_file
 from ced_ml.data.schema import (
+    METRIC_AUROC,
+    METRIC_PRAUC,
     TARGET_COL,
     get_positive_label,
     get_scenario_labels,
@@ -39,9 +42,23 @@ from ced_ml.models.calibration import (
     calibration_intercept_slope,
     expected_calibration_error,
 )
+from ced_ml.utils.math_utils import EPSILON_BOUNDS
 
 
-def load_holdout_indices(path: str) -> tuple[np.ndarray, dict[str, Any]]:
+@dataclass
+class HoldoutResult:
+    """Result from loading holdout indices.
+
+    Attributes:
+        indices: Array of holdout sample indices
+        metadata: Dictionary of metadata from companion JSON file
+    """
+
+    indices: np.ndarray
+    metadata: dict[str, Any]
+
+
+def load_holdout_indices(path: str) -> HoldoutResult:
     """
     Load holdout indices and associated metadata from CSV file.
 
@@ -49,7 +66,7 @@ def load_holdout_indices(path: str) -> tuple[np.ndarray, dict[str, Any]]:
         path: Path to holdout index CSV with 'idx' column
 
     Returns:
-        (indices, metadata) where metadata is loaded from companion JSON file if available
+        HoldoutResult dataclass with indices and metadata
 
     Raises:
         ValueError: If file missing 'idx' column
@@ -66,12 +83,13 @@ def load_holdout_indices(path: str) -> tuple[np.ndarray, dict[str, Any]]:
 
     # Try to load companion metadata JSON
     metadata = {}
-    meta_path = path.replace(".csv", "_meta.json").replace("_idx.csv", "_meta.json")
-    if os.path.exists(meta_path):
+    path_obj = Path(path)
+    meta_path = path_obj.parent / (path_obj.stem.replace("_idx", "_meta") + ".json")
+    if meta_path.exists():
         with open(meta_path) as f:
             metadata = json.load(f)
 
-    return indices, metadata
+    return HoldoutResult(indices=indices, metadata=metadata)
 
 
 def load_model_artifact(path: str) -> dict[str, Any]:
@@ -169,7 +187,7 @@ def compute_holdout_metrics(
     brier = compute_brier_score(y_true, proba_eval)
 
     # Calibration metrics
-    cal_a, cal_b = calibration_intercept_slope(y_true, proba_eval)
+    cal_metrics = calibration_intercept_slope(y_true, proba_eval)
     ece = expected_calibration_error(y_true, proba_eval)
 
     # Extract threshold metadata
@@ -197,7 +215,7 @@ def compute_holdout_metrics(
     target_prev = prevalence_meta.get("target", train_prev)
     if target_prev is None or not np.isfinite(target_prev):
         target_prev = train_prev
-    target_prev = float(np.clip(target_prev, 1e-6, 1.0 - 1e-6))
+    target_prev = float(np.clip(target_prev, EPSILON_BOUNDS, 1.0 - EPSILON_BOUNDS))
 
     # Build metrics dictionary
     metrics = {
@@ -209,25 +227,29 @@ def compute_holdout_metrics(
         "n_holdout_pos": int(y_true.sum()),
         "train_prevalence_sample": (float(train_prev) if np.isfinite(train_prev) else np.nan),
         "target_prevalence": float(target_prev),
-        "AUROC_holdout": disc_metrics["AUROC"],
-        "PR_AUC_holdout": disc_metrics["PR_AUC"],
+        "AUROC_holdout": disc_metrics[METRIC_AUROC],
+        "PR_AUC_holdout": disc_metrics[METRIC_PRAUC],
         "Brier_holdout": float(brier),
-        "calibration_intercept_holdout": float(cal_a) if np.isfinite(cal_a) else np.nan,
-        "calibration_slope_holdout": float(cal_b) if np.isfinite(cal_b) else np.nan,
+        "calibration_intercept_holdout": (
+            float(cal_metrics.intercept) if np.isfinite(cal_metrics.intercept) else np.nan
+        ),
+        "calibration_slope_holdout": (
+            float(cal_metrics.slope) if np.isfinite(cal_metrics.slope) else np.nan
+        ),
         "ECE_holdout": float(ece),
         "thr_objective_name": objective_name,
         "thr_primary": float(thr_primary),
-        "precision_holdout_at_thr_primary": float(m_primary["precision"]),
-        "recall_holdout_at_thr_primary": float(m_primary["sensitivity"]),
-        "specificity_holdout_at_thr_primary": float(m_primary["specificity"]),
+        "precision_holdout_at_thr_primary": float(m_primary.precision),
+        "recall_holdout_at_thr_primary": float(m_primary.sensitivity),
+        "specificity_holdout_at_thr_primary": float(m_primary.specificity),
         "fixed_spec_value": float(fixed_spec_value) if fixed_spec_value is not None else np.nan,
         "thr_maxF1": float(thr_f1),
-        "f1_holdout_at_thr_maxF1": float(m_f1["f1"]),
-        "precision_holdout_at_thr_maxF1": float(m_f1["precision"]),
-        "recall_holdout_at_thr_maxF1": float(m_f1["sensitivity"]),
+        "f1_holdout_at_thr_maxF1": float(m_f1.f1),
+        "precision_holdout_at_thr_maxF1": float(m_f1.precision),
+        "recall_holdout_at_thr_maxF1": float(m_f1.sensitivity),
         "thr_spec90": float(thr_spec90),
-        "sensitivity_holdout_at_spec90": float(m_spec90["sensitivity"]),
-        "specificity_holdout_at_spec90": float(m_spec90["specificity"]),
+        "sensitivity_holdout_at_spec90": float(m_spec90.sensitivity),
+        "specificity_holdout_at_spec90": float(m_spec90.specificity),
     }
 
     # Control specificity thresholds
@@ -239,9 +261,9 @@ def compute_holdout_metrics(
         m_ctrl = binary_metrics_at_threshold(y_true, proba_eval, thr_val)
         tag = str(key).replace("0.", "")
         metrics[f"thr_ctrl_{tag}"] = float(thr_val)
-        metrics[f"precision_holdout_ctrl_{tag}"] = float(m_ctrl["precision"])
-        metrics[f"recall_holdout_ctrl_{tag}"] = float(m_ctrl["sensitivity"])
-        metrics[f"specificity_holdout_ctrl_{tag}"] = float(m_ctrl["specificity"])
+        metrics[f"precision_holdout_ctrl_{tag}"] = float(m_ctrl.precision)
+        metrics[f"recall_holdout_ctrl_{tag}"] = float(m_ctrl.sensitivity)
+        metrics[f"specificity_holdout_ctrl_{tag}"] = float(m_ctrl.specificity)
 
     # Clinical thresholds
     for thr in clinical_points:
@@ -250,10 +272,10 @@ def compute_holdout_metrics(
         m_thr = binary_metrics_at_threshold(y_true, proba_eval, thr)
         tag = f"clin_{str(thr).replace('.', 'p')}"
         metrics[f"{tag}_threshold"] = float(thr)
-        metrics[f"{tag}_precision"] = float(m_thr["precision"])
-        metrics[f"{tag}_recall"] = float(m_thr["sensitivity"])
-        metrics[f"{tag}_specificity"] = float(m_thr["specificity"])
-        metrics[f"{tag}_f1"] = float(m_thr["f1"])
+        metrics[f"{tag}_precision"] = float(m_thr.precision)
+        metrics[f"{tag}_recall"] = float(m_thr.sensitivity)
+        metrics[f"{tag}_specificity"] = float(m_thr.specificity)
+        metrics[f"{tag}_f1"] = float(m_thr.f1)
 
     return metrics
 
@@ -310,7 +332,7 @@ def save_holdout_predictions(
             "risk_holdout_raw": proba_eval,
         }
     )
-    out.to_csv(os.path.join(outdir, "holdout_predictions.csv"), index=False)
+    out.to_csv(Path(outdir) / "holdout_predictions.csv", index=False)
 
 
 def evaluate_holdout(
@@ -361,7 +383,7 @@ def evaluate_holdout(
         Dictionary of holdout metrics
     """
     # Create output directory
-    os.makedirs(outdir, exist_ok=True)
+    Path(outdir).mkdir(parents=True, exist_ok=True)
 
     # Load model artifact
     bundle = load_model_artifact(model_artifact_path)
@@ -377,7 +399,9 @@ def evaluate_holdout(
     df_scenario_raw = df_raw[df_raw[TARGET_COL].isin(keep_labels)].copy()
 
     # Load holdout indices and metadata
-    holdout_idx, split_meta = load_holdout_indices(holdout_idx_file)
+    holdout_result = load_holdout_indices(holdout_idx_file)
+    holdout_idx = holdout_result.indices
+    split_meta = holdout_result.metadata
 
     # Apply row filters (matching save_splits.py and train.py)
     # Use metadata if available, otherwise use defaults
@@ -456,7 +480,7 @@ def evaluate_holdout(
     )
     if target_prev is None or not np.isfinite(target_prev):
         target_prev = train_prev
-    target_prev = float(np.clip(target_prev, 1e-6, 1.0 - 1e-6))
+    target_prev = float(np.clip(target_prev, EPSILON_BOUNDS, 1.0 - EPSILON_BOUNDS))
 
     proba_adjusted = adjust_probabilities_for_prevalence(proba_eval, train_prev, target_prev)
 
@@ -478,13 +502,13 @@ def evaluate_holdout(
     )
 
     # Save metrics
-    pd.DataFrame([metrics]).to_csv(os.path.join(outdir, "holdout_metrics.csv"), index=False)
+    pd.DataFrame([metrics]).to_csv(Path(outdir) / "holdout_metrics.csv", index=False)
 
     # Top-risk capture
     top_fracs = sorted({float(t.strip()) for t in (toprisk_fracs or "").split(",") if t.strip()})
     if top_fracs:
         top_risk_df = compute_top_risk_capture(y_holdout, proba_eval, top_fracs)
-        top_risk_df.to_csv(os.path.join(outdir, "holdout_toprisk_capture.csv"), index=False)
+        top_risk_df.to_csv(Path(outdir) / "holdout_toprisk_capture.csv", index=False)
 
     # Save predictions if requested
     if save_preds:
@@ -520,7 +544,7 @@ def evaluate_holdout(
             bundle.get("args", {}).get("dca_report_points", "")
         )
 
-        dca_dir = os.path.join(outdir, "diagnostics")
+        dca_dir = str(Path(outdir) / "diagnostics")
         dca_probs = proba_adjusted if dca_use_target_prevalence else proba_eval
         dca_prev = target_prev if dca_use_target_prevalence else None
 
@@ -534,7 +558,7 @@ def evaluate_holdout(
             prevalence_adjustment=dca_prev,
         )
 
-        with open(os.path.join(dca_dir, "holdout_dca_summary.json"), "w") as f:
+        with open(Path(dca_dir) / "holdout_dca_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
 
     return metrics

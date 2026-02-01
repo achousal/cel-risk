@@ -29,6 +29,8 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
+from ced_ml.utils.math_utils import logit
+
 logger = logging.getLogger(__name__)
 
 
@@ -187,8 +189,7 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
 
             # Convert to logits if requested
             if not self.use_probabilities:
-                preds = np.clip(preds, 1e-7, 1 - 1e-7)
-                preds = np.log(preds / (1 - preds))
+                preds = logit(preds)
 
             features.append(preds)
             self._feature_names.append(f"oof_{model_name}")
@@ -292,8 +293,7 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
 
             # Convert to logits if needed
             if not self.use_probabilities:
-                preds = np.clip(preds, 1e-7, 1 - 1e-7)
-                preds = np.log(preds / (1 - preds))
+                preds = logit(preds)
 
             features.append(preds)
 

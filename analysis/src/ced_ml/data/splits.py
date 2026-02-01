@@ -9,6 +9,7 @@ This module handles three-way stratified splitting (TRAIN/VAL/TEST) with:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -131,21 +132,33 @@ def collapse_rare_strata(df: pd.DataFrame, strata: pd.Series, min_count: int) ->
     return collapsed.astype(str)
 
 
-def validate_strata(strata: pd.Series) -> tuple[bool, str]:
+@dataclass
+class SplitValidation:
+    """Result of split validation.
+
+    Attributes:
+        is_valid: Whether the split is valid
+        reason: Reason message (empty if valid, error description if invalid)
     """
-    Validate that all strata have at least 2 samples (required for splitting).
+
+    is_valid: bool
+    reason: str
+
+
+def validate_strata(strata: pd.Series) -> SplitValidation:
+    """Validate that all strata have at least 2 samples (required for splitting).
 
     Args:
         strata: Stratification labels
 
     Returns:
-        (is_valid, reason_message)
+        SplitValidation dataclass with validation result
     """
     vc = strata.value_counts(dropna=False)
     minc = int(vc.min()) if len(vc) else 0
     if minc < 2:
-        return False, f"min stratum count is {minc} (<2)"
-    return True, "ok"
+        return SplitValidation(is_valid=False, reason=f"min stratum count is {minc} (<2)")
+    return SplitValidation(is_valid=True, reason="ok")
 
 
 def build_working_strata(
@@ -186,10 +199,10 @@ def build_working_strata(
         try:
             strata = make_strata(df, sch, sex_col=sex_col, age_col=age_col)
             strata = collapse_rare_strata(df, strata, min_count=min_count)
-            ok, reason = validate_strata(strata)
-            if ok:
+            validation = validate_strata(strata)
+            if validation.is_valid:
                 return strata, sch
-            last_reason = f"{sch}: {reason}"
+            last_reason = f"{sch}: {validation.reason}"
         except KeyError as e:
             # Missing column required for this scheme, try next
             last_reason = f"{sch}: missing column {e}"
@@ -300,6 +313,10 @@ def temporal_order_indices(df: pd.DataFrame, col: str) -> np.ndarray:
     try:
         order_vals = pd.to_datetime(ser, errors="coerce")
     except Exception:
+        logger.warning(
+            f"Failed to parse temporal column '{col}' as datetime; will try numeric parsing.",
+            exc_info=True,
+        )
         order_vals = None
 
     # Fallback to numeric

@@ -11,6 +11,8 @@ from collections.abc import Callable
 
 import numpy as np
 
+from ced_ml.utils.constants import CI_LOWER_PCT, CI_UPPER_PCT, MIN_BOOTSTRAP_SAMPLES
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,12 +107,12 @@ def stratified_bootstrap_ci(
             vals.append(v)
 
     # Check minimum valid samples threshold
-    min_valid = max(20, int(n_boot * min_valid_frac))
+    min_valid = max(MIN_BOOTSTRAP_SAMPLES, int(n_boot * min_valid_frac))
     if len(vals) < min_valid:
         return (np.nan, np.nan)
 
     # Compute 95% CI using percentile method
-    return (float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5)))
+    return (float(np.percentile(vals, CI_LOWER_PCT)), float(np.percentile(vals, CI_UPPER_PCT)))
 
 
 def stratified_bootstrap_diff_ci(
@@ -197,13 +199,13 @@ def stratified_bootstrap_diff_ci(
             diffs.append(m1 - m2)
 
     # Check minimum valid samples threshold
-    min_valid = max(20, int(n_boot * min_valid_frac))
+    min_valid = max(MIN_BOOTSTRAP_SAMPLES, int(n_boot * min_valid_frac))
     if len(diffs) < min_valid:
         return (diff_full, np.nan, np.nan)
 
     # Compute 95% CI using percentile method
     return (
         diff_full,
-        float(np.percentile(diffs, 2.5)),
-        float(np.percentile(diffs, 97.5)),
+        float(np.percentile(diffs, CI_LOWER_PCT)),
+        float(np.percentile(diffs, CI_UPPER_PCT)),
     )

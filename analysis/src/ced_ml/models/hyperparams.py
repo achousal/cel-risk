@@ -10,6 +10,7 @@ Provides:
 import numpy as np
 
 from ..config import TrainingConfig
+from ..data.schema import ModelName
 
 
 def get_param_distributions(
@@ -47,16 +48,16 @@ def get_param_distributions(
         param_dists["sel__k"] = k_grid
 
     # Model-specific parameters
-    if model_name in ("LR_EN", "LR_L1"):
+    if model_name in (ModelName.LR_EN, ModelName.LR_L1):
         param_dists.update(_get_lr_params(config, randomize, grid_rng, model_name=model_name))
 
-    elif model_name == "LinSVM_cal":
+    elif model_name == ModelName.LinSVM_cal:
         param_dists.update(_get_svm_params(config, randomize, grid_rng))
 
-    elif model_name == "RF":
+    elif model_name == ModelName.RF:
         param_dists.update(_get_rf_params(config, randomize, grid_rng))
 
-    elif model_name == "XGBoost":
+    elif model_name == ModelName.XGBoost:
         param_dists.update(_get_xgb_params(config, xgb_spw, randomize, grid_rng))
 
     return param_dists
@@ -90,7 +91,7 @@ def _get_lr_params(
     params = {"clf__C": C_grid}
 
     # l1_ratio for ElasticNet (LR_EN only, not LR_L1)
-    if model_name == "LR_EN":
+    if model_name == ModelName.LR_EN:
         l1_grid = config.lr.l1_ratio.copy()
         if randomize and rng:
             l1_grid = _randomize_float_list(l1_grid, rng, min_val=0.0, max_val=1.0)

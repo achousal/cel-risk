@@ -7,6 +7,8 @@ ensuring behavioral equivalence with the legacy codebase.
 
 from typing import Any
 
+from ..data.schema import ModelName
+
 # Valid scenario names
 VALID_SCENARIOS = [
     "IncidentOnly",
@@ -15,18 +17,7 @@ VALID_SCENARIOS = [
 ]
 
 # Valid model names
-VALID_MODELS = [
-    "LR",
-    "LR_L1",
-    "LR_L2",
-    "LR_EN",
-    "LinSVM",
-    "LinSVM_cal",
-    "SVM_rbf",
-    "SVM_rbf_cal",
-    "RF",
-    "XGBoost",
-]
+VALID_MODELS = [m.value for m in ModelName]
 
 # Default split configuration (matches save_splits.py)
 DEFAULT_SPLITS_CONFIG: dict[str, Any] = {

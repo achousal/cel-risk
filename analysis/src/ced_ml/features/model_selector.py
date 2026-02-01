@@ -17,46 +17,38 @@ from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectFromModel, SelectorMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
+from ..data.schema import ModelName
+
 logger = logging.getLogger(__name__)
 
-# Selector estimator factories keyed by model name.
-# Each returns an unfitted lightweight estimator suitable for feature selection.
-_SELECTOR_ESTIMATORS = {
-    "LR_EN": lambda: _make_lr_selector(),
-    "LR_L1": lambda: _make_lr_selector(),
-    "LinSVM_cal": lambda: _make_svm_selector(),
-    "RF": lambda: _make_rf_selector(),
-    "XGBoost": lambda: _make_xgb_selector(),
-}
 
-
-def _make_lr_selector():
+def _make_lr_selector(random_state: int = 42):
     from sklearn.linear_model import LogisticRegression
 
     return LogisticRegression(
         penalty="l1",
         solver="saga",
         C=1.0,
-        max_iter=2000,
+        max_iter=2000,  # Higher than registry default (1000) for feature selection stability
         class_weight="balanced",
-        random_state=42,
+        random_state=random_state,
     )
 
 
-def _make_svm_selector():
+def _make_svm_selector(random_state: int = 42):
     from sklearn.svm import LinearSVC
 
     return LinearSVC(
         penalty="l1",
         dual=False,
         C=1.0,
-        max_iter=2000,
+        max_iter=2000,  # Higher than registry default (1000) for feature selection stability
         class_weight="balanced",
-        random_state=42,
+        random_state=random_state,
     )
 
 
-def _make_rf_selector():
+def _make_rf_selector(random_state: int = 42):
     from sklearn.ensemble import RandomForestClassifier
 
     return RandomForestClassifier(
@@ -64,12 +56,12 @@ def _make_rf_selector():
         max_depth=8,
         min_samples_leaf=5,
         class_weight="balanced",
-        random_state=42,
+        random_state=random_state,
         n_jobs=-1,
     )
 
 
-def _make_xgb_selector():
+def _make_xgb_selector(random_state: int = 42):
     from xgboost import XGBClassifier
 
     return XGBClassifier(
@@ -78,10 +70,21 @@ def _make_xgb_selector():
         learning_rate=0.3,
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=42,
+        random_state=random_state,
         eval_metric="logloss",
         verbosity=0,
     )
+
+
+# Selector estimator factories keyed by model name.
+# Each returns an unfitted lightweight estimator suitable for feature selection.
+_SELECTOR_ESTIMATORS = {
+    ModelName.LR_EN: _make_lr_selector,
+    ModelName.LR_L1: _make_lr_selector,
+    ModelName.LinSVM_cal: _make_svm_selector,
+    ModelName.RF: _make_rf_selector,
+    ModelName.XGBoost: _make_xgb_selector,
+}
 
 
 class ModelSpecificSelector(SelectorMixin, BaseEstimator):
@@ -107,15 +110,17 @@ class ModelSpecificSelector(SelectorMixin, BaseEstimator):
 
     def __init__(
         self,
-        model_name: str = "LR_EN",
+        model_name: str = ModelName.LR_EN,
         threshold: str | float = "median",
         max_features: int | None = None,
         min_features: int = 10,
+        random_state: int = 42,
     ):
         self.model_name = model_name
         self.threshold = threshold
         self.max_features = max_features
         self.min_features = min_features
+        self.random_state = random_state
 
     def fit(self, X, y=None):
         """Fit the selector estimator and compute the feature support mask.
@@ -145,7 +150,7 @@ class ModelSpecificSelector(SelectorMixin, BaseEstimator):
                 f"Supported: {sorted(_SELECTOR_ESTIMATORS.keys())}"
             )
 
-        estimator = factory()
+        estimator = factory(random_state=self.random_state)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=UserWarning)

@@ -18,6 +18,7 @@ from ced_ml.data.schema import (
     EXPECTED_N_PROTEINS,
     ID_COL,
     META_NUM_COLS,
+    PROTEIN_SUFFIX,
     TARGET_COL,
 )
 
@@ -56,7 +57,7 @@ def usecols_for_proteomics(
             return True
         if col in cat_cols:
             return True
-        if isinstance(col, str) and col.endswith("_resid"):
+        if isinstance(col, str) and col.endswith(PROTEIN_SUFFIX):
             return True
         return False
 
@@ -245,9 +246,8 @@ def validate_required_columns(df: pd.DataFrame) -> None:
     logger.debug(f"Validated target labels: {observed_labels}")
 
     # Validate metadata column dtypes (common numeric metadata)
-    common_numeric_metadata = ["age", "BMI"]
     non_numeric_metadata = []
-    for col in common_numeric_metadata:
+    for col in META_NUM_COLS:
         if col in df.columns:
             if not pd.api.types.is_numeric_dtype(df[col]):
                 non_numeric_metadata.append(f"{col} ({df[col].dtype})")
@@ -258,7 +258,7 @@ def validate_required_columns(df: pd.DataFrame) -> None:
         )
 
     # Validate protein columns are numeric (sample check on first 10 proteins)
-    protein_cols = [col for col in df.columns if col.endswith("_resid")]
+    protein_cols = [col for col in df.columns if col.endswith(PROTEIN_SUFFIX)]
     if protein_cols:
         sample_proteins = protein_cols[:10]
         non_numeric_proteins = []
@@ -392,7 +392,9 @@ def identify_protein_columns(df: pd.DataFrame) -> list[str]:
         >>> proteins = identify_protein_columns(df)
         >>> assert proteins == ["APOE_resid", "IL6_resid"]
     """
-    protein_cols = sorted([c for c in df.columns if isinstance(c, str) and c.endswith("_resid")])
+    protein_cols = sorted(
+        [c for c in df.columns if isinstance(c, str) and c.endswith(PROTEIN_SUFFIX)]
+    )
     if not protein_cols:
         raise ValueError(
             "No protein columns (*_resid) found. Check column naming or usecols filter."

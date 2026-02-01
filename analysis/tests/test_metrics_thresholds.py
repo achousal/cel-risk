@@ -293,15 +293,15 @@ def test_binary_metrics_at_threshold_perfect(perfect_separation):
     thr = 0.5  # Separates perfectly
     metrics = binary_metrics_at_threshold(y, p, thr)
 
-    assert metrics["threshold"] == 0.5
-    assert metrics["precision"] == 1.0
-    assert metrics["sensitivity"] == 1.0
-    assert metrics["f1"] == 1.0
-    assert metrics["specificity"] == 1.0
-    assert metrics["tp"] == 3
-    assert metrics["tn"] == 3
-    assert metrics["fp"] == 0
-    assert metrics["fn"] == 0
+    assert metrics.threshold == 0.5
+    assert metrics.precision == 1.0
+    assert metrics.sensitivity == 1.0
+    assert metrics.f1 == 1.0
+    assert metrics.specificity == 1.0
+    assert metrics.tp == 3
+    assert metrics.tn == 3
+    assert metrics.fp == 0
+    assert metrics.fn == 0
 
 
 def test_binary_metrics_at_threshold_balanced(balanced_data):
@@ -310,13 +310,13 @@ def test_binary_metrics_at_threshold_balanced(balanced_data):
     thr = 0.5
     metrics = binary_metrics_at_threshold(y, p, thr)
 
-    assert metrics["threshold"] == 0.5
-    assert 0.0 <= metrics["precision"] <= 1.0
-    assert 0.0 <= metrics["sensitivity"] <= 1.0
-    assert 0.0 <= metrics["f1"] <= 1.0
-    assert 0.0 <= metrics["specificity"] <= 1.0
-    assert metrics["tp"] + metrics["fn"] == 4  # Total cases
-    assert metrics["tn"] + metrics["fp"] == 4  # Total controls
+    assert metrics.threshold == 0.5
+    assert 0.0 <= metrics.precision <= 1.0
+    assert 0.0 <= metrics.sensitivity <= 1.0
+    assert 0.0 <= metrics.f1 <= 1.0
+    assert 0.0 <= metrics.specificity <= 1.0
+    assert metrics.tp + metrics.fn == 4  # Total cases
+    assert metrics.tn + metrics.fp == 4  # Total controls
 
 
 def test_binary_metrics_at_threshold_all_positive():
@@ -326,10 +326,10 @@ def test_binary_metrics_at_threshold_all_positive():
     thr = 0.5
     metrics = binary_metrics_at_threshold(y, p, thr)
 
-    assert metrics["fp"] == 2
-    assert metrics["tp"] == 2
-    assert metrics["tn"] == 0
-    assert metrics["fn"] == 0
+    assert metrics.fp == 2
+    assert metrics.tp == 2
+    assert metrics.tn == 0
+    assert metrics.fn == 0
 
 
 def test_binary_metrics_at_threshold_all_negative():
@@ -339,11 +339,11 @@ def test_binary_metrics_at_threshold_all_negative():
     thr = 0.5
     metrics = binary_metrics_at_threshold(y, p, thr)
 
-    assert metrics["fp"] == 0
-    assert metrics["tp"] == 0
-    assert metrics["tn"] == 2
-    assert metrics["fn"] == 2
-    assert metrics["precision"] == 0.0  # zero_division=0
+    assert metrics.fp == 0
+    assert metrics.tp == 0
+    assert metrics.tn == 2
+    assert metrics.fn == 2
+    assert metrics.precision == 0.0  # zero_division=0
 
 
 # ============================================================================

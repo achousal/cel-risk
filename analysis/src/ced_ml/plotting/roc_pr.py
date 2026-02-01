@@ -12,11 +12,26 @@ import numpy as np
 import pandas as pd
 
 from .dca import apply_plot_metadata
+from .style import (
+    ALPHA_CI,
+    ALPHA_SD,
+    COLOR_PRIMARY,
+    COLOR_SECONDARY,
+    DPI,
+    FIGSIZE_ROC,
+    FONT_LEGEND,
+    FONT_TITLE,
+    GRID_ALPHA,
+    LW_PRIMARY,
+    LW_REFERENCE,
+    PAD_INCHES,
+    configure_backend,
+)
 
 try:
-    import matplotlib
+    import matplotlib  # noqa: F401
 
-    matplotlib.use("Agg")
+    configure_backend()
     import matplotlib.pyplot as plt
     from sklearn.metrics import (
         average_precision_score,
@@ -67,12 +82,12 @@ def plot_roc_curve(
     """
     # Extract threshold information from bundle if provided
     youden_threshold = None
-    alpha_threshold = None
+    spec_target_threshold = None
     metrics_at_thresholds = None
 
     if threshold_bundle is not None:
         youden_threshold = threshold_bundle.get("youden_threshold")
-        alpha_threshold = threshold_bundle.get("spec_target_threshold")
+        spec_target_threshold = threshold_bundle.get("spec_target_threshold")
         metrics_at_thresholds = {
             "youden": threshold_bundle.get("youden", {}),
             "spec_target": threshold_bundle.get("spec_target", {}),
@@ -91,8 +106,8 @@ def plot_roc_curve(
     if len(y) == 0:
         return
 
-    fig, ax = plt.subplots(figsize=(6.5, 6))
-    ax.plot([0, 1], [0, 1], "k--", linewidth=1, alpha=0.6)
+    fig, ax = plt.subplots(figsize=FIGSIZE_ROC)
+    ax.plot([0, 1], [0, 1], "k--", linewidth=LW_REFERENCE, alpha=0.6)
 
     if split_ids is not None:
         split_ids = np.asarray(split_ids)[mask]
@@ -127,31 +142,31 @@ def plot_roc_curve(
 
             if not skip_ci_band:
                 ax.fill_between(
-                    base_fpr, tpr_lo, tpr_hi, color="steelblue", alpha=0.15, label="95% CI"
+                    base_fpr, tpr_lo, tpr_hi, color=COLOR_PRIMARY, alpha=ALPHA_CI, label="95% CI"
                 )
             ax.fill_between(
                 base_fpr,
                 np.maximum(0, tpr_mean - tpr_sd),
                 np.minimum(1, tpr_mean + tpr_sd),
-                color="steelblue",
-                alpha=0.30,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="±1 SD",
             )
             ax.plot(
                 base_fpr,
                 tpr_mean,
-                color="steelblue",
-                linewidth=2,
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
                 label=f"AUC = {auc_mean:.3f} ± {auc_sd:.3f}",
             )
         else:
             fpr, tpr, _ = roc_curve(y, p)
             auc = roc_auc_score(y, p)
-            ax.plot(fpr, tpr, color="steelblue", linewidth=2, label=f"AUC = {auc:.3f}")
+            ax.plot(fpr, tpr, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AUC = {auc:.3f}")
     else:
         fpr, tpr, _ = roc_curve(y, p)
         auc = roc_auc_score(y, p)
-        ax.plot(fpr, tpr, color="steelblue", linewidth=2, label=f"AUC = {auc:.3f}")
+        ax.plot(fpr, tpr, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AUC = {auc:.3f}")
 
     if metrics_at_thresholds is not None:
         # Collect marker coordinates for overlap detection
@@ -167,12 +182,8 @@ def plot_roc_curve(
             tpr_youden = m.get("tpr", None)
 
         # Extract spec_target coordinates
-        spec_key = next(
-            (k for k in ["alpha", "spec95", "spec_target"] if k in metrics_at_thresholds),
-            None,
-        )
-        if alpha_threshold is not None and spec_key:
-            m = metrics_at_thresholds[spec_key]
+        if spec_target_threshold is not None and "spec_target" in metrics_at_thresholds:
+            m = metrics_at_thresholds["spec_target"]
             fpr_alpha = m.get("fpr", None)
             tpr_alpha = m.get("tpr", None)
 
@@ -222,7 +233,7 @@ def plot_roc_curve(
                 s=100,
                 color="orange",
                 marker="D",
-                edgecolors="darkorange",
+                edgecolors=COLOR_SECONDARY,
                 linewidths=2,
                 label="Alpha threshold",
                 zorder=5,
@@ -233,15 +244,15 @@ def plot_roc_curve(
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     if subtitle:
-        ax.set_title(f"{title}\n{subtitle}", fontsize=12)
+        ax.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE)
     else:
-        ax.set_title(title, fontsize=12)
-    ax.legend(loc="lower right", fontsize=9)
-    ax.grid(True, alpha=0.2)
+        ax.set_title(title, fontsize=FONT_TITLE)
+    ax.legend(loc="lower right", fontsize=FONT_LEGEND)
+    ax.grid(True, alpha=GRID_ALPHA)
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, pad_inches=0.1)
+    plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()
 
 
@@ -285,12 +296,12 @@ def plot_pr_curve(
         return
 
     baseline = np.mean(y)
-    fig, ax = plt.subplots(figsize=(6.5, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_ROC)
     ax.axhline(
         y=baseline,
         color="k",
         linestyle="--",
-        linewidth=1,
+        linewidth=LW_REFERENCE,
         alpha=0.6,
         label=f"Prevalence = {baseline:.4f}",
     )
@@ -330,7 +341,7 @@ def plot_pr_curve(
                     base_recall,
                     np.clip(prec_lo, 0, 1),
                     np.clip(prec_hi, 0, 1),
-                    color="steelblue",
+                    color=COLOR_PRIMARY,
                     alpha=0.15,
                     label="95% CI",
                 )
@@ -338,15 +349,15 @@ def plot_pr_curve(
                 base_recall,
                 np.clip(prec_mean - prec_sd, 0, 1),
                 np.clip(prec_mean + prec_sd, 0, 1),
-                color="steelblue",
-                alpha=0.30,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="±1 SD",
             )
             ax.plot(
                 base_recall,
                 prec_mean,
-                color="steelblue",
-                linewidth=2,
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
                 label=f"AP = {ap_mean:.3f} ± {ap_sd:.3f}",
             )
         else:
@@ -355,27 +366,29 @@ def plot_pr_curve(
             ax.plot(
                 recall,
                 precision,
-                color="steelblue",
-                linewidth=2,
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
                 label=f"AP = {ap:.3f}",
             )
     else:
         precision, recall, _ = precision_recall_curve(y, p)
         ap = average_precision_score(y, p)
-        ax.plot(recall, precision, color="steelblue", linewidth=2, label=f"AP = {ap:.3f}")
+        ax.plot(
+            recall, precision, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AP = {ap:.3f}"
+        )
 
     ax.set_xlabel("Recall (Sensitivity)")
     ax.set_ylabel("Precision (PPV)")
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     if subtitle:
-        ax.set_title(f"{title}\n{subtitle}", fontsize=12)
+        ax.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE)
     else:
-        ax.set_title(title, fontsize=12)
-    ax.legend(loc="upper right", fontsize=9)
-    ax.grid(True, alpha=0.2)
+        ax.set_title(title, fontsize=FONT_TITLE)
+    ax.legend(loc="upper right", fontsize=FONT_LEGEND)
+    ax.grid(True, alpha=GRID_ALPHA)
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, pad_inches=0.1)
+    plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()

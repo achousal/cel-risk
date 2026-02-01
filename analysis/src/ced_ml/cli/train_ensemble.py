@@ -20,6 +20,7 @@ import pandas as pd
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 from ced_ml.config.loader import load_training_config
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC, ModelName
 from ced_ml.models.stacking import (
     StackingEnsemble,
     _find_model_split_dir,
@@ -55,9 +56,9 @@ def compute_ensemble_metrics(
         logger.warning(f"Only one class present in {split_name} set, metrics may be undefined")
         return metrics
 
-    metrics["AUROC"] = float(roc_auc_score(y_true, y_prob))
-    metrics["PR_AUC"] = float(average_precision_score(y_true, y_prob))
-    metrics["Brier"] = float(brier_score_loss(y_true, y_prob))
+    metrics[METRIC_AUROC] = float(roc_auc_score(y_true, y_prob))
+    metrics[METRIC_PRAUC] = float(average_precision_score(y_true, y_prob))
+    metrics[METRIC_BRIER] = float(brier_score_loss(y_true, y_prob))
     metrics["n_samples"] = int(len(y_true))
     metrics["n_pos"] = int(y_true.sum())
     metrics["prevalence"] = float(y_true.mean())
@@ -146,7 +147,7 @@ def _collect_base_model_test_metrics(
                 # metrics.json may have test metrics nested or flat
                 test_data = data.get("test", data)
                 entry = {}
-                for key in ("AUROC", "PR_AUC", "Brier"):
+                for key in (METRIC_AUROC, METRIC_PRAUC, METRIC_BRIER):
                     if key in test_data:
                         entry[key] = float(test_data[key])
                 if entry:
@@ -160,7 +161,7 @@ def _collect_base_model_test_metrics(
                 if not df.empty:
                     row = df.iloc[0]
                     entry = {}
-                    for key in ("AUROC", "PR_AUC", "Brier"):
+                    for key in (METRIC_AUROC, METRIC_PRAUC, METRIC_BRIER):
                         if key in row.index:
                             entry[key] = float(row[key])
                     if entry:
@@ -337,7 +338,7 @@ def run_train_ensemble(
     # Determine base models
     if base_models is None:
         # Default base models (config.ensemble was removed in recent refactor)
-        base_models = ["LR_EN", "RF", "XGBoost", "LinSVM_cal"]
+        base_models = [ModelName.LR_EN, ModelName.RF, ModelName.XGBoost, ModelName.LinSVM_cal]
 
     logger.info(f"Results directory: {results_path}")
     logger.info(f"Base models: {base_models}")
@@ -464,8 +465,8 @@ def run_train_ensemble(
 
         val_metrics = compute_ensemble_metrics(y_val, val_proba, "val")
         results["val_metrics"] = val_metrics
-        logger.info(f"Validation AUROC: {val_metrics.get('AUROC', 'N/A'):.4f}")
-        logger.info(f"Validation PR-AUC: {val_metrics.get('PR_AUC', 'N/A'):.4f}")
+        logger.info(f"Validation AUROC: {val_metrics.get(METRIC_AUROC, 'N/A'):.4f}")
+        logger.info(f"Validation PR-AUC: {val_metrics.get(METRIC_PRAUC, 'N/A'):.4f}")
     except FileNotFoundError as e:
         logger.warning(f"Could not load validation predictions: {e}")
 
@@ -488,8 +489,8 @@ def run_train_ensemble(
 
         test_metrics = compute_ensemble_metrics(y_test, test_proba, "test")
         results["test_metrics"] = test_metrics
-        logger.info(f"Test AUROC: {test_metrics.get('AUROC', 'N/A'):.4f}")
-        logger.info(f"Test PR-AUC: {test_metrics.get('PR_AUC', 'N/A'):.4f}")
+        logger.info(f"Test AUROC: {test_metrics.get(METRIC_AUROC, 'N/A'):.4f}")
+        logger.info(f"Test PR-AUC: {test_metrics.get(METRIC_PRAUC, 'N/A'):.4f}")
     except FileNotFoundError as e:
         logger.warning(f"Could not load test predictions: {e}")
 

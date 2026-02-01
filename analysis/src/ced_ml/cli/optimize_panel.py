@@ -783,7 +783,7 @@ def run_optimize_panel_aggregated(
         cv_folds=cv_folds,
         step_strategy=step_strategy,
         min_auroc_frac=min_auroc_frac,
-        random_state=0,  # Use seed 0 for reproducibility
+        random_state=0,  # Fixed seed for aggregated RFE (consistent results across runs)
     )
 
     # Save results

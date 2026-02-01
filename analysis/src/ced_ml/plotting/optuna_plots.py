@@ -14,6 +14,15 @@ from typing import Any
 
 import pandas as pd
 
+from .style import (
+    BBOX_INCHES,
+    DPI,
+    FIGSIZE_SINGLE,
+    FONT_LABEL,
+    FONT_TITLE,
+    GRID_ALPHA,
+)
+
 logger = logging.getLogger(__name__)
 
 # Attempt optuna import
@@ -287,7 +296,7 @@ def plot_pareto_frontier(
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Create figure
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
 
     # Plot all Pareto-optimal trials
     ax.scatter(
@@ -327,11 +336,13 @@ def plot_pareto_frontier(
             arrowprops={"arrowstyle": "->", "color": "black", "lw": 1},
         )
 
-    ax.set_xlabel("AUROC", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Brier Score", fontsize=12, fontweight="bold")
-    ax.set_title("Multi-Objective Optimization: Pareto Frontier", fontsize=14, fontweight="bold")
+    ax.set_xlabel("AUROC", fontsize=FONT_LABEL, fontweight="bold")
+    ax.set_ylabel("Brier Score", fontsize=FONT_LABEL, fontweight="bold")
+    ax.set_title(
+        "Multi-Objective Optimization: Pareto Frontier", fontsize=FONT_TITLE, fontweight="bold"
+    )
     ax.legend(loc="best", framealpha=0.9)
-    ax.grid(alpha=0.3, linestyle="--")
+    ax.grid(alpha=GRID_ALPHA, linestyle="--")
 
     # Set axis limits with padding
     if len(df) > 1:
@@ -342,7 +353,7 @@ def plot_pareto_frontier(
 
     plt.tight_layout()
     outfile = outdir / f"pareto_frontier.{plot_format}"
-    plt.savefig(outfile, dpi=dpi, bbox_inches="tight")
+    plt.savefig(outfile, dpi=dpi if dpi else DPI, bbox_inches=BBOX_INCHES)
     plt.close()
 
     logger.info(f"Saved Pareto frontier plot: {outfile}")

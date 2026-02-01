@@ -252,7 +252,7 @@ class TestComputeDiscriminationMetrics:
         metrics = compute_discrimination_metrics(
             y_true, y_pred, include_youden=True, include_alpha=True
         )
-        assert set(metrics.keys()) == {"AUROC", "PR_AUC", "Youden", "Alpha"}
+        assert set(metrics.keys()) == {"auroc", "prauc", "Youden", "Alpha"}
         assert all(0.0 <= v <= 1.0 for v in metrics.values())
 
     def test_exclude_youden(self):
@@ -282,7 +282,7 @@ class TestComputeDiscriminationMetrics:
         metrics = compute_discrimination_metrics(
             y_true, y_pred, include_youden=False, include_alpha=False
         )
-        assert set(metrics.keys()) == {"AUROC", "PR_AUC"}
+        assert set(metrics.keys()) == {"auroc", "prauc"}
 
     def test_custom_alpha_target(self):
         """Custom alpha target specificity is respected."""
@@ -305,8 +305,8 @@ class TestComputeDiscriminationMetrics:
         metrics = compute_discrimination_metrics(
             y_true, y_pred, include_youden=True, include_alpha=True
         )
-        assert metrics["AUROC"] == 1.0
-        assert metrics["PR_AUC"] == 1.0
+        assert metrics["auroc"] == 1.0
+        assert metrics["prauc"] == 1.0
         assert metrics["Youden"] == 1.0
         assert metrics["Alpha"] == 1.0
 
@@ -477,8 +477,8 @@ class TestSingleClassGuards:
         ):
             metrics = compute_discrimination_metrics(y_true, y_pred)
 
-        assert np.isnan(metrics["AUROC"])
-        assert np.isnan(metrics["PR_AUC"])
+        assert np.isnan(metrics["auroc"])
+        assert np.isnan(metrics["prauc"])
         assert np.isnan(metrics["Youden"])
         assert np.isnan(metrics["Alpha"])
 
@@ -621,8 +621,8 @@ class TestStrictMode:
         ):
             metrics = compute_discrimination_metrics(y_true, y_pred, strict=False)
 
-        assert np.isnan(metrics["AUROC"])
-        assert np.isnan(metrics["PR_AUC"])
+        assert np.isnan(metrics["auroc"])
+        assert np.isnan(metrics["prauc"])
         assert np.isnan(metrics["Youden"])
         assert np.isnan(metrics["Alpha"])
 
@@ -634,7 +634,7 @@ class TestStrictMode:
         metrics_default = compute_discrimination_metrics(y_true, y_pred)
         metrics_strict = compute_discrimination_metrics(y_true, y_pred, strict=True)
 
-        assert metrics_default["AUROC"] == 1.0
-        assert metrics_strict["AUROC"] == 1.0
-        assert metrics_default["PR_AUC"] == 1.0
-        assert metrics_strict["PR_AUC"] == 1.0
+        assert metrics_default["auroc"] == 1.0
+        assert metrics_strict["auroc"] == 1.0
+        assert metrics_default["prauc"] == 1.0
+        assert metrics_strict["prauc"] == 1.0

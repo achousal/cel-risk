@@ -8,10 +8,33 @@ from pathlib import Path
 
 import numpy as np
 
-try:
-    import matplotlib
+from ced_ml.utils.constants import Z_CRITICAL_005
 
-    matplotlib.use("Agg")
+from .style import (
+    BBOX_INCHES,
+    COLOR_PARETO_CV,
+    COLOR_PARETO_MAIN,
+    COLOR_TERTIARY,
+    COLOR_THRESHOLD_AMBER,
+    COLOR_THRESHOLD_GREEN,
+    COLOR_THRESHOLD_RED,
+    DPI,
+    FIGSIZE_DCA,
+    FIGSIZE_SINGLE,
+    FONT_LABEL,
+    FONT_LEGEND,
+    FONT_TITLE,
+    GRID_ALPHA,
+    LW_PRIMARY,
+    LW_REFERENCE,
+    LW_SECONDARY,
+    configure_backend,
+)
+
+try:
+    import matplotlib  # noqa: F401
+
+    configure_backend()
     import matplotlib.pyplot as plt
 
     _HAS_PLOTTING = True
@@ -68,19 +91,19 @@ def plot_pareto_curve(
     aurocs_cv = aurocs_cv[sort_idx]
     aurocs_std = aurocs_std[sort_idx]
 
-    # Compute 95% CI bounds (assuming normal distribution: mean ± 1.96 * std)
-    ci_lower = aurocs_cv - 1.96 * aurocs_std
-    ci_upper = aurocs_cv + 1.96 * aurocs_std
+    # Compute 95% CI bounds (assuming normal distribution: mean ± Z_CRITICAL_005 * std)
+    ci_lower = aurocs_cv - Z_CRITICAL_005 * aurocs_std
+    ci_upper = aurocs_cv + Z_CRITICAL_005 * aurocs_std
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
 
     # Plot validation AUROC
     ax.plot(
         sizes,
         aurocs_val,
         "o-",
-        color="#2563eb",
-        linewidth=2,
+        color=COLOR_PARETO_MAIN,
+        linewidth=LW_PRIMARY,
         markersize=6,
         label="Validation AUROC",
         zorder=5,
@@ -92,8 +115,8 @@ def plot_pareto_curve(
         aurocs_cv,
         yerr=aurocs_std,
         fmt="s--",
-        color="#64748b",
-        linewidth=1,
+        color=COLOR_PARETO_CV,
+        linewidth=LW_REFERENCE,
         markersize=4,
         capsize=3,
         alpha=0.7,
@@ -107,14 +130,14 @@ def plot_pareto_curve(
             sizes,
             ci_lower,
             ci_upper,
-            color="#64748b",
+            color=COLOR_PARETO_CV,
             alpha=ci_alpha,
             label="95% CI",
             zorder=1,
         )
 
     # Threshold lines
-    colors = ["#10b981", "#f59e0b", "#ef4444"]  # green, amber, red
+    colors = [COLOR_THRESHOLD_GREEN, COLOR_THRESHOLD_AMBER, COLOR_THRESHOLD_RED]
     for i, thresh in enumerate(thresholds_to_show):
         target_auroc = max_auroc * thresh
         ax.axhline(
@@ -122,7 +145,7 @@ def plot_pareto_curve(
             color=colors[i % len(colors)],
             linestyle=":",
             alpha=0.7,
-            linewidth=1.5,
+            linewidth=LW_SECONDARY,
             zorder=2,
         )
         ax.text(
@@ -130,7 +153,7 @@ def plot_pareto_curve(
             target_auroc + 0.005,
             f"{thresh:.0%} of max",
             color=colors[i % len(colors)],
-            fontsize=9,
+            fontsize=FONT_LEGEND,
             ha="right",
             va="bottom",
         )
@@ -160,7 +183,7 @@ def plot_pareto_curve(
                 # Annotation with CI
                 if rec_std > 0:
                     annotation_text = (
-                        f"n={rec_size}\nAUROC: {rec_auroc_cv:.3f} ± {1.96*rec_std:.3f}"
+                        f"n={rec_size}\nAUROC: {rec_auroc_cv:.3f} ± {Z_CRITICAL_005*rec_std:.3f}"
                     )
                 else:
                     annotation_text = f"n={rec_size}\nAUROC: {rec_auroc:.3f}"
@@ -188,7 +211,7 @@ def plot_pareto_curve(
                 [knee_size],
                 [knee_auroc],
                 s=150,
-                c="#7c3aed",  # purple
+                c=COLOR_TERTIARY,
                 marker="*",
                 zorder=10,
                 edgecolors="white",
@@ -197,9 +220,7 @@ def plot_pareto_curve(
 
             # Annotation with CI
             if knee_std > 0:
-                knee_text = (
-                    f"Knee (n={knee_size})\nAUROC: {knee_auroc_cv:.3f} ± {1.96*knee_std:.3f}"
-                )
+                knee_text = f"Knee (n={knee_size})\nAUROC: {knee_auroc_cv:.3f} ± {Z_CRITICAL_005*knee_std:.3f}"
             else:
                 knee_text = f"Knee (n={knee_size})\nAUROC: {knee_auroc:.3f}"
 
@@ -210,7 +231,7 @@ def plot_pareto_curve(
                 xytext=(-10, 10),
                 fontsize=8,
                 fontweight="bold",
-                color="#7c3aed",
+                color=COLOR_TERTIARY,
                 bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 2},
             )
 
@@ -218,13 +239,13 @@ def plot_pareto_curve(
     _add_comparison_annotations(ax, sizes, aurocs_cv, aurocs_std, recommended, thresholds_to_show)
 
     # Styling
-    ax.set_xlabel("Panel Size (number of proteins)", fontsize=11)
-    ax.set_ylabel("AUROC", fontsize=11)
+    ax.set_xlabel("Panel Size (number of proteins)", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC", fontsize=FONT_LABEL)
     ax.set_xlim(0, sizes.max() * 1.05)
 
     # Y-axis: show reasonable range around the data
-    y_min = min(aurocs_val.min(), (aurocs_cv - 1.96 * aurocs_std).min()) - 0.02
-    y_max = max(aurocs_val.max(), (aurocs_cv + 1.96 * aurocs_std).max()) + 0.02
+    y_min = min(aurocs_val.min(), (aurocs_cv - Z_CRITICAL_005 * aurocs_std).min()) - 0.02
+    y_max = max(aurocs_val.max(), (aurocs_cv + Z_CRITICAL_005 * aurocs_std).max()) + 0.02
     y_min = max(0.5, y_min)  # Don't go below 0.5
     y_max = min(1.0, y_max)  # Don't go above 1.0
     ax.set_ylim(y_min, y_max)
@@ -233,18 +254,18 @@ def plot_pareto_curve(
     ax.legend(
         loc="center left",
         bbox_to_anchor=(1.02, 0.5),
-        fontsize=9,
+        fontsize=FONT_LEGEND,
         frameon=True,
         fancybox=False,
         shadow=False,
     )
-    ax.grid(True, alpha=0.3, zorder=0)
+    ax.grid(True, alpha=GRID_ALPHA, zorder=0)
 
     # Title
     if model_name:
-        ax.set_title(f"{title}\n{model_name}", fontsize=12, fontweight="bold")
+        ax.set_title(f"{title}\n{model_name}", fontsize=FONT_TITLE, fontweight="bold")
     else:
-        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_title(title, fontsize=FONT_TITLE, fontweight="bold")
 
     # Add summary text
     summary_lines = [
@@ -268,7 +289,7 @@ def plot_pareto_curve(
     )
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
 
 
@@ -321,13 +342,13 @@ def _add_comparison_annotations(
         # Get metrics
         auroc_larger = aurocs_cv[idx_larger[0]]
         std_larger = aurocs_std[idx_larger[0]]
-        ci_lower_larger = auroc_larger - 1.96 * std_larger
-        ci_upper_larger = auroc_larger + 1.96 * std_larger
+        ci_lower_larger = auroc_larger - Z_CRITICAL_005 * std_larger
+        ci_upper_larger = auroc_larger + Z_CRITICAL_005 * std_larger
 
         auroc_smaller = aurocs_cv[idx_smaller[0]]
         std_smaller = aurocs_std[idx_smaller[0]]
-        ci_lower_smaller = auroc_smaller - 1.96 * std_smaller
-        ci_upper_smaller = auroc_smaller + 1.96 * std_smaller
+        ci_lower_smaller = auroc_smaller - Z_CRITICAL_005 * std_smaller
+        ci_upper_smaller = auroc_smaller + Z_CRITICAL_005 * std_smaller
 
         # Check if CIs overlap
         cis_overlap = not (ci_upper_smaller < ci_lower_larger or ci_upper_larger < ci_lower_smaller)
@@ -336,7 +357,7 @@ def _add_comparison_annotations(
         if std_larger > 0 and std_smaller > 0:
             se_diff = np.sqrt(std_larger**2 + std_smaller**2)
             z_score = abs(auroc_larger - auroc_smaller) / se_diff
-            is_significant = z_score > 1.96  # p < 0.05
+            is_significant = z_score > Z_CRITICAL_005  # p < 0.05
         else:
             is_significant = False
             z_score = 0.0
@@ -351,10 +372,10 @@ def _add_comparison_annotations(
 
         # Color code: green if not significant (CIs overlap), red if significant difference
         if cis_overlap or not is_significant:
-            color = "#10b981"  # green - not significantly different
+            color = COLOR_THRESHOLD_GREEN  # not significantly different
             label = "NS"
         else:
-            color = "#ef4444"  # red - significantly different
+            color = COLOR_THRESHOLD_RED  # significantly different
             label = f"p<0.05\nΔ={abs(auroc_larger - auroc_smaller):.3f}"
 
         # Draw horizontal line between points
@@ -363,7 +384,7 @@ def _add_comparison_annotations(
             [y_pos, y_pos],
             color=color,
             linestyle="--",
-            linewidth=1,
+            linewidth=LW_REFERENCE,
             alpha=0.6,
             zorder=3,
         )
@@ -430,12 +451,12 @@ def plot_feature_ranking(
     ax.invert_yaxis()  # Highest order at top
 
     ax.set_xlabel("Elimination Order (higher = eliminated later = more important)", fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.set_title(title, fontsize=FONT_TITLE, fontweight="bold")
 
-    ax.grid(True, axis="x", alpha=0.3)
+    ax.grid(True, axis="x", alpha=GRID_ALPHA)
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
 
 
@@ -473,7 +494,7 @@ def plot_rfecv_selection_curve(
     if df.empty:
         return
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_DCA)
 
     # Get unique folds
     folds = sorted(df["fold"].unique())
@@ -490,7 +511,7 @@ def plot_rfecv_selection_curve(
             fold_data["cv_score"],
             "o-",
             color=colors[i],
-            linewidth=1.5,
+            linewidth=LW_SECONDARY,
             markersize=4,
             alpha=0.7,
             label=f"Fold {fold}",
@@ -531,8 +552,8 @@ def plot_rfecv_selection_curve(
     )
 
     # Styling
-    ax.set_xlabel("Number of Features", fontsize=11)
-    ax.set_ylabel("CV AUROC (Internal)", fontsize=11)
+    ax.set_xlabel("Number of Features", fontsize=FONT_LABEL)
+    ax.set_ylabel("CV AUROC (Internal)", fontsize=FONT_LABEL)
     ax.set_xlim(0, df["n_features"].max() * 1.05)
 
     # Y-axis: reasonable range
@@ -542,14 +563,14 @@ def plot_rfecv_selection_curve(
     y_max = min(1.0, y_max)
     ax.set_ylim(y_min, y_max)
 
-    ax.legend(loc="best", fontsize=9, ncol=2)
-    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=FONT_LEGEND, ncol=2)
+    ax.grid(True, alpha=GRID_ALPHA)
 
     # Title
     if model_name:
-        ax.set_title(f"{title}\n{model_name}", fontsize=12, fontweight="bold")
+        ax.set_title(f"{title}\n{model_name}", fontsize=FONT_TITLE, fontweight="bold")
     else:
-        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_title(title, fontsize=FONT_TITLE, fontweight="bold")
 
     # Summary text
     optimal_sizes = []
@@ -568,12 +589,12 @@ def plot_rfecv_selection_curve(
         0.02,
         summary_text,
         transform=ax.transAxes,
-        fontsize=9,
+        fontsize=FONT_LEGEND,
         verticalalignment="bottom",
         horizontalalignment="right",
         bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "gray", "pad": 4},
     )
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)

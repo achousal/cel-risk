@@ -5,7 +5,6 @@ Pure functions for Mann-Whitney U and F-statistic screening to identify
 discriminative proteins before model training.
 """
 
-import contextlib
 import logging
 
 import numpy as np
@@ -14,29 +13,6 @@ from scipy import stats
 from sklearn.feature_selection import f_classif
 
 logger = logging.getLogger(__name__)
-
-# Global flag for reduced verbosity mode (e.g., during learning curves)
-_REDUCED_VERBOSITY = False
-
-
-@contextlib.contextmanager
-def reduced_screening_verbosity():
-    """Context manager to temporarily reduce screening log verbosity.
-
-    Use this when generating diagnostic plots (learning curves, etc.)
-    where repeated screening logs create noise without adding value.
-
-    Example:
-        >>> with reduced_screening_verbosity():
-        ...     save_learning_curve_csv(pipeline, X, y, out_csv)
-    """
-    global _REDUCED_VERBOSITY
-    old_value = _REDUCED_VERBOSITY
-    _REDUCED_VERBOSITY = True
-    try:
-        yield
-    finally:
-        _REDUCED_VERBOSITY = old_value
 
 
 def mann_whitney_screen(
@@ -263,6 +239,7 @@ def screen_proteins(
     top_n: int = 1000,
     min_n_per_group: int = 10,
     use_cache: bool = True,
+    verbose: bool = True,
 ) -> tuple[list[str], pd.DataFrame]:
     """
     Screen proteins using univariate statistical tests.
@@ -287,6 +264,8 @@ def screen_proteins(
         Minimum samples per group (Mann-Whitney only)
     use_cache : bool, default=True
         Whether to use caching for screening results
+    verbose : bool, default=True
+        If False, use debug-level logging (suitable for repeated calls in loops)
 
     Returns
     -------
@@ -329,8 +308,8 @@ def screen_proteins(
             )
             return selected, stats
 
-    # Run screening (with minimal logging for repeated CV folds)
-    log_level = logger.debug if _REDUCED_VERBOSITY else logger.info
+    # Run screening (with optional logging level control for repeated CV folds)
+    log_level = logger.info if verbose else logger.debug
     if method == "mannwhitney":
         selected, stats = mann_whitney_screen(
             X_train, y_train, protein_cols, top_n, min_n_per_group

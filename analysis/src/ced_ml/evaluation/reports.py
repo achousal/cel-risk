@@ -14,7 +14,6 @@ Design:
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -160,7 +159,7 @@ class OutputDirectories:
         """
         if not hasattr(self, category):
             raise ValueError(f"Unknown output category: {category}")
-        return os.path.join(getattr(self, category), filename)
+        return str(Path(getattr(self, category)) / filename)
 
 
 @dataclass
@@ -243,7 +242,7 @@ class AggregatedOutputDirectories:
         """
         if not hasattr(self, category):
             raise ValueError(f"Unknown aggregated output category: {category}")
-        return os.path.join(getattr(self, category), filename)
+        return str(Path(getattr(self, category)) / filename)
 
 
 class ResultsWriter:
@@ -312,7 +311,7 @@ class ResultsWriter:
         path = self.dirs.get_path("core", "val_metrics.csv")
 
         # Append mode: add to existing file or create new
-        if os.path.exists(path):
+        if Path(path).exists():
             df.to_csv(path, mode="a", header=False, index=False)
         else:
             df.to_csv(path, index=False)
@@ -339,7 +338,7 @@ class ResultsWriter:
         path = self.dirs.get_path("core", "test_metrics.csv")
 
         # Append mode: add to existing file or create new
-        if os.path.exists(path):
+        if Path(path).exists():
             df.to_csv(path, mode="a", header=False, index=False)
         else:
             df.to_csv(path, index=False)
@@ -371,7 +370,7 @@ class ResultsWriter:
         path = self.dirs.get_path("cv", "cv_repeat_metrics.csv")
 
         # Append mode: add to existing file or create new
-        if os.path.exists(path):
+        if Path(path).exists():
             df.to_csv(path, mode="a", header=False, index=False)
         else:
             df.to_csv(path, index=False)
@@ -668,7 +667,7 @@ class ResultsWriter:
         filename = f"{model_name}__final_model.joblib"
         path = self.dirs.get_path("core", filename)
 
-        if not os.path.exists(path):
+        if not Path(path).exists():
             raise FileNotFoundError(f"Model artifact not found: {path}")
 
         try:
@@ -752,8 +751,8 @@ class ResultsWriter:
         existing = []
         for category, filename in key_files:
             path = self.dirs.get_path(category, filename)
-            if os.path.exists(path):
-                rel_path = os.path.relpath(path, self.dirs.root)
+            if Path(path).exists():
+                rel_path = str(Path(path).relative_to(self.dirs.root))
                 existing.append(rel_path)
 
         return existing

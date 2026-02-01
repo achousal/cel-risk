@@ -225,16 +225,16 @@ class TestValidateStrata:
     def test_valid_strata(self):
         """Should pass validation with sufficient samples."""
         strata = pd.Series(["A", "A", "B", "B"])
-        is_valid, reason = validate_strata(strata)
-        assert is_valid
-        assert reason == "ok"
+        result = validate_strata(strata)
+        assert result.is_valid
+        assert result.reason == "ok"
 
     def test_invalid_strata(self):
         """Should fail validation with singleton stratum."""
         strata = pd.Series(["A", "A", "B"])  # B has only 1 sample
-        is_valid, reason = validate_strata(strata)
-        assert not is_valid
-        assert "min stratum count is 1" in reason
+        result = validate_strata(strata)
+        assert not result.is_valid
+        assert "min stratum count is 1" in result.reason
 
 
 class TestBuildWorkingStrata:
@@ -272,7 +272,7 @@ class TestBuildWorkingStrata:
         strata, scheme = build_working_strata(df, min_count=2)
         # Should use a simpler scheme (outcome-only or outcome+sex+age with collapsing)
         # The key test is that it doesn't crash and produces valid strata
-        is_valid, _ = validate_strata(strata)
+        is_valid = validate_strata(strata).is_valid
         assert is_valid
 
     def test_custom_column_names(self):
@@ -286,7 +286,7 @@ class TestBuildWorkingStrata:
         )
         strata, scheme = build_working_strata(df, min_count=2, sex_col="Sex", age_col="Age")
         # Should use a valid scheme
-        is_valid, _ = validate_strata(strata)
+        is_valid = validate_strata(strata).is_valid
         assert is_valid
         # Should select a granular scheme (most likely outcome+sex+age3)
         assert "outcome+sex" in scheme or "outcome" in scheme
@@ -305,7 +305,7 @@ class TestBuildWorkingStrata:
         )
         # Should fallback to outcome-only
         assert "outcome" in scheme
-        is_valid, _ = validate_strata(strata)
+        is_valid = validate_strata(strata).is_valid
         assert is_valid
 
     def test_mixed_column_availability(self):
@@ -319,7 +319,7 @@ class TestBuildWorkingStrata:
         )
         strata, scheme = build_working_strata(df, min_count=2, sex_col="Sex", age_col="Age")
         # Should fallback to outcome+sex (since age is missing)
-        is_valid, _ = validate_strata(strata)
+        is_valid = validate_strata(strata).is_valid
         assert is_valid
         # The scheme should be outcome+sex or outcome (not containing age)
         assert "age" not in scheme or "outcome" in scheme

@@ -11,11 +11,16 @@ Note: Prevalence adjustment functions are imported from prevalence.py
 """
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
+
+from ced_ml.utils.math_utils import logit
+
+from ..data.schema import ModelName
 
 # Import prevalence adjustment utilities from canonical module
 from .prevalence import (
@@ -42,7 +47,28 @@ __all__ = [
 ]
 
 
-def calibration_intercept_slope(y_true: np.ndarray, p: np.ndarray) -> tuple[float, float]:
+@dataclass
+class CalibrationMetrics:
+    """Calibration intercept and slope metrics.
+
+    These indicate how well-calibrated probabilities are:
+    - Intercept ~0 indicates probabilities match observed proportions
+    - Slope ~1 indicates correct ordering/ranking
+
+    Reference:
+        Van Calster et al. (2016). Calibration of risk prediction models.
+        Medical Decision Making.
+
+    Attributes:
+        intercept: Calibration intercept (ideal: 0)
+        slope: Calibration slope (ideal: 1)
+    """
+
+    intercept: float
+    slope: float
+
+
+def calibration_intercept_slope(y_true: np.ndarray, p: np.ndarray) -> CalibrationMetrics:
     """
     Compute calibration intercept and slope using logistic regression on logit scale.
 
@@ -59,7 +85,7 @@ def calibration_intercept_slope(y_true: np.ndarray, p: np.ndarray) -> tuple[floa
         p: Predicted probabilities
 
     Returns:
-        (intercept, slope) tuple
+        CalibrationMetrics dataclass with intercept and slope
     """
     y = np.asarray(y_true).astype(int)
     p = np.asarray(p).astype(float)
@@ -69,31 +95,32 @@ def calibration_intercept_slope(y_true: np.ndarray, p: np.ndarray) -> tuple[floa
     y = y[mask]
     p = p[mask]
 
-    # Clip probabilities to avoid log(0)
-    eps = 1e-7
-    p_clipped = np.clip(p, eps, 1 - eps)
-    log_odds = np.log(p_clipped / (1 - p_clipped))
+    # Compute log-odds using stable logit function
+    log_odds = logit(p)
 
     # Need both classes for calibration
     if len(np.unique(y)) < 2:
-        return np.nan, np.nan
+        return CalibrationMetrics(intercept=np.nan, slope=np.nan)
 
     # Fit logistic regression on log-odds
     lr = LogisticRegression(penalty=None, solver="lbfgs", max_iter=1000)
     lr.fit(log_odds.reshape(-1, 1), y)
-    return float(lr.intercept_[0]), float(lr.coef_[0][0])
+    return CalibrationMetrics(
+        intercept=float(lr.intercept_[0]),
+        slope=float(lr.coef_[0][0]),
+    )
 
 
 def calib_intercept_metric(y: np.ndarray, p: np.ndarray) -> float:
     """Compute calibration intercept metric for bootstrap CIs."""
-    a, _ = calibration_intercept_slope(y, p)
-    return float(a)
+    cal_metrics = calibration_intercept_slope(y, p)
+    return float(cal_metrics.intercept)
 
 
 def calib_slope_metric(y: np.ndarray, p: np.ndarray) -> float:
     """Compute calibration slope metric for bootstrap CIs."""
-    _, b = calibration_intercept_slope(y, p)
-    return float(b)
+    cal_metrics = calibration_intercept_slope(y, p)
+    return float(cal_metrics.slope)
 
 
 def expected_calibration_error(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10) -> float:
@@ -199,7 +226,7 @@ def maybe_calibrate_estimator(
         return estimator
 
     # Don't calibrate SVM (already calibrated)
-    if model_name == "LinSVM_cal":
+    if model_name == ModelName.LinSVM_cal:
         return estimator
 
     # Don't double-calibrate
@@ -300,9 +327,7 @@ class OOFCalibrator:
             logger.info(f"OOF calibration ({self.method}, {n_bins} bins)")
         else:
             # Sigmoid (Platt scaling) via logistic regression on log-odds
-            eps = 1e-7
-            oof_clipped = np.clip(oof_clean, eps, 1 - eps)
-            log_odds = np.log(oof_clipped / (1 - oof_clipped))
+            log_odds = logit(oof_clean)
             self.calibrator_ = LogisticRegression(penalty=None, solver="lbfgs", max_iter=1000)
             self.calibrator_.fit(log_odds.reshape(-1, 1), y_clean)
             logger.info(f"OOF calibration ({self.method})")
@@ -362,9 +387,7 @@ class OOFCalibrator:
             calibrated = self.calibrator_.predict(predictions)
         else:
             # Sigmoid: convert to log-odds, predict probability
-            eps = 1e-7
-            pred_clipped = np.clip(predictions, eps, 1 - eps)
-            log_odds = np.log(pred_clipped / (1 - pred_clipped))
+            log_odds = logit(predictions)
             calibrated = self.calibrator_.predict_proba(log_odds.reshape(-1, 1))[:, 1]
 
         return np.clip(calibrated, 0.0, 1.0)

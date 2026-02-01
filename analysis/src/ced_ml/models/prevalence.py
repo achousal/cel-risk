@@ -16,6 +16,8 @@ from typing import Any
 import numpy as np
 from sklearn.base import BaseEstimator
 
+from ced_ml.utils.math_utils import EPSILON_PREVALENCE, inv_logit, logit
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,20 +25,22 @@ def _logit(p: np.ndarray) -> np.ndarray:
     """
     Compute logit (log-odds) from probabilities.
 
+    Wrapper for shared logit function using prevalence epsilon.
+
     Args:
         p: Probabilities in [0, 1]
 
     Returns:
         Log-odds values
     """
-    eps = 1e-9
-    p = np.clip(np.asarray(p, dtype=float), eps, 1.0 - eps)
-    return np.log(p / (1.0 - p))
+    return logit(p, eps=EPSILON_PREVALENCE)
 
 
 def _inv_logit(z: np.ndarray) -> np.ndarray:
     """
     Compute inverse logit (sigmoid) from log-odds.
+
+    Wrapper for shared inv_logit function.
 
     Args:
         z: Log-odds values
@@ -44,8 +48,7 @@ def _inv_logit(z: np.ndarray) -> np.ndarray:
     Returns:
         Probabilities in [0, 1]
     """
-    z = np.asarray(z, dtype=float)
-    return 1.0 / (1.0 + np.exp(-z))
+    return inv_logit(z)
 
 
 def adjust_probabilities_for_prevalence(

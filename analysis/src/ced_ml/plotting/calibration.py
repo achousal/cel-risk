@@ -24,6 +24,25 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ced_ml.utils.constants import CI_LOWER_PCT, CI_UPPER_PCT
+from ced_ml.utils.math_utils import jeffreys_smooth, logit
+
+from .style import (
+    ALPHA_CI,
+    ALPHA_SD,
+    COLOR_EDGE,
+    COLOR_PRIMARY,
+    DPI,
+    FIGSIZE_CALIBRATION,
+    FONT_LABEL,
+    FONT_LEGEND,
+    FONT_TITLE,
+    LW_PRIMARY,
+    LW_SECONDARY,
+    PAD_INCHES,
+    configure_backend,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,7 +123,7 @@ def _plot_prob_calibration_panel(
         variable_sizes: If True, circle sizes vary with bin sample counts
         skip_ci_band: If True, skip rendering 95% CI band (only show ±1 SD)
     """
-    ax.plot([0, 1], [0, 1], "k--", linewidth=1.5, label="Perfect calibration", alpha=0.7)
+    ax.plot([0, 1], [0, 1], "k--", linewidth=LW_SECONDARY, label="Perfect calibration", alpha=0.7)
 
     if unique_splits is not None and len(unique_splits) > 1:
         curves = []
@@ -133,8 +152,8 @@ def _plot_prob_calibration_panel(
             warnings.filterwarnings("ignore", message="Degrees of freedom <= 0")
             obs_mean = np.nanmean(curves, axis=0)
             obs_sd = np.nanstd(curves, axis=0)
-            obs_lo = np.nanpercentile(curves, 2.5, axis=0)
-            obs_hi = np.nanpercentile(curves, 97.5, axis=0)
+            obs_lo = np.nanpercentile(curves, CI_LOWER_PCT, axis=0)
+            obs_hi = np.nanpercentile(curves, CI_UPPER_PCT, axis=0)
             np.nanmean(counts_all, axis=0)
             sum_counts = np.nansum(counts_all, axis=0)
 
@@ -143,16 +162,16 @@ def _plot_prob_calibration_panel(
                 bin_centers,
                 np.clip(obs_lo, 0, 1),
                 np.clip(obs_hi, 0, 1),
-                color="steelblue",
-                alpha=0.15,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="95% CI",
             )
         ax.fill_between(
             bin_centers,
             np.clip(obs_mean - obs_sd, 0, 1),
             np.clip(obs_mean + obs_sd, 0, 1),
-            color="steelblue",
-            alpha=0.30,
+            color=COLOR_PRIMARY,
+            alpha=ALPHA_SD,
             label="±1 SD",
         )
 
@@ -171,16 +190,16 @@ def _plot_prob_calibration_panel(
             bin_centers[valid],
             obs_mean[valid],
             s=scatter_sizes,
-            color="steelblue",
+            color=COLOR_PRIMARY,
             alpha=0.7,
-            edgecolors="darkblue",
+            edgecolors=COLOR_EDGE,
             linewidths=0.5,
         )
         ax.plot(
             bin_centers,
             obs_mean,
-            color="steelblue",
-            linewidth=2,
+            color=COLOR_PRIMARY,
+            linewidth=LW_PRIMARY,
             alpha=0.6,
             label=f"Mean (n={len(curves)} splits)",
         )
@@ -217,21 +236,23 @@ def _plot_prob_calibration_panel(
             pred_means[valid],
             obs[valid],
             s=scatter_sizes,
-            color="steelblue",
+            color=COLOR_PRIMARY,
             alpha=0.7,
-            edgecolors="darkblue",
+            edgecolors=COLOR_EDGE,
             linewidths=0.5,
         )
-        ax.plot(pred_means[valid], obs[valid], color="steelblue", linewidth=1.5, alpha=0.6)
+        ax.plot(
+            pred_means[valid], obs[valid], color=COLOR_PRIMARY, linewidth=LW_SECONDARY, alpha=0.6
+        )
 
     bin_label = "quantile" if bin_strategy == "quantile" else "uniform"
     if panel_title:
         title_text = panel_title
     else:
         title_text = f"Calibration ({bin_label} bins, k={actual_n_bins})"
-    ax.set_title(title_text, fontsize=12, fontweight="bold")
-    ax.set_xlabel("Predicted probability", fontsize=11)
-    ax.set_ylabel("Expected frequency", fontsize=11)
+    ax.set_title(title_text, fontsize=FONT_TITLE, fontweight="bold")
+    ax.set_xlabel("Predicted probability", fontsize=FONT_LABEL)
+    ax.set_ylabel("Expected frequency", fontsize=FONT_LABEL)
     ax.grid(True, alpha=0.2)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
@@ -276,9 +297,9 @@ def _plot_prob_calibration_panel(
                 [0],
                 marker="o",
                 color="w",
-                markerfacecolor="steelblue",
+                markerfacecolor=COLOR_PRIMARY,
                 markersize=markersize,
-                markeredgecolor="darkblue",
+                markeredgecolor=COLOR_EDGE,
                 markeredgewidth=0.5,
                 linestyle="None",
                 alpha=0.6,
@@ -301,9 +322,9 @@ def _plot_prob_calibration_panel(
         )
         ax.add_artist(size_legend)
         # Re-add main legend (was overwritten by size legend)
-        ax.legend(loc="upper left", fontsize=9, framealpha=0.9, labelspacing=1.0)
+        ax.legend(loc="upper left", fontsize=FONT_LEGEND, framealpha=0.9, labelspacing=1.0)
     else:
-        ax.legend(loc="upper left", fontsize=9, framealpha=0.9, labelspacing=1.0)
+        ax.legend(loc="upper left", fontsize=FONT_LEGEND, framealpha=0.9, labelspacing=1.0)
 
 
 def _binned_logits(
@@ -314,6 +335,7 @@ def _binned_logits(
     min_bin_size: int = 1,
     merge_tail: bool = False,
     n_boot: int = 500,
+    seed: int | None = None,
 ) -> tuple[
     np.ndarray | None,
     np.ndarray | None,
@@ -336,6 +358,7 @@ def _binned_logits(
         min_bin_size: Minimum number of samples per bin
         merge_tail: If True, merge small bins with adjacent bins
         n_boot: Number of bootstrap resamples for CI computation
+        seed: Random seed for bootstrap resampling (default: 42)
 
     Returns:
         Tuple of (xs, ys, ys_lo, ys_hi, ys_sd, sizes) where:
@@ -386,33 +409,30 @@ def _binned_logits(
 
         # Predicted logit (mean of bin)
         p_mean = np.mean(p_bin)
-        p_mean_clipped = np.clip(p_mean, eps, 1 - eps)
-        logit_pred = np.log(p_mean_clipped / (1 - p_mean_clipped))
+        logit_pred = logit(p_mean, eps=eps)
 
         # Observed proportion with Jeffreys smoothing and bootstrap 95% CI + SD
         n = len(y_bin)
         k = int(y_bin.sum())
         # Apply Jeffreys smoothing to point estimate for consistency with bootstrap
-        obs_prop = (k + 0.5) / (n + 1)
-        obs_prop_clipped = np.clip(obs_prop, eps, 1 - eps)
-        logit_obs = np.log(obs_prop_clipped / (1 - obs_prop_clipped))
+        obs_prop = jeffreys_smooth(k, n)
+        logit_obs = logit(obs_prop, eps=eps)
 
         # Bootstrap resampling for CI and SD
         boot_logits = []
-        rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+        rng = np.random.RandomState(seed if seed is not None else 42)
         for _ in range(n_boot):
             boot_indices = rng.choice(n, size=n, replace=True)
             y_boot = y_bin[boot_indices]
             k_boot = y_boot.sum()
             # Apply Jeffreys smoothing to avoid 0/1 proportions
-            prop_boot = (k_boot + 0.5) / (n + 1)
-            prop_boot_clipped = np.clip(prop_boot, eps, 1 - eps)
-            logit_boot = np.log(prop_boot_clipped / (1 - prop_boot_clipped))
+            prop_boot = jeffreys_smooth(k_boot, n)
+            logit_boot = logit(prop_boot, eps=eps)
             boot_logits.append(logit_boot)
 
         boot_logits = np.array(boot_logits)
-        logit_obs_lo = np.percentile(boot_logits, 2.5)
-        logit_obs_hi = np.percentile(boot_logits, 97.5)
+        logit_obs_lo = np.percentile(boot_logits, CI_LOWER_PCT)
+        logit_obs_hi = np.percentile(boot_logits, CI_UPPER_PCT)
         logit_obs_sd = np.std(boot_logits)
 
         xs_list.append(logit_pred)
@@ -485,7 +505,7 @@ def _plot_logit_calibration_panel(
     actual_n_bins = len(bins) - 1
 
     # Convert to logit space
-    logit_pred = np.log(p_clipped / (1 - p_clipped))
+    logit_pred = logit(p_clipped, eps=eps)
 
     # Initialize axis ranges with default values
     logit_range_x = [-5, 5]
@@ -525,7 +545,7 @@ def _plot_logit_calibration_panel(
                     # Apply Jeffreys smoothing to avoid 0/1
                     n_in_bin = m_bin.sum()
                     k_in_bin = np.sum(y_s[m_bin])
-                    obs_freq_smoothed = (k_in_bin + 0.5) / (n_in_bin + 1)
+                    obs_freq_smoothed = jeffreys_smooth(k_in_bin, n_in_bin)
                     prob_y_per_split.append(obs_freq_smoothed)
                     bin_sizes_per_bin.append(n_in_bin)
 
@@ -546,8 +566,8 @@ def _plot_logit_calibration_panel(
             warnings.filterwarnings("ignore", message="Degrees of freedom <= 0")
             prob_x_mean = np.nanmean(prob_x_bins, axis=0)
             prob_y_mean = np.nanmean(prob_y_bins, axis=0)
-            prob_y_lo = np.nanpercentile(prob_y_bins, 2.5, axis=0)
-            prob_y_hi = np.nanpercentile(prob_y_bins, 97.5, axis=0)
+            prob_y_lo = np.nanpercentile(prob_y_bins, CI_LOWER_PCT, axis=0)
+            prob_y_hi = np.nanpercentile(prob_y_bins, CI_UPPER_PCT, axis=0)
             np.nanstd(prob_y_bins, axis=0)
 
         # Aggregate bin sizes across splits (use sum for consistency with prob-space)
@@ -583,16 +603,16 @@ def _plot_logit_calibration_panel(
                     logit_x_mean[valid_logit],
                     logit_y_lo[valid_logit],
                     logit_y_hi[valid_logit],
-                    color="steelblue",
-                    alpha=0.15,
+                    color=COLOR_PRIMARY,
+                    alpha=ALPHA_CI,
                     label="95% CI",
                 )
             ax.fill_between(
                 logit_x_mean[valid_logit],
                 np.clip(logit_y_mean[valid_logit] - logit_y_sd[valid_logit], -20, 20),
                 np.clip(logit_y_mean[valid_logit] + logit_y_sd[valid_logit], -20, 20),
-                color="steelblue",
-                alpha=0.30,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="±1 SD",
             )
 
@@ -601,35 +621,33 @@ def _plot_logit_calibration_panel(
                 logit_x_mean[valid_logit],
                 logit_y_mean[valid_logit],
                 "-",
-                color="steelblue",
-                linewidth=2,
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
                 alpha=0.6,
                 zorder=4,
             )
 
             # Compute marker sizes: only variable for uniform binning
             if bin_strategy == "quantile":
-                marker_sizes = 6
+                scatter_area = 36  # Fixed size for quantile binning
             else:
                 valid_sizes = bin_sizes_sum[valid_logit]
                 if len(valid_sizes) > 0 and valid_sizes.max() > 0:
-                    min_size, max_size = 4, 16
-                    norm_sizes = (valid_sizes - valid_sizes.min()) / (
-                        valid_sizes.max() - valid_sizes.min() + 1e-7
-                    )
-                    marker_sizes = min_size + norm_sizes * (max_size - min_size)
+                    # Use same sqrt-based scaling as probability-space plot
+                    # for consistent legend appearance across panels
+                    scatter_area = np.clip(np.sqrt(valid_sizes) * 15, 30, 350)
                 else:
-                    marker_sizes = 6
+                    scatter_area = 36
 
             # Plot markers
             ax.scatter(
                 logit_x_mean[valid_logit],
                 logit_y_mean[valid_logit],
-                s=marker_sizes**2,
+                s=scatter_area,
                 marker="o",
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 alpha=0.7,
-                edgecolors="darkblue",
+                edgecolors=COLOR_EDGE,
                 linewidth=0.5,
                 label=f"Mean logit calib (n={len(unique_splits)} splits)",
                 zorder=5,
@@ -661,7 +679,7 @@ def _plot_logit_calibration_panel(
         logit_range_x,
         logit_range_x,
         "k--",
-        linewidth=1.5,
+        linewidth=LW_SECONDARY,
         alpha=0.7,
         label="Ideal (α=0, β=1)",
     )
@@ -679,7 +697,7 @@ def _plot_logit_calibration_panel(
             recal_x,
             recal_y,
             "r-",
-            linewidth=2,
+            linewidth=LW_PRIMARY,
             alpha=0.8,
             label=f"Recalibration (α={calib_intercept:.2f}, β={calib_slope:.2f})",
         )
@@ -716,8 +734,8 @@ def _plot_logit_calibration_panel(
                     bx,
                     by_lo,
                     by_hi,
-                    color="steelblue",
-                    alpha=0.15,
+                    color=COLOR_PRIMARY,
+                    alpha=ALPHA_CI,
                     label="95% CI",
                     zorder=3,
                 )
@@ -727,34 +745,30 @@ def _plot_logit_calibration_panel(
                 bx,
                 np.clip(by - by_sd, -20, 20),
                 np.clip(by + by_sd, -20, 20),
-                color="steelblue",
-                alpha=0.30,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="±1 SD",
                 zorder=4,
             )
 
             # Plot line connecting bin centers
-            ax.plot(bx, by, "-", color="steelblue", linewidth=2, alpha=0.6, zorder=5)
+            ax.plot(bx, by, "-", color=COLOR_PRIMARY, linewidth=LW_PRIMARY, alpha=0.6, zorder=5)
 
-            # Compute marker sizes
-            if bin_sizes is not None and len(bin_sizes) > 0:
-                min_size, max_size = 4, 16
-                norm_sizes = (bin_sizes - bin_sizes.min()) / (
-                    bin_sizes.max() - bin_sizes.min() + 1e-7
-                )
-                marker_sizes = min_size + norm_sizes * (max_size - min_size)
+            # Compute marker sizes: use same sqrt scaling as probability plot
+            if bin_strategy == "uniform" and bin_sizes is not None and len(bin_sizes) > 0:
+                scatter_area = np.clip(np.sqrt(bin_sizes) * 20, 40, 450)
             else:
-                marker_sizes = 7
+                scatter_area = 49
 
             # Plot markers
             ax.scatter(
                 bx,
                 by,
-                s=marker_sizes**2,
+                s=scatter_area,
                 marker="o",
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 alpha=0.7,
-                edgecolors="darkblue",
+                edgecolors=COLOR_EDGE,
                 linewidth=0.5,
                 label=f"Binned logits (n={len(bx)} bins)",
                 zorder=6,
@@ -769,10 +783,10 @@ def _plot_logit_calibration_panel(
         # Multi-split mode: aggregated bands already plotted
         method_label = "Multi-split aggregated"
 
-    ax.set_title(panel_title, fontsize=12, fontweight="bold")
-    ax.set_xlabel("Predicted logit: logit(p̂)", fontsize=11)
+    ax.set_title(panel_title, fontsize=FONT_TITLE, fontweight="bold")
+    ax.set_xlabel("Predicted logit: logit(p̂)", fontsize=FONT_LABEL)
     ylabel = f"Empirical logit ({method_label})" if method_label else "Empirical logit"
-    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=FONT_LABEL)
 
     # Add size legend for uniform binning (match probability-space legend style)
     if bin_strategy == "uniform":
@@ -797,33 +811,32 @@ def _plot_logit_calibration_panel(
         size_handles = []
         size_labels = []
 
-        # Determine min/max for normalization (matching actual plot logic)
-        if len(actual_bin_sizes) > 0:
-            data_min = actual_bin_sizes.min()
-            data_max = actual_bin_sizes.max()
+        # Use same sqrt-based sizing as the probability-space legend
+        # so that identical reference values render at identical sizes
+        if unique_splits is not None and len(unique_splits) > 1:
+            sqrt_multiplier = 15
+            min_scatter = 30
+            max_scatter = 350
         else:
-            data_min = reference_sizes[0] if reference_sizes else 10
-            data_max = reference_sizes[-1] if reference_sizes else 200
+            sqrt_multiplier = 20
+            min_scatter = 40
+            max_scatter = 450
 
         for sample_count in reference_sizes:
-            # Compute normalized marker size matching actual plot logic
-            # Logit uses: norm_sizes = (bin_sizes - min) / (max - min + eps)
-            # marker_sizes = min_size + norm_sizes * (max_size - min_size)
-            if data_max > data_min:
-                norm_size = (sample_count - data_min) / (data_max - data_min + 1e-7)
-            else:
-                norm_size = 0.5
-            min_marker, max_marker = 4, 16
-            marker_size = min_marker + norm_size * (max_marker - min_marker)
+            scatter_area = np.clip(
+                np.sqrt(sample_count) * sqrt_multiplier, min_scatter, max_scatter
+            )
+            # Line2D markersize is diameter; convert from scatter area
+            markersize = np.sqrt(scatter_area)
 
             handle = Line2D(
                 [0],
                 [0],
                 marker="o",
                 color="w",
-                markerfacecolor="steelblue",
-                markersize=marker_size,
-                markeredgecolor="darkblue",
+                markerfacecolor=COLOR_PRIMARY,
+                markersize=markersize,
+                markeredgecolor=COLOR_EDGE,
                 markeredgewidth=0.5,
                 linestyle="None",
                 alpha=0.8,
@@ -846,9 +859,9 @@ def _plot_logit_calibration_panel(
         )
         ax.add_artist(size_legend)
         # Re-add main legend
-        ax.legend(loc="upper left", fontsize=9, framealpha=0.9, labelspacing=1.0)
+        ax.legend(loc="upper left", fontsize=FONT_LEGEND, framealpha=0.9, labelspacing=1.0)
     else:
-        ax.legend(loc="upper left", fontsize=9, framealpha=0.9, labelspacing=1.0)
+        ax.legend(loc="upper left", fontsize=FONT_LEGEND, framealpha=0.9, labelspacing=1.0)
 
     ax.grid(True, alpha=0.3)
     ax.set_xlim(logit_range_x)
@@ -876,7 +889,7 @@ def _apply_plot_metadata(fig, meta_lines: Sequence[str] | None = None) -> float:
     # Calculate required bottom margin: base + space per line
     # Increased spacing for better separation between metadata and figures
     required_bottom = 0.12 + (0.022 * len(lines))
-    return min(required_bottom, 0.30)  # Cap at 30%
+    return min(required_bottom, 0.30)  # Cap at 30% to avoid excessive margin
 
 
 def plot_calibration_curve(
@@ -916,9 +929,8 @@ def plot_calibration_curve(
             Useful for ensemble models where CI and SD are redundant.
     """
     try:
-        import matplotlib
 
-        matplotlib.use("Agg")
+        configure_backend()
         import matplotlib.pyplot as plt
     except Exception as e:
         logger.error(f"Calibration plot failed to import matplotlib: {e}")
@@ -943,7 +955,7 @@ def plot_calibration_curve(
         unique_splits = []
 
     # Create figure layout: Always 2x2 panels
-    fig = plt.figure(figsize=(14, 10))
+    fig = plt.figure(figsize=FIGSIZE_CALIBRATION)
     gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
     ax1 = fig.add_subplot(gs[0, 0])  # Top-left: Calibration quantile
     ax2 = fig.add_subplot(gs[0, 1])  # Top-right: Calibration uniform
@@ -1057,7 +1069,7 @@ def plot_calibration_curve(
     )
 
     # Add title at the top
-    fig.suptitle(title, fontsize=13, fontweight="bold", y=0.98)
+    fig.suptitle(title, fontsize=FONT_TITLE, fontweight="bold", y=0.98)
 
     # Apply metadata and adjust layout
     bottom_margin = _apply_plot_metadata(fig, meta_lines)
@@ -1067,7 +1079,7 @@ def plot_calibration_curve(
     # Save figure
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150, pad_inches=0.1)
+    plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()
 
     logger.info(f"Calibration plot saved to {out_path}")

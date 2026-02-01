@@ -12,12 +12,26 @@ from pathlib import Path
 
 import numpy as np
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
+
+from .style import (
+    BBOX_INCHES,
+    COLOR_BAR_NEGATIVE,
+    COLOR_BAR_PALETTE,
+    COLOR_BAR_POSITIVE,
+    DPI,
+    FONT_LABEL,
+    FONT_LEGEND,
+    FONT_TITLE,
+    configure_backend,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
-    import matplotlib
+    import matplotlib  # noqa: F401
 
-    matplotlib.use("Agg")
+    configure_backend()
     import matplotlib.pyplot as plt
 
     _HAS_PLOTTING = True
@@ -64,14 +78,14 @@ def plot_meta_learner_weights(
     names = [item[0] for item in sorted_items]
     values = np.array([item[1] for item in sorted_items])
 
-    colors = ["#2a9d8f" if v >= 0 else "#e76f51" for v in values]
+    colors = [COLOR_BAR_POSITIVE if v >= 0 else COLOR_BAR_NEGATIVE for v in values]
 
     fig, ax = plt.subplots(figsize=(7, max(3, 0.6 * len(names) + 1.5)))
 
     bars = ax.barh(range(len(names)), values, color=colors, edgecolor="white", linewidth=0.5)
     ax.set_yticks(range(len(names)))
     ax.set_yticklabels(names, fontsize=10)
-    ax.set_xlabel("Coefficient", fontsize=11)
+    ax.set_xlabel("Coefficient", fontsize=FONT_LABEL)
     ax.axvline(0, color="grey", linewidth=0.8, linestyle="--", alpha=0.6)
 
     # Annotate values on bars
@@ -85,7 +99,7 @@ def plot_meta_learner_weights(
     full_title = title
     if subtitle:
         full_title += f"\n{subtitle}"
-    ax.set_title(full_title, fontsize=12, fontweight="bold")
+    ax.set_title(full_title, fontsize=FONT_TITLE, fontweight="bold")
 
     # Add regularization annotation
     ax.text(
@@ -106,7 +120,7 @@ def plot_meta_learner_weights(
         apply_plot_metadata(fig, meta_lines)
 
     plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Meta-learner weights plot saved: {out_path}")
 
@@ -148,7 +162,7 @@ def plot_model_comparison(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if metric_names is None:
-        metric_names = ["AUROC", "PR_AUC", "Brier"]
+        metric_names = [METRIC_AUROC, METRIC_PRAUC, METRIC_BRIER]
 
     # Filter to models that have at least one requested metric
     valid_models = {name: m for name, m in metrics.items() if any(mn in m for mn in metric_names)}
@@ -161,7 +175,7 @@ def plot_model_comparison(
     n_metrics = len(metric_names)
 
     # Color palette (avoid purple per user rules)
-    base_colors = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"]
+    base_colors = COLOR_BAR_PALETTE
     colors = [base_colors[i % len(base_colors)] for i in range(n_models)]
 
     fig, axes = plt.subplots(1, n_metrics, figsize=(4 * n_metrics, 5), sharey=True)
@@ -190,7 +204,7 @@ def plot_model_comparison(
         # Highlight ensemble bar
         for i, model in enumerate(model_names):
             if model == highlight_model:
-                bars[i].set_edgecolor("#264653")
+                bars[i].set_edgecolor(COLOR_BAR_PALETTE[0])
                 bars[i].set_linewidth(2.5)
                 bars[i].set_hatch("//")
 
@@ -208,16 +222,16 @@ def plot_model_comparison(
 
         # Format axis
         display_name = metric_name.replace("_", "-")
-        ax.set_title(display_name, fontsize=11, fontweight="bold")
+        ax.set_title(display_name, fontsize=FONT_LABEL, fontweight="bold")
         ax.set_xticks(x)
-        ax.set_xticklabels(model_names, rotation=30, ha="right", fontsize=9)
+        ax.set_xticklabels(model_names, rotation=30, ha="right", fontsize=FONT_LEGEND)
 
         # Set y-axis limits with padding
         if values:
             y_min = min(values) * 0.9 if min(values) > 0 else 0
             y_max = max(values) * 1.15
             # For Brier (lower is better), use different scaling
-            if metric_name == "Brier":
+            if metric_name == METRIC_BRIER:
                 y_min = 0
                 y_max = max(values) * 1.3
             ax.set_ylim(y_min, y_max)
@@ -229,7 +243,7 @@ def plot_model_comparison(
     full_title = title
     if subtitle:
         full_title += f"\n{subtitle}"
-    fig.suptitle(full_title, fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(full_title, fontsize=FONT_TITLE, fontweight="bold", y=1.02)
 
     # Add summary statistics to metadata
     base_meta_lines = meta_lines or []
@@ -238,8 +252,8 @@ def plot_model_comparison(
         f"highlight={highlight_model}",
     ]
     # Add best model info
-    if "AUROC" in metric_names:
-        auroc_values = {m: valid_models[m].get("AUROC", 0) for m in model_names}
+    if METRIC_AUROC in metric_names:
+        auroc_values = {m: valid_models[m].get(METRIC_AUROC, 0) for m in model_names}
         best_model = max(auroc_values, key=auroc_values.get)
         best_auroc = auroc_values[best_model]
         summary_lines.append(f"best_model={best_model} (AUROC={best_auroc:.4f})")
@@ -252,7 +266,7 @@ def plot_model_comparison(
         apply_plot_metadata(fig, all_meta_lines)
 
     plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Model comparison plot saved: {out_path}")
 
@@ -308,7 +322,7 @@ def plot_aggregated_weights(
     means = np.array([name_stats[n][0] for n in sorted_names])
     stds = np.array([name_stats[n][1] for n in sorted_names])
 
-    colors = ["#2a9d8f" if m >= 0 else "#e76f51" for m in means]
+    colors = [COLOR_BAR_POSITIVE if m >= 0 else COLOR_BAR_NEGATIVE for m in means]
 
     fig, ax = plt.subplots(figsize=(7, max(3, 0.6 * len(sorted_names) + 1.5)))
 
@@ -324,7 +338,7 @@ def plot_aggregated_weights(
     )
     ax.set_yticks(range(len(sorted_names)))
     ax.set_yticklabels(sorted_names, fontsize=10)
-    ax.set_xlabel("Coefficient (mean +/- SD)", fontsize=11)
+    ax.set_xlabel("Coefficient (mean +/- SD)", fontsize=FONT_LABEL)
     ax.axvline(0, color="grey", linewidth=0.8, linestyle="--", alpha=0.6)
 
     # Annotate mean values with count
@@ -339,9 +353,9 @@ def plot_aggregated_weights(
     # Title - use subtitle if provided, otherwise show n_splits
     n_splits = len(coefs_per_split)
     if subtitle:
-        ax.set_title(f"{title}\n{subtitle}", fontsize=12, fontweight="bold")
+        ax.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE, fontweight="bold")
     else:
-        ax.set_title(f"{title}\n(n_splits={n_splits})", fontsize=12, fontweight="bold")
+        ax.set_title(f"{title}\n(n_splits={n_splits})", fontsize=FONT_TITLE, fontweight="bold")
 
     # Add summary statistics to metadata
     base_meta_lines = meta_lines or []
@@ -355,9 +369,9 @@ def plot_aggregated_weights(
     # Apply metadata lines
     from ced_ml.plotting.dca import apply_plot_metadata
 
-    bottom_margin = apply_plot_metadata(fig, all_meta_lines)
-    plt.subplots_adjust(left=0.15, right=0.9, top=0.92, bottom=bottom_margin)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.8)
+    apply_plot_metadata(fig, all_meta_lines)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Aggregated weights plot saved: {out_path}")
 
@@ -441,8 +455,10 @@ def save_ensemble_aggregation_metadata(
             m: pooled_test_metrics[m] for m in pooled_test_metrics if m != "ENSEMBLE"
         }
 
-        best_base_auroc = max((m.get("AUROC", 0) for m in base_models_perf.values()), default=0)
-        ensemble_auroc = ensemble_perf.get("AUROC", 0)
+        best_base_auroc = max(
+            (m.get(METRIC_AUROC, 0) for m in base_models_perf.values()), default=0
+        )
+        ensemble_auroc = ensemble_perf.get(METRIC_AUROC, 0)
 
         metadata["performance_comparison"] = {
             "ensemble_auroc": ensemble_auroc,
@@ -453,8 +469,8 @@ def save_ensemble_aggregation_metadata(
                 if best_base_auroc > 0
                 else 0
             ),
-            "ensemble_prauc": ensemble_perf.get("PR_AUC"),
-            "ensemble_brier": ensemble_perf.get("Brier"),
+            "ensemble_prauc": ensemble_perf.get(METRIC_PRAUC),
+            "ensemble_brier": ensemble_perf.get(METRIC_BRIER),
         }
 
     # Save metadata JSON if output dir provided

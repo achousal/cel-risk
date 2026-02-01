@@ -11,7 +11,7 @@
 # RFE Algorithm Parameters
 # ==============================================================================
 
-stability_threshold: 0.75    # Minimum selection fraction for stable proteins (default: 0.75)
+stability_threshold: 0.5    # Minimum selection fraction for stable proteins (default: 0.75)
 min_size: 5                  # Minimum panel size to evaluate (default: 5)
 min_auroc_frac: 0.5         # Early stop if AUROC < this fraction of max (default: 0.90)
 cv_folds: 5                  # CV folds for OOF AUROC estimation (default: 5)

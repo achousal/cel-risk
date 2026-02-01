@@ -47,7 +47,8 @@ def test_calibration_intercept_slope_perfect():
     # Generate outcomes consistent with predictions
     y_true = rng.binomial(1, y_pred)
 
-    intercept, slope = calibration_intercept_slope(y_true, y_pred)
+    _cal_result = calibration_intercept_slope(y_true, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     # With logit-scale calibration, slope ~1 indicates good calibration
     # But the exact value depends on the data distribution
     assert np.isfinite(intercept)
@@ -63,7 +64,8 @@ def test_calibration_intercept_slope_underconfident():
     # Shrink predictions toward 0.5 (underconfident)
     y_pred = y_true * 0.3 + 0.35
 
-    intercept, slope = calibration_intercept_slope(y_true, y_pred)
+    _cal_result = calibration_intercept_slope(y_true, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     # Test that we get valid calibration metrics
     assert np.isfinite(intercept)
     assert np.isfinite(slope)
@@ -76,7 +78,8 @@ def test_calibration_intercept_slope_single_class():
     y_true = np.ones(100)
     y_pred = rng.uniform(0.3, 0.7, size=100)
 
-    intercept, slope = calibration_intercept_slope(y_true, y_pred)
+    _cal_result = calibration_intercept_slope(y_true, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     assert np.isnan(intercept)
     assert np.isnan(slope)
 
@@ -86,7 +89,8 @@ def test_calibration_intercept_slope_with_nans():
     y_true = np.array([0, 1, 0, 1, 0, 1, np.nan, 0, 1])
     y_pred = np.array([0.1, 0.9, 0.2, np.nan, 0.15, 0.85, 0.5, 0.1, 0.95])
 
-    intercept, slope = calibration_intercept_slope(y_true, y_pred)
+    _cal_result = calibration_intercept_slope(y_true, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     assert np.isfinite(intercept)
     assert np.isfinite(slope)
 
@@ -98,7 +102,7 @@ def test_calib_intercept_metric():
     y_pred = rng.uniform(0.1, 0.5, size=100)
 
     metric = calib_intercept_metric(y_true, y_pred)
-    intercept, _ = calibration_intercept_slope(y_true, y_pred)
+    intercept = calibration_intercept_slope(y_true, y_pred).intercept
 
     assert np.isclose(metric, intercept)
 
@@ -110,7 +114,7 @@ def test_calib_slope_metric():
     y_pred = rng.uniform(0.1, 0.5, size=100)
 
     metric = calib_slope_metric(y_true, y_pred)
-    _, slope = calibration_intercept_slope(y_true, y_pred)
+    slope = calibration_intercept_slope(y_true, y_pred).slope
 
     assert np.isclose(metric, slope)
 
@@ -381,7 +385,8 @@ def test_full_calibration_workflow():
 
     # Compute calibration metrics
     y_pred = base_model.predict_proba(X_test)[:, 1]
-    intercept, slope = calibration_intercept_slope(y_test, y_pred)
+    _cal_result = calibration_intercept_slope(y_test, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     ece = expected_calibration_error(y_test, y_pred)
 
     assert np.isfinite(intercept)
@@ -423,7 +428,8 @@ def test_calibration_with_perfect_separation():
     y_pred = model.predict_proba(X_test)[:, 1]
 
     # Calibration metrics should still work
-    intercept, slope = calibration_intercept_slope(y_test, y_pred)
+    _cal_result = calibration_intercept_slope(y_test, y_pred)
+    intercept, slope = _cal_result.intercept, _cal_result.slope
     ece = expected_calibration_error(y_test, y_pred)
 
     assert np.isfinite(intercept)

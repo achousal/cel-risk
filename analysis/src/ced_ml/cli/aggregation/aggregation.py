@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_curve
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER
 from ced_ml.metrics.dca import threshold_dca_zero_crossing
 from ced_ml.metrics.discrimination import (
     compute_brier_score,
@@ -32,6 +33,7 @@ from ced_ml.metrics.thresholds import (
     threshold_for_specificity,
     threshold_youden,
 )
+from ced_ml.utils.constants import Z_CRITICAL_005
 
 
 def compute_summary_stats(
@@ -101,8 +103,12 @@ def compute_summary_stats(
             if len(values) > 0:
                 row[f"{col}_mean"] = values.mean()
                 row[f"{col}_std"] = values.std()
-                row[f"{col}_ci95_lo"] = values.mean() - 1.96 * values.std() / np.sqrt(len(values))
-                row[f"{col}_ci95_hi"] = values.mean() + 1.96 * values.std() / np.sqrt(len(values))
+                row[f"{col}_ci95_lo"] = values.mean() - Z_CRITICAL_005 * values.std() / np.sqrt(
+                    len(values)
+                )
+                row[f"{col}_ci95_hi"] = values.mean() + Z_CRITICAL_005 * values.std() / np.sqrt(
+                    len(values)
+                )
 
         summary_rows.append(row)
 
@@ -159,7 +165,7 @@ def compute_pooled_metrics(
         return {}
 
     metrics = compute_discrimination_metrics(y_true, y_pred)
-    metrics["Brier"] = compute_brier_score(y_true, y_pred)
+    metrics[METRIC_BRIER] = compute_brier_score(y_true, y_pred)
     metrics["n_samples"] = len(y_true)
     metrics["n_positive"] = int(y_true.sum())
     metrics["prevalence"] = float(y_true.mean())
@@ -174,8 +180,8 @@ def compute_pooled_metrics(
     if logger:
         logger.debug(
             f"Computed pooled metrics: n={len(y_true)}, "
-            f"AUROC={metrics.get('AUROC', -1):.3f}, "
-            f"Brier={metrics.get('Brier', -1):.4f}"
+            f"AUROC={metrics.get(METRIC_AUROC, -1):.3f}, "
+            f"Brier={metrics.get(METRIC_BRIER, -1):.4f}"
         )
 
     return metrics
@@ -272,11 +278,11 @@ def compute_pooled_threshold_metrics(
         return {}
 
     youden_thr = threshold_youden(y_true, y_pred)
-    alpha_thr = threshold_for_specificity(y_true, y_pred, target_spec=target_spec)
+    spec_target_thr = threshold_for_specificity(y_true, y_pred, target_spec=target_spec)
     dca_thr = threshold_dca_zero_crossing(y_true, y_pred)
 
     youden_metrics = binary_metrics_at_threshold(y_true, y_pred, youden_thr)
-    alpha_metrics = binary_metrics_at_threshold(y_true, y_pred, alpha_thr)
+    spec_target_metrics = binary_metrics_at_threshold(y_true, y_pred, spec_target_thr)
 
     fpr, tpr, _ = roc_curve(y_true, y_pred)
 
@@ -291,21 +297,37 @@ def compute_pooled_threshold_metrics(
         return fpr_val, tpr_val
 
     youden_fpr, youden_tpr = get_fpr_tpr_at_threshold(youden_thr)
-    alpha_fpr, alpha_tpr = get_fpr_tpr_at_threshold(alpha_thr)
+    spec_target_fpr, spec_target_tpr = get_fpr_tpr_at_threshold(spec_target_thr)
 
     result = {
         "youden_threshold": youden_thr,
-        "alpha_threshold": alpha_thr,
+        "spec_target_threshold": spec_target_thr,
         "target_specificity": target_spec,
         "youden_metrics": {
-            **youden_metrics,
+            "threshold": youden_metrics.threshold,
+            "precision": youden_metrics.precision,
+            "sensitivity": youden_metrics.sensitivity,
+            "f1": youden_metrics.f1,
+            "specificity": youden_metrics.specificity,
+            "tp": youden_metrics.tp,
+            "fp": youden_metrics.fp,
+            "tn": youden_metrics.tn,
+            "fn": youden_metrics.fn,
             "fpr": youden_fpr,
             "tpr": youden_tpr,
         },
-        "alpha_metrics": {
-            **alpha_metrics,
-            "fpr": alpha_fpr,
-            "tpr": alpha_tpr,
+        "spec_target_metrics": {
+            "threshold": spec_target_metrics.threshold,
+            "precision": spec_target_metrics.precision,
+            "sensitivity": spec_target_metrics.sensitivity,
+            "f1": spec_target_metrics.f1,
+            "specificity": spec_target_metrics.specificity,
+            "tp": spec_target_metrics.tp,
+            "fp": spec_target_metrics.fp,
+            "tn": spec_target_metrics.tn,
+            "fn": spec_target_metrics.fn,
+            "fpr": spec_target_fpr,
+            "tpr": spec_target_tpr,
         },
     }
 
@@ -314,7 +336,15 @@ def compute_pooled_threshold_metrics(
         dca_fpr, dca_tpr = get_fpr_tpr_at_threshold(dca_thr)
         result["dca_threshold"] = dca_thr
         result["dca_metrics"] = {
-            **dca_metrics,
+            "threshold": dca_metrics.threshold,
+            "precision": dca_metrics.precision,
+            "sensitivity": dca_metrics.sensitivity,
+            "f1": dca_metrics.f1,
+            "specificity": dca_metrics.specificity,
+            "tp": dca_metrics.tp,
+            "fp": dca_metrics.fp,
+            "tn": dca_metrics.tn,
+            "fn": dca_metrics.fn,
             "fpr": dca_fpr,
             "tpr": dca_tpr,
         }
@@ -322,7 +352,7 @@ def compute_pooled_threshold_metrics(
     if logger:
         logger.debug(
             f"Computed thresholds: Youden={youden_thr:.4f}, "
-            f"Alpha(spec={target_spec})={alpha_thr:.4f}, "
+            f"SpecTarget(spec={target_spec})={spec_target_thr:.4f}, "
             f"DCA={dca_thr if dca_thr is not None else 'N/A'}"
         )
 
@@ -374,24 +404,24 @@ def save_threshold_data(
                 }
             )
 
-        # Alpha threshold (spec95)
-        if "alpha_threshold" in model_thresholds:
-            alpha_metrics = model_thresholds.get("alpha_metrics", {})
+        # Target specificity threshold
+        if "spec_target_threshold" in model_thresholds:
+            spec_target_metrics = model_thresholds.get("spec_target_metrics", {})
             rows.append(
                 {
-                    "threshold_type": "alpha",
-                    "threshold_value": model_thresholds["alpha_threshold"],
+                    "threshold_type": "spec_target",
+                    "threshold_value": model_thresholds["spec_target_threshold"],
                     "target_specificity": model_thresholds.get("target_specificity"),
-                    "sensitivity": alpha_metrics.get("sensitivity"),
-                    "specificity": alpha_metrics.get("specificity"),
-                    "precision": alpha_metrics.get("precision"),
-                    "f1": alpha_metrics.get("f1"),
-                    "fpr": alpha_metrics.get("fpr"),
-                    "tpr": alpha_metrics.get("tpr"),
-                    "tp": alpha_metrics.get("tp"),
-                    "fp": alpha_metrics.get("fp"),
-                    "tn": alpha_metrics.get("tn"),
-                    "fn": alpha_metrics.get("fn"),
+                    "sensitivity": spec_target_metrics.get("sensitivity"),
+                    "specificity": spec_target_metrics.get("specificity"),
+                    "precision": spec_target_metrics.get("precision"),
+                    "f1": spec_target_metrics.get("f1"),
+                    "fpr": spec_target_metrics.get("fpr"),
+                    "tpr": spec_target_metrics.get("tpr"),
+                    "tp": spec_target_metrics.get("tp"),
+                    "fp": spec_target_metrics.get("fp"),
+                    "tn": spec_target_metrics.get("tn"),
+                    "fn": spec_target_metrics.get("fn"),
                 }
             )
 
@@ -446,25 +476,25 @@ def save_threshold_data(
                 }
             )
 
-        # Alpha
-        if "alpha_threshold" in model_thresholds:
-            alpha_metrics = model_thresholds.get("alpha_metrics", {})
+        # Target specificity
+        if "spec_target_threshold" in model_thresholds:
+            spec_target_metrics = model_thresholds.get("spec_target_metrics", {})
             all_rows.append(
                 {
                     "model": model_name,
-                    "threshold_type": "alpha",
-                    "threshold_value": model_thresholds["alpha_threshold"],
+                    "threshold_type": "spec_target",
+                    "threshold_value": model_thresholds["spec_target_threshold"],
                     "target_specificity": model_thresholds.get("target_specificity"),
-                    "sensitivity": alpha_metrics.get("sensitivity"),
-                    "specificity": alpha_metrics.get("specificity"),
-                    "precision": alpha_metrics.get("precision"),
-                    "f1": alpha_metrics.get("f1"),
-                    "fpr": alpha_metrics.get("fpr"),
-                    "tpr": alpha_metrics.get("tpr"),
-                    "tp": alpha_metrics.get("tp"),
-                    "fp": alpha_metrics.get("fp"),
-                    "tn": alpha_metrics.get("tn"),
-                    "fn": alpha_metrics.get("fn"),
+                    "sensitivity": spec_target_metrics.get("sensitivity"),
+                    "specificity": spec_target_metrics.get("specificity"),
+                    "precision": spec_target_metrics.get("precision"),
+                    "f1": spec_target_metrics.get("f1"),
+                    "fpr": spec_target_metrics.get("fpr"),
+                    "tpr": spec_target_metrics.get("tpr"),
+                    "tp": spec_target_metrics.get("tp"),
+                    "fp": spec_target_metrics.get("fp"),
+                    "tn": spec_target_metrics.get("tn"),
+                    "fn": spec_target_metrics.get("fn"),
                 }
             )
 

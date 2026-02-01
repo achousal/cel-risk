@@ -41,12 +41,14 @@ from sklearn.inspection import permutation_importance
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 
+from ced_ml.data.schema import ModelName
 from ced_ml.metrics.discrimination import (
     alpha_sensitivity_at_specificity,
     auroc,
     compute_brier_score,
     prauc,
 )
+from ced_ml.utils.feature_names import extract_protein_name
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +203,7 @@ def compute_feature_importance(
         feature_names = [f for f, s in zip(feature_names, support, strict=False) if s]
 
     # Strategy 1: Coefficient-based (linear models)
-    if model_name in ("LR_EN", "LR_L1", "LinSVM_cal"):
+    if model_name in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal):
         importance = _importance_from_coefficients(clf, feature_names, protein_cols, model_name)
         if importance:
             return importance
@@ -225,7 +227,7 @@ def _importance_from_coefficients(
     coefs = None
 
     # Handle CalibratedClassifierCV wrapper for LinSVM
-    if model_name == "LinSVM_cal" and hasattr(clf, "calibrated_classifiers_"):
+    if model_name == ModelName.LinSVM_cal and hasattr(clf, "calibrated_classifiers_"):
         coefs_list = []
         for cc in clf.calibrated_classifiers_:
             est = getattr(cc, "estimator", None)
@@ -242,7 +244,7 @@ def _importance_from_coefficients(
 
     # Map to protein names with absolute values
     for name, c in zip(feature_names, coefs, strict=False):
-        orig = _extract_protein_name(name)
+        orig = extract_protein_name(name)
         if orig and orig in protein_cols:
             # Use absolute value for importance (magnitude matters, not direction)
             importance[orig] = abs(float(c))
@@ -287,26 +289,11 @@ def _importance_from_permutation(
     for name, imp in zip(feature_names, importances, strict=False):
         if not np.isfinite(imp):
             continue
-        orig = _extract_protein_name(name)
+        orig = extract_protein_name(name)
         if orig and orig in protein_cols:
             importance[orig] = importance.get(orig, 0.0) + float(max(0, imp))
 
     return importance
-
-
-def _extract_protein_name(feature_name: str) -> str | None:
-    """Extract original protein name from transformed feature name.
-
-    Handles patterns:
-    - num__{protein} (sklearn ColumnTransformer prefix)
-    - {protein}_resid (ResidualTransformer suffix)
-    - {protein} (plain name)
-    """
-    if feature_name.startswith("num__"):
-        return feature_name[len("num__") :]
-    if feature_name.endswith("_resid"):
-        return feature_name[: -len("_resid")]
-    return feature_name
 
 
 def find_recommended_panels(

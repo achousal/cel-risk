@@ -25,7 +25,6 @@ from .panels import (
 from .screening import (
     f_statistic_screen,
     mann_whitney_screen,
-    reduced_screening_verbosity,
     screen_proteins,
     variance_missingness_prefilter,
 )
@@ -60,7 +59,6 @@ __all__ = [
     # Screening
     "f_statistic_screen",
     "mann_whitney_screen",
-    "reduced_screening_verbosity",
     "screen_proteins",
     "variance_missingness_prefilter",
     # Screening cache

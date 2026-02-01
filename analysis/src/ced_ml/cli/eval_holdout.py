@@ -44,7 +44,7 @@ def run_eval_holdout(
         clinical_threshold_points: Comma-separated clinical thresholds
         subgroup_min_n: Minimum sample size for subgroup reporting
     """
-    logger = logging.getLogger("ced_ml")
+    logger = logging.getLogger(__name__)
     logger.info("Starting holdout evaluation")
 
     try:

@@ -19,7 +19,28 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold, learning_curve
 
+from ced_ml.utils.constants import CI_LOWER_PCT, CI_UPPER_PCT
+
 from .dca import apply_plot_metadata
+from .style import (
+    BBOX_INCHES,
+    COLOR_FILL_ALPHA,
+    COLOR_PRIMARY,
+    COLOR_REFERENCE,
+    COLOR_SECONDARY,
+    DPI,
+    FIGSIZE_SINGLE,
+    FIGSIZE_WIDE,
+    FONT_LABEL,
+    FONT_LEGEND,
+    FONT_TITLE,
+    GRID_ALPHA,
+    LW_PRIMARY,
+    LW_REFERENCE,
+    MARKER_SIZE_SMALL,
+    PAD_INCHES,
+    configure_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,15 +148,19 @@ def save_learning_curve_csv(
         out_plot: Optional output path for plot
         meta_lines: Optional metadata lines for plot annotation
     """
-    # Reduce screening log verbosity during learning curve generation
-    from ced_ml.features.screening import reduced_screening_verbosity
-
     logger.info(f"Generating learning curve ({n_points} training sizes, {cv}-fold CV)")
 
-    with reduced_screening_verbosity():
+    # Reduce screening log verbosity during learning curve generation
+    # by temporarily elevating the screening module's logger level
+    screening_logger = logging.getLogger("ced_ml.features.screening")
+    old_level = screening_logger.level
+    screening_logger.setLevel(logging.WARNING)
+    try:
         sizes, train_scores, val_scores = compute_learning_curve(
             estimator, X, y, scoring, cv, min_frac, n_points, seed
         )
+    finally:
+        screening_logger.setLevel(old_level)
 
     metric_label, metric_is_error, train_scores, val_scores = _normalize_metric_scores(
         scoring, train_scores, val_scores
@@ -206,9 +231,8 @@ def plot_learning_curve(
         metric_is_error: Whether metric is error-based (lower is better)
         meta_lines: Optional metadata lines for plot annotation
     """
-    import matplotlib
 
-    matplotlib.use("Agg")
+    configure_backend()
     import matplotlib.pyplot as plt
 
     train_sizes = np.asarray(train_sizes)
@@ -222,7 +246,7 @@ def plot_learning_curve(
     if n_sizes == 0 or n_splits == 0:
         return
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
 
     # Scatter validation scores across splits (main focus)
     for split_idx in range(n_splits):
@@ -230,9 +254,9 @@ def plot_learning_curve(
         ax.scatter(
             train_sizes,
             val_scores[:, split_idx],
-            color="tab:blue",
+            color=COLOR_PRIMARY,
             alpha=0.35,
-            s=25,
+            s=MARKER_SIZE_SMALL,
             label=label,
         )
 
@@ -246,21 +270,29 @@ def plot_learning_curve(
         train_sizes,
         val_mean - val_sd,
         val_mean + val_sd,
-        color="tab:blue",
-        alpha=0.15,
-        label="Validation ±1 SD",
+        color=COLOR_PRIMARY,
+        alpha=COLOR_FILL_ALPHA,
+        label="Validation +/-1 SD",
     )
 
     # Plot validation mean line (main information)
-    ax.plot(train_sizes, val_mean, "b-", linewidth=2, label="Validation mean")
+    ax.plot(
+        train_sizes,
+        val_mean,
+        color=COLOR_PRIMARY,
+        linestyle="-",
+        linewidth=LW_PRIMARY,
+        alpha=0.8,
+        label="Validation mean",
+    )
 
     # Plot train mean as thin reference line (minimal visual weight)
     ax.plot(
         train_sizes,
         train_mean,
-        color="darkgreen",
+        color=COLOR_REFERENCE,
         linestyle=":",
-        linewidth=1,
+        linewidth=LW_REFERENCE,
         alpha=0.6,
         label="Train (reference)",
     )
@@ -269,23 +301,23 @@ def plot_learning_curve(
     if metric_is_error:
         metric_text += " (LOWER IS BETTER)"
 
-    ax.set_xlabel("Training samples", fontsize=12)
-    ax.set_ylabel(metric_text, fontsize=12)
-    ax.set_title("Learning Curve", fontsize=14)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Training samples", fontsize=FONT_LABEL)
+    ax.set_ylabel(metric_text, fontsize=FONT_LABEL)
+    ax.set_title("Learning Curve", fontsize=FONT_TITLE)
+    ax.grid(True, alpha=GRID_ALPHA)
 
     # Set x-axis ticks and labels to training sizes
     ax.set_xticks(train_sizes)
     ax.set_xticklabels(
-        [str(int(size)) for size in train_sizes], rotation=45, ha="right", fontsize=9
+        [str(int(size)) for size in train_sizes], rotation=45, ha="right", fontsize=FONT_LEGEND
     )
 
-    ax.legend(loc="best", fontsize=10)
+    ax.legend(loc="best", fontsize=FONT_LEGEND)
 
     # Apply metadata annotation to bottom of figure
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.8)
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close()
 
 
@@ -340,10 +372,10 @@ def aggregate_learning_curve_runs(lc_frames: list[pd.DataFrame]) -> pd.DataFrame
     all_df = pd.concat(per_run, ignore_index=True)
 
     def _ci_lo(x):
-        return float(np.percentile(x, 2.5)) if len(x) > 1 else np.nan
+        return float(np.percentile(x, CI_LOWER_PCT)) if len(x) > 1 else np.nan
 
     def _ci_hi(x):
-        return float(np.percentile(x, 97.5)) if len(x) > 1 else np.nan
+        return float(np.percentile(x, CI_UPPER_PCT)) if len(x) > 1 else np.nan
 
     summary = all_df.groupby("train_size", as_index=False).agg(
         train_mean=("train_mean", "mean"),
@@ -380,16 +412,15 @@ def plot_learning_curve_summary(
         return
 
     try:
-        import matplotlib
 
-        matplotlib.use("Agg")
+        configure_backend()
         import matplotlib.pyplot as plt
     except Exception as e:
         logger.error(f"[PLOT] Learning curve failed to import dependencies: {e}")
         return
 
     x = df["train_size"].to_numpy()
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
 
     # Helper function to safely plot confidence/uncertainty bands
     def _plot_band(
@@ -434,7 +465,7 @@ def plot_learning_curve_summary(
                 )
 
     # Plot validation bands (val_ci_lo, val_ci_hi, val_sd)
-    _plot_band("val_mean", "val_sd", "val_ci_lo", "val_ci_hi", "darkorange", "Val")
+    _plot_band("val_mean", "val_sd", "val_ci_lo", "val_ci_hi", COLOR_SECONDARY, "Val")
 
     # Plot individual validation data points if available
     if "val_score" in df.columns:
@@ -444,9 +475,9 @@ def plot_learning_curve_summary(
             ax.scatter(
                 x[valid_val],
                 val_scores[valid_val],
-                color="darkorange",
+                color=COLOR_SECONDARY,
                 alpha=0.35,
-                s=20,
+                s=MARKER_SIZE_SMALL,
                 label="Val points",
             )
 
@@ -454,23 +485,22 @@ def plot_learning_curve_summary(
     ax.plot(
         x,
         df["val_mean"],
-        color="darkorange",
-        linewidth=2.5,
+        color=COLOR_SECONDARY,
+        linewidth=LW_PRIMARY,
         label="Val mean",
         marker="s",
         markersize=6,
-        markerfacecolor="darkorange",
-        markeredgecolor="darkorange",
+        markerfacecolor=COLOR_SECONDARY,
+        markeredgecolor=COLOR_SECONDARY,
     )
 
     # Plot train mean as thin reference line (minimal visual weight)
-    # EXACTLY matching individual plot style: no SD, no CI, no points, no markers
     ax.plot(
         x,
         df["train_mean"],
-        color="darkgreen",
+        color=COLOR_REFERENCE,
         linestyle=":",
-        linewidth=1,
+        linewidth=LW_REFERENCE,
         alpha=0.6,
         label="Train (reference)",
     )
@@ -488,15 +518,15 @@ def plot_learning_curve_summary(
     elif metric_direction == "higher_is_better":
         ylabel += " (higher is better)"
 
-    ax.set_xlabel("Training examples", fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.grid(True, alpha=0.2)
+    ax.set_xlabel("Training examples", fontsize=FONT_LABEL)
+    ax.set_ylabel(ylabel, fontsize=FONT_LABEL)
+    ax.set_title(title, fontsize=FONT_TITLE, fontweight="bold")
+    ax.grid(True, alpha=GRID_ALPHA)
 
-    ax.legend(fontsize=8, loc="best")
+    ax.legend(fontsize=FONT_LEGEND, loc="best")
 
     # Apply metadata annotation to bottom of figure
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, pad_inches=0.1)
+    plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()

@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 import yaml
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
+
 
 def collect_ensemble_metadata(
     ensemble_dirs: list[Path],
@@ -71,7 +73,7 @@ def collect_ensemble_metadata(
                     config = yaml.safe_load(f)
                 if "ensemble" in config:
                     ensemble_cfg = config["ensemble"]
-                    split_seed = int(ed.name.replace("split_seed", "").replace("split_", ""))
+                    split_seed = int(ed.name.replace("split_seed", ""))
                     ensemble_configs[split_seed] = {
                         "base_models": ensemble_cfg.get("base_models", []),
                         "meta_penalty": ensemble_cfg.get("meta_model", {}).get("penalty", "l2"),
@@ -122,8 +124,10 @@ def collect_ensemble_metadata(
         base_models_test = {m: pooled_test_metrics[m] for m in all_models if m != "ENSEMBLE"}
 
         if base_models_test:
-            best_base_auroc = max((m.get("AUROC", 0) for m in base_models_test.values()), default=0)
-            ensemble_auroc = ensemble_test.get("AUROC", 0)
+            best_base_auroc = max(
+                (m.get(METRIC_AUROC, 0) for m in base_models_test.values()), default=0
+            )
+            ensemble_auroc = ensemble_test.get(METRIC_AUROC, 0)
 
             if best_base_auroc > 0:
                 improvement = ((ensemble_auroc - best_base_auroc) / best_base_auroc) * 100
@@ -131,8 +135,8 @@ def collect_ensemble_metadata(
                     "test_AUROC": ensemble_auroc,
                     "best_base_model_AUROC": best_base_auroc,
                     "AUROC_improvement_percent": improvement,
-                    "test_PR_AUC": ensemble_test.get("PR_AUC"),
-                    "test_Brier": ensemble_test.get("Brier"),
+                    "test_PR_AUC": ensemble_test.get(METRIC_PRAUC),
+                    "test_Brier": ensemble_test.get(METRIC_BRIER),
                 }
 
     return ensemble_metadata

@@ -18,6 +18,7 @@ Behavioral equivalence:
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -127,17 +128,18 @@ def check_split_files_exist(
     """
     suffix = f"_{scenario}_seed{seed if seed is not None else 0}"
 
+    outdir_path = Path(outdir)
     expected_files = [
-        os.path.join(outdir, f"train_idx{suffix}.csv"),
-        os.path.join(outdir, f"test_idx{suffix}.csv"),
+        outdir_path / f"train_idx{suffix}.csv",
+        outdir_path / f"test_idx{suffix}.csv",
     ]
     if has_val:
-        expected_files.append(os.path.join(outdir, f"val_idx{suffix}.csv"))
+        expected_files.append(outdir_path / f"val_idx{suffix}.csv")
 
     # Also check metadata
-    expected_files.append(os.path.join(outdir, f"split_meta_{scenario}_seed{seed}.json"))
+    expected_files.append(outdir_path / f"split_meta_{scenario}_seed{seed}.json")
 
-    existing = [f for f in expected_files if os.path.exists(f)]
+    existing = [str(f) for f in expected_files if f.exists()]
 
     return len(existing) > 0, existing
 
@@ -177,14 +179,15 @@ def validate_existing_splits(
 
     # Check if all expected files exist
     suffix = f"_{scenario}_seed{seed if seed is not None else 0}"
-    train_path = os.path.join(outdir, f"train_idx{suffix}.csv")
-    test_path = os.path.join(outdir, f"test_idx{suffix}.csv")
-    val_path = os.path.join(outdir, f"val_idx{suffix}.csv") if has_val else None
+    outdir_path = Path(outdir)
+    train_path = outdir_path / f"train_idx{suffix}.csv"
+    test_path = outdir_path / f"test_idx{suffix}.csv"
+    val_path = outdir_path / f"val_idx{suffix}.csv" if has_val else None
 
-    if not os.path.exists(train_path) or not os.path.exists(test_path):
+    if not train_path.exists() or not test_path.exists():
         return False, "Missing train or test split file"
 
-    if has_val and not os.path.exists(val_path):
+    if has_val and not val_path.exists():
         return False, "Missing validation split file"
 
     # Load existing indices
@@ -296,12 +299,13 @@ def save_split_indices(
 
     # Build file paths (include scenario to prevent overwrites in multi-scenario runs)
     suffix = f"_{scenario}_seed{seed if seed is not None else 0}"
+    outdir_path = Path(outdir)
     paths = {
-        "train": os.path.join(outdir, f"train_idx{suffix}.csv"),
-        "test": os.path.join(outdir, f"test_idx{suffix}.csv"),
+        "train": str(outdir_path / f"train_idx{suffix}.csv"),
+        "test": str(outdir_path / f"test_idx{suffix}.csv"),
     }
     if has_val:
-        paths["val"] = os.path.join(outdir, f"val_idx{suffix}.csv")
+        paths["val"] = str(outdir_path / f"val_idx{suffix}.csv")
 
     # Sort indices for deterministic output
     train_idx = np.sort(train_idx.astype(int))
@@ -310,7 +314,7 @@ def save_split_indices(
         val_idx = np.sort(val_idx.astype(int))
 
     # Save CSVs
-    os.makedirs(outdir, exist_ok=True)
+    outdir_path.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame({"idx": train_idx}).to_csv(paths["train"], index=False)
     pd.DataFrame({"idx": test_idx}).to_csv(paths["test"], index=False)
@@ -362,21 +366,22 @@ def save_holdout_indices(
         suffix_parts.append(run_id)
 
     suffix = "_".join(suffix_parts)
-    holdout_path = os.path.join(outdir, f"HOLDOUT_idx_{suffix}.csv")
+    outdir_path = Path(outdir)
+    holdout_path = outdir_path / f"HOLDOUT_idx_{suffix}.csv"
 
-    if os.path.exists(holdout_path) and not overwrite:
+    if holdout_path.exists() and not overwrite:
         raise FileExistsError(
             f"Holdout file already exists: {holdout_path}\n" f"Use overwrite=True to replace."
         )
 
-    os.makedirs(outdir, exist_ok=True)
+    outdir_path.mkdir(parents=True, exist_ok=True)
 
     # Sort indices for deterministic output
     holdout_idx = np.sort(holdout_idx.astype(int))
 
     pd.DataFrame({"idx": holdout_idx}).to_csv(holdout_path, index=False)
 
-    return holdout_path
+    return str(holdout_path)
 
 
 # ============================================================================
@@ -503,13 +508,14 @@ def save_split_metadata(
             meta["temporal_test_end_value"] = temporal_test_end
 
     # Save to file (include scenario to prevent overwrites)
-    meta_path = os.path.join(outdir, f"split_meta_{scenario}_seed{seed}.json")
-    os.makedirs(outdir, exist_ok=True)
+    outdir_path = Path(outdir)
+    meta_path = outdir_path / f"split_meta_{scenario}_seed{seed}.json"
+    outdir_path.mkdir(parents=True, exist_ok=True)
 
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    return meta_path
+    return str(meta_path)
 
 
 def load_split_metadata(
@@ -531,9 +537,9 @@ def load_split_metadata(
         Metadata includes row_filters.meta_num_cols_used which is critical
         for validating alignment between split generation and training.
     """
-    meta_path = os.path.join(split_dir, f"split_meta_{scenario}_seed{seed}.json")
+    meta_path = Path(split_dir) / f"split_meta_{scenario}_seed{seed}.json"
 
-    if not os.path.exists(meta_path):
+    if not meta_path.exists():
         return None
 
     with open(meta_path) as f:
@@ -586,7 +592,7 @@ def save_holdout_metadata(
     meta: dict[str, Any] = {
         "scenario": scenario,
         "split_type": "holdout",
-        "seed": 42,  # Fixed seed for holdout
+        "seed": 42,  # Fixed seed for holdout (ensures consistent evaluation set across experiments)
         "n_holdout": int(len(holdout_idx)),
         "n_holdout_pos": int(y_holdout.sum()),
         "prevalence_holdout": float(y_holdout.mean()),
@@ -631,10 +637,11 @@ def save_holdout_metadata(
         suffix_parts.append(run_id)
 
     suffix = "_".join(suffix_parts)
-    meta_path = os.path.join(outdir, f"HOLDOUT_meta_{suffix}.json")
-    os.makedirs(outdir, exist_ok=True)
+    outdir_path = Path(outdir)
+    meta_path = outdir_path / f"HOLDOUT_meta_{suffix}.json"
+    outdir_path.mkdir(parents=True, exist_ok=True)
 
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    return meta_path
+    return str(meta_path)

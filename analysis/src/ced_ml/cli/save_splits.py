@@ -315,11 +315,14 @@ def _create_holdout(
     else:
         strata_full, sch_full = build_working_strata(df_scenario, min_count=2)
         logger.info(f"  Holdout stratification: {sch_full}")
+        # Fixed seed 42 for holdout ensures consistent final evaluation set across experiments
+        # This is intentional - holdout should be stable for valid cross-experiment comparison
+        holdout_seed = 42
         dev_pos_unsorted, holdout_pos, _, y_holdout = train_test_split(
             full_idx,
             y_full,
             test_size=config.holdout_size,
-            random_state=42,
+            random_state=holdout_seed,
             stratify=strata_full,
         )
         holdout_idx_global = np.array(holdout_pos, dtype=int)

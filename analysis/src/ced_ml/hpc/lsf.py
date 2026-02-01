@@ -16,21 +16,37 @@ import logging
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
+from ced_ml.config.schema import HPCConfig
+
 logger = logging.getLogger(__name__)
 
 
-def detect_environment(base_dir: Path) -> dict[str, str]:
+@dataclass
+class EnvironmentInfo:
+    """Environment detection result.
+
+    Attributes:
+        env_type: Type of Python environment ('venv', 'conda', etc.).
+        activation_cmd: Shell command to activate the environment.
+    """
+
+    env_type: str
+    activation_cmd: str
+
+
+def detect_environment(base_dir: Path) -> EnvironmentInfo:
     """Detect venv at analysis/ subdirectory (for HPC mode).
 
     Args:
         base_dir: Base directory (cwd).
 
     Returns:
-        Dict with keys: type, activation (bash command to activate).
+        EnvironmentInfo with env_type and activation_cmd.
 
     Raises:
         RuntimeError: If venv not found.
@@ -51,41 +67,41 @@ def detect_environment(base_dir: Path) -> dict[str, str]:
     if not venv_activate.exists():
         raise RuntimeError(f"venv not found at {venv_activate}. " f"Run: bash scripts/hpc_setup.sh")
 
-    return {
-        "type": "venv",
-        "activation": f'source "{venv_activate}"',
-    }
+    return EnvironmentInfo(
+        env_type="venv",
+        activation_cmd=f'source "{venv_activate}"',
+    )
 
 
-def load_hpc_config(config_path: Path) -> dict:
+def load_hpc_config(config_path: Path) -> HPCConfig:
     """Load and validate HPC pipeline config.
 
     Args:
         config_path: Path to pipeline_hpc.yaml.
 
     Returns:
-        Parsed config dict.
+        Validated HPCConfig instance.
 
     Raises:
         FileNotFoundError: If config file does not exist.
-        ValueError: If required HPC fields are missing.
+        ValueError: If required HPC fields are missing or invalid.
     """
     if not config_path.exists():
         raise FileNotFoundError(f"HPC config not found: {config_path}")
 
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        raw_config = yaml.safe_load(f)
 
-    hpc = config.get("hpc", {})
-    required_fields = ["project", "queue", "walltime", "cores", "mem_per_core"]
-    missing = [f for f in required_fields if f not in hpc]
-    if missing:
-        raise ValueError(f"Missing required HPC settings in {config_path}: {', '.join(missing)}")
+    hpc_dict = raw_config.get("hpc", {})
+    if not hpc_dict:
+        raise ValueError(f"No 'hpc' section found in {config_path}")
 
-    if hpc["project"] in ("YOUR_PROJECT_ALLOCATION", "YOUR_ALLOCATION"):
-        raise ValueError(f"HPC project not configured. Update 'hpc.project' in {config_path}")
+    try:
+        hpc_config = HPCConfig(**hpc_dict)
+    except Exception as e:
+        raise ValueError(f"Invalid HPC configuration in {config_path}: {e}") from e
 
-    return config
+    return hpc_config
 
 
 def build_job_script(
@@ -304,7 +320,7 @@ def submit_hpc_pipeline(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
-    hpc_config: dict,
+    hpc_config: HPCConfig,
     logs_dir: Path,
     dry_run: bool,
     pipeline_logger: logging.Logger,
@@ -331,7 +347,7 @@ def submit_hpc_pipeline(
         enable_ensemble: Enable ensemble training in post-processing.
         enable_consensus: Enable consensus panel generation.
         enable_optimize_panel: Enable parallel panel optimization jobs.
-        hpc_config: Parsed pipeline_hpc.yaml config dict.
+        hpc_config: HPCConfig schema instance.
         logs_dir: Directory for job logs.
         dry_run: Preview without submitting.
         pipeline_logger: Logger instance.
@@ -339,32 +355,32 @@ def submit_hpc_pipeline(
     Returns:
         Dict with run_id, training_jobs, postprocessing_job, panel_jobs, consensus_job, logs_dir.
     """
-    hpc = hpc_config["hpc"]
     base_dir = Path.cwd()
 
     # Detect environment
     env_info = detect_environment(base_dir)
-    pipeline_logger.info(f"Python environment: {env_info['type']}")
+    pipeline_logger.info(f"Python environment: {env_info.env_type}")
 
     # Create log directory
     run_logs_dir = logs_dir / "training" / f"run_{run_id}"
     run_logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Common bsub parameters
+    # Get default resource config
+    default_resources = hpc_config.get_resources("default")
+
+    # Common bsub parameters (using default resources for now, can be customized per stage)
     bsub_params = {
-        "project": hpc["project"],
-        "queue": hpc["queue"],
-        "cores": hpc["cores"],
-        "mem_per_core": hpc["mem_per_core"],
-        "walltime": hpc["walltime"],
-        "env_activation": env_info["activation"],
+        "project": hpc_config.project,
+        "env_activation": env_info.activation_cmd,
         "log_dir": run_logs_dir,
+        **default_resources,
     }
 
     # Submit training jobs (one per model per split for maximum parallelization)
     n_jobs = len(models) * len(split_seeds)
     pipeline_logger.info(
-        f"Submitting {n_jobs} training jobs ({len(models)} models \u00d7 {len(split_seeds)} splits)..."
+        f"Submitting {n_jobs} training jobs "
+        f"({len(models)} models \u00d7 {len(split_seeds)} splits)..."
     )
     training_job_ids = []
 
@@ -463,7 +479,8 @@ def submit_hpc_pipeline(
         pipeline_logger.info("Submitting consensus panel job...")
         consensus_job_name = f"CeD_{run_id}_consensus"
 
-        # Consensus depends on post-processing (for aggregation) AND panel optimization jobs (if enabled)
+        # Consensus depends on post-processing (aggregation) AND panel optimization jobs
+        # (if enabled)
         if enable_optimize_panel and panel_job_ids:
             # Wait for both post-processing and all panel optimization jobs
             consensus_dependency = f"done({post_job_name}) && done(CeD_{run_id}_panel_*)"

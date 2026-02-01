@@ -15,6 +15,7 @@ from ced_ml.cli.optimize_panel import discover_models_by_run_id, run_optimize_pa
 from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
+from ced_ml.data.schema import ModelName
 from ced_ml.utils.logging import auto_log_path, setup_logger
 
 
@@ -74,7 +75,7 @@ def _ensure_splits_exist(
 
 # Hardcoded fallback defaults (used when no config and no CLI override)
 _PIPELINE_DEFAULTS: dict[str, Any] = {
-    "models": ["LR_EN", "RF", "XGBoost"],
+    "models": [ModelName.LR_EN, ModelName.RF, ModelName.XGBoost],
     "ensemble": True,
     "consensus": True,
     "optimize_panel": True,
@@ -335,10 +336,13 @@ def _run_hpc_mode(
         enable_optimize_panel = False
         enable_consensus = False
 
-    # Load HPC config
+    # Load HPC config (returns HPCConfig schema)
     if hpc_config_file is None:
         hpc_config_file = Path("configs/pipeline_hpc.yaml")
     hpc_config = load_hpc_config(hpc_config_file)
+
+    # Load pipeline config for paths and other settings (returns dict with paths/configs/pipeline sections)
+    pipeline_config = load_pipeline_config(hpc_config_file)
 
     # Auto-discover infile from HPC config if not provided
     if infile is None:
@@ -346,33 +350,29 @@ def _run_hpc_mode(
         infile = _discover_input_file(config_file, outdir, hpc_logger)
     infile = infile.resolve()
 
-    # Resolve paths
+    # Resolve paths from pipeline config
     if outdir is None:
-        outdir_str = hpc_config.get("paths", {}).get("results_dir", "results")
-        outdir = (hpc_config_file.parent.parent / outdir_str).resolve()
+        outdir = pipeline_config.get("results_dir")
+        if outdir is None:
+            outdir = (hpc_config_file.parent.parent / "results").resolve()
     else:
         outdir = outdir.resolve()
 
     if split_dir is None:
-        split_dir_str = hpc_config.get("paths", {}).get("splits_dir")
-        if split_dir_str:
-            split_dir = (hpc_config_file.parent.parent / split_dir_str).resolve()
-        else:
+        split_dir = pipeline_config.get("splits_dir")
+        if split_dir is None:
             split_dir = outdir.parent / "splits"
     split_dir = split_dir.resolve()
 
     if config_file is None:
-        training_cfg = hpc_config.get("configs", {}).get("training")
-        if training_cfg:
-            config_file = (hpc_config_file.parent.parent / training_cfg).resolve()
+        config_file = pipeline_config.get("training_config")
 
     if splits_config_file is None:
-        splits_cfg = hpc_config.get("configs", {}).get("splits")
-        if splits_cfg:
-            splits_config_file = (hpc_config_file.parent.parent / splits_cfg).resolve()
+        splits_config_file = pipeline_config.get("splits_config")
 
-    logs_dir_str = hpc_config.get("paths", {}).get("logs_dir", "../logs")
-    logs_dir = (hpc_config_file.parent.parent / logs_dir_str).resolve()
+    logs_dir = pipeline_config.get("logs_dir")
+    if logs_dir is None:
+        logs_dir = (hpc_config_file.parent.parent / "logs").resolve()
 
     # Generate run_id
     if run_id is None:
@@ -394,7 +394,6 @@ def _run_hpc_mode(
     )
 
     # Log summary
-    hpc = hpc_config["hpc"]
     hpc_logger.info("=" * 70)
     hpc_logger.info("CeD-ML HPC Pipeline Submission")
     hpc_logger.info("=" * 70)
@@ -402,8 +401,8 @@ def _run_hpc_mode(
     hpc_logger.info(f"Models: {', '.join(models)}")
     hpc_logger.info(f"Split seeds: {split_seeds}")
     hpc_logger.info(
-        f"HPC: {hpc['project']} / {hpc['queue']} / "
-        f"{hpc['walltime']} / {hpc['cores']}c / {hpc['mem_per_core']}MB"
+        f"HPC: {hpc_config.project} / {hpc_config.queue} / "
+        f"{hpc_config.walltime} / {hpc_config.cores}c / {hpc_config.mem_per_core}MB"
     )
     hpc_logger.info(f"Dry run: {dry_run}")
     hpc_logger.info("=" * 70)
@@ -761,15 +760,25 @@ def run_pipeline(
         logger.info("Step 7: Generate Consensus Panel")
         logger.info("=" * 70)
 
+        # Load consensus config for parameters (corr_threshold, stability_threshold, etc.)
+        from ced_ml.config.loader import load_yaml
+
+        consensus_config_path = (
+            Path(__file__).parent.parent.parent.parent / "configs" / "consensus_panel.yaml"
+        )
+        consensus_cfg = {}
+        if consensus_config_path.exists():
+            consensus_cfg = load_yaml(consensus_config_path)
+
         run_consensus_panel(
             run_id=shared_run_id,
             infile=str(infile),
             split_dir=str(split_dir),
-            stability_threshold=0.75,
-            corr_threshold=0.85,
-            target_size=25,
-            rfe_weight=0.5,
-            rra_method="geometric_mean",
+            stability_threshold=consensus_cfg.get("stability_threshold", 0.75),
+            corr_threshold=consensus_cfg.get("corr_threshold", 0.85),
+            target_size=consensus_cfg.get("target_size", 25),
+            rfe_weight=consensus_cfg.get("rfe_weight", 0.5),
+            rra_method=consensus_cfg.get("rra_method", "geometric_mean"),
             outdir=None,
             log_level=log_level,
         )

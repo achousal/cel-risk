@@ -9,11 +9,14 @@ This module implements correlation-based redundancy removal for feature panels:
 All correlation analysis is performed on TRAIN data only to prevent test leakage.
 """
 
+import logging
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+logger = logging.getLogger(__name__)
 
 
 def compute_correlation_matrix(
@@ -263,6 +266,11 @@ def compute_univariate_strength(
                 _, p_val = stats.mannwhitneyu(x_case, x_control, alternative="two-sided")
             p_val = float(p_val)
         except Exception:
+            logger.warning(
+                f"Mann-Whitney U test failed for protein '{protein}'; "
+                f"setting p_val=nan (n_case={len(x_case)}, n_control={len(x_control)})",
+                exc_info=True,
+            )
             p_val = np.nan
 
         # Mean difference

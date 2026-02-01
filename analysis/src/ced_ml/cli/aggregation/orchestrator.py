@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
+
 if TYPE_CHECKING:
     from logging import Logger
 
@@ -193,11 +195,24 @@ def compute_and_save_pooled_metrics(
             pd.DataFrame(metrics_rows).to_csv(metrics_dir / "pooled_test_metrics.csv", index=False)
 
             for model_name, metrics in pooled_test_metrics.items():
-                logger.info(f"Pooled test [{model_name}] AUROC: {metrics.get('AUROC', 'N/A'):.4f}")
+                auroc = metrics.get(METRIC_AUROC)
+                prauc = metrics.get(METRIC_PRAUC)
+                brier = metrics.get(METRIC_BRIER)
                 logger.info(
-                    f"Pooled test [{model_name}] PR-AUC: {metrics.get('PR_AUC', 'N/A'):.4f}"
+                    f"Pooled test [{model_name}] AUROC: {auroc:.4f}"
+                    if auroc is not None
+                    else f"Pooled test [{model_name}] AUROC: N/A"
                 )
-                logger.info(f"Pooled test [{model_name}] Brier: {metrics.get('Brier', 'N/A'):.4f}")
+                logger.info(
+                    f"Pooled test [{model_name}] PR-AUC: {prauc:.4f}"
+                    if prauc is not None
+                    else f"Pooled test [{model_name}] PR-AUC: N/A"
+                )
+                logger.info(
+                    f"Pooled test [{model_name}] Brier: {brier:.4f}"
+                    if brier is not None
+                    else f"Pooled test [{model_name}] Brier: N/A"
+                )
 
             # Selection scores
             selection_scores = compute_selection_scores_for_models(pooled_test_metrics)
@@ -223,12 +238,17 @@ def compute_and_save_pooled_metrics(
             )
             if model_threshold:
                 threshold_info[model_name] = model_threshold
+                youden_thr = model_threshold.get("youden_threshold")
+                spec_thr = model_threshold.get("spec_target_threshold")
                 logger.info(
-                    f"Youden threshold [{model_name}]: {model_threshold.get('youden_threshold', 'N/A'):.4f}"
+                    f"Youden threshold [{model_name}]: {youden_thr:.4f}"
+                    if youden_thr is not None
+                    else f"Youden threshold [{model_name}]: N/A"
                 )
                 logger.info(
-                    f"Alpha threshold [{model_name}] (spec={target_specificity}): "
-                    f"{model_threshold.get('alpha_threshold', 'N/A'):.4f}"
+                    f"Target spec threshold [{model_name}] (spec={target_specificity}): {spec_thr:.4f}"
+                    if spec_thr is not None
+                    else f"Target spec threshold [{model_name}] (spec={target_specificity}): N/A"
                 )
 
         if threshold_info:
@@ -243,7 +263,12 @@ def compute_and_save_pooled_metrics(
             metrics_rows = list(pooled_val_metrics.values())
             pd.DataFrame(metrics_rows).to_csv(metrics_dir / "pooled_val_metrics.csv", index=False)
             for model_name, metrics in pooled_val_metrics.items():
-                logger.info(f"Pooled val [{model_name}] AUROC: {metrics.get('AUROC', 'N/A'):.4f}")
+                val_auroc = metrics.get(METRIC_AUROC)
+                logger.info(
+                    f"Pooled val [{model_name}] AUROC: {val_auroc:.4f}"
+                    if val_auroc is not None
+                    else f"Pooled val [{model_name}] AUROC: N/A"
+                )
 
     return pooled_test_metrics, pooled_val_metrics, threshold_info
 
@@ -420,8 +445,8 @@ def build_return_summary(
         model_test = pooled_test_metrics.get(model_name, {})
         model_threshold = threshold_info.get(model_name, {})
         per_model_summary[model_name] = {
-            "pooled_test_auroc": model_test.get("AUROC"),
-            "pooled_test_prauc": model_test.get("PR_AUC"),
+            "pooled_test_auroc": model_test.get(METRIC_AUROC),
+            "pooled_test_prauc": model_test.get(METRIC_PRAUC),
             "youden_threshold": model_threshold.get("youden_threshold"),
         }
 

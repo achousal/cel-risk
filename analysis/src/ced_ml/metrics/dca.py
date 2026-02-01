@@ -98,6 +98,9 @@ def decision_curve_analysis(
     thresholds: np.ndarray | None = None,
     prevalence_adjustment: float | None = None,
     prevalence: float | None = None,
+    min_threshold: float = 0.001,
+    max_threshold: float = 0.10,
+    threshold_step: float = 0.001,
 ) -> pd.DataFrame:
     """
     Compute Decision Curve Analysis across threshold range.
@@ -110,9 +113,12 @@ def decision_curve_analysis(
         y_pred_prob: Predicted probabilities
         thresholds: Array of threshold probabilities. If None and prevalence
             is provided, auto-configures range based on prevalence. Otherwise
-            defaults to 0.001 to 0.10.
+            uses min_threshold to max_threshold.
         prevalence_adjustment: Optional prevalence for calibration adjustment (affects treat-all NB)
         prevalence: Optional prevalence for auto-threshold range (computes min/max from prevalence)
+        min_threshold: Minimum threshold for auto-generated range (default: 0.001)
+        max_threshold: Maximum threshold for auto-generated range (default: 0.10)
+        threshold_step: Step size for auto-generated range (default: 0.001)
 
     Returns:
         DataFrame with DCA metrics
@@ -132,7 +138,7 @@ def decision_curve_analysis(
 
     if thresholds is None:
         thresholds = generate_dca_thresholds(
-            min_thr=0.001, max_thr=0.10, step=0.001, prevalence=prevalence
+            min_thr=min_threshold, max_thr=max_threshold, step=threshold_step, prevalence=prevalence
         )
 
     observed_prevalence = np.mean(y)
@@ -192,6 +198,9 @@ def threshold_dca_zero_crossing(
     thresholds: np.ndarray | None = None,
     prevalence_adjustment: float | None = None,
     prevalence: float | None = None,
+    min_threshold: float = 0.001,
+    max_threshold: float = 0.10,
+    threshold_step: float = 0.001,
 ) -> float | None:
     """
     Find the threshold where model net benefit crosses zero.
@@ -205,9 +214,12 @@ def threshold_dca_zero_crossing(
         y_pred_prob: Predicted probabilities
         thresholds: Array of threshold probabilities. If None and prevalence
             is provided, auto-configures range based on prevalence. Otherwise
-            defaults to 0.001 to 0.10.
+            uses min_threshold to max_threshold.
         prevalence_adjustment: Optional prevalence for calibration adjustment
         prevalence: Optional prevalence for auto-threshold range
+        min_threshold: Minimum threshold for auto-generated range (default: 0.001)
+        max_threshold: Maximum threshold for auto-generated range (default: 0.10)
+        threshold_step: Step size for auto-generated range (default: 0.001)
 
     Returns:
         Threshold where net benefit crosses zero, or None if no crossing found
@@ -220,7 +232,7 @@ def threshold_dca_zero_crossing(
 
     if thresholds is None:
         thresholds = generate_dca_thresholds(
-            min_thr=0.001, max_thr=0.10, step=0.001, prevalence=prevalence
+            min_thr=min_threshold, max_thr=max_threshold, step=threshold_step, prevalence=prevalence
         )
 
     dca_df = decision_curve_analysis(

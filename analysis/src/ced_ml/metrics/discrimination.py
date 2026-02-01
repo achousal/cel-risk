@@ -28,6 +28,9 @@ from sklearn.metrics import (
     roc_curve,
 )
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_PRAUC
+from ced_ml.utils.math_utils import EPSILON_LOGLOSS
+
 
 def _validate_binary_labels(
     y_true: np.ndarray,
@@ -331,8 +334,8 @@ def compute_discrimination_metrics(
     if not _validate_binary_labels(y_true, "compute_discrimination_metrics", strict=strict):
         # Return NaN for all metrics
         metrics = {
-            "AUROC": np.nan,
-            "PR_AUC": np.nan,
+            METRIC_AUROC: np.nan,
+            METRIC_PRAUC: np.nan,
         }
         if include_youden:
             metrics["Youden"] = np.nan
@@ -342,8 +345,8 @@ def compute_discrimination_metrics(
 
     # Core discrimination metrics
     metrics = {
-        "AUROC": float(roc_auc_score(y_true, y_pred)),
-        "PR_AUC": float(average_precision_score(y_true, y_pred)),
+        METRIC_AUROC: float(roc_auc_score(y_true, y_pred)),
+        METRIC_PRAUC: float(average_precision_score(y_true, y_pred)),
     }
 
     # Optional metrics requiring ROC curve computation
@@ -394,7 +397,7 @@ def compute_brier_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(brier_score_loss(y_true, y_pred))
 
 
-def compute_log_loss(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-15) -> float:
+def compute_log_loss(y_true: np.ndarray, y_pred: np.ndarray, eps: float = EPSILON_LOGLOSS) -> float:
     """
     Compute log loss (cross-entropy) with numerical stability clipping.
 
@@ -404,7 +407,7 @@ def compute_log_loss(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-15)
     Args:
         y_true: True binary labels (0/1), shape (n_samples,)
         y_pred: Predicted probabilities for positive class, shape (n_samples,)
-        eps: Clipping threshold to avoid log(0), default 1e-15
+        eps: Clipping threshold to avoid log(0), default 1e-15 (EPSILON_LOGLOSS)
 
     Returns:
         Log loss >= 0.0 (lower is better)

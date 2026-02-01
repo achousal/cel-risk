@@ -9,6 +9,7 @@ This package contains model-related functionality including:
 """
 
 from .calibration import (
+    CalibrationMetrics,
     OOFCalibratedModel,
     OOFCalibrator,
     PrevalenceAdjustedModel,
@@ -48,6 +49,7 @@ from .training import (
 
 __all__ = [
     # Calibration
+    "CalibrationMetrics",
     "calibration_intercept_slope",
     "calib_intercept_metric",
     "calib_slope_metric",

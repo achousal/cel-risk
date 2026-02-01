@@ -44,12 +44,8 @@ def collect_ensemble_predictions(
     all_preds = []
 
     for ensemble_dir in ensemble_dirs:
-        # Extract seed from directory name (handles both split_X and split_seedX)
-        name = ensemble_dir.name
-        if name.startswith("split_seed"):
-            seed = int(name.replace("split_seed", ""))
-        else:
-            seed = int(name.replace("split_", ""))
+        # Extract seed from directory name
+        seed = int(ensemble_dir.name.replace("split_seed", ""))
 
         pred_dir = ensemble_dir / subdir
 
@@ -99,11 +95,7 @@ def collect_ensemble_metrics(
 
     for ensemble_dir in ensemble_dirs:
         # Extract seed from directory name
-        name = ensemble_dir.name
-        if name.startswith("split_seed"):
-            seed = int(name.replace("split_seed", ""))
-        else:
-            seed = int(name.replace("split_", ""))
+        seed = int(ensemble_dir.name.replace("split_seed", ""))
 
         # Try JSON metrics first (ENSEMBLE uses JSON format)
         metrics_path = ensemble_dir / "core" / "metrics.json"

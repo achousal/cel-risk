@@ -24,8 +24,12 @@ from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file, usecols_for_proteomics
 from ced_ml.data.schema import (
     CONTROL_LABEL,
+    METRIC_AUROC,
+    METRIC_BRIER,
+    METRIC_PRAUC,
     SCENARIO_DEFINITIONS,
     TARGET_COL,
+    ModelName,
 )
 from ced_ml.evaluation.reports import OutputDirectories, ResultsWriter
 from ced_ml.features.kbest import (
@@ -429,14 +433,14 @@ def evaluate_on_split(
 
     # Add calibration metrics
     brier = compute_brier_score(y, y_probs_adj)
-    cal_intercept, cal_slope = calibration_intercept_slope(y, y_probs_adj)
+    cal_metrics = calibration_intercept_slope(y, y_probs_adj)
     ece = expected_calibration_error(y, y_probs_adj)
 
     metrics.update(
         {
-            "Brier": brier,
-            "calibration_intercept": cal_intercept,
-            "calibration_slope": cal_slope,
+            METRIC_BRIER: brier,
+            "calibration_intercept": cal_metrics.intercept,
+            "calibration_slope": cal_metrics.slope,
             "ECE": ece,
         }
     )
@@ -466,7 +470,21 @@ def evaluate_on_split(
 
     binary_metrics = binary_metrics_at_threshold(y, y_probs_adj, threshold)
 
-    metrics.update({"threshold": threshold, **binary_metrics})
+    metrics.update(
+        {
+            "threshold": binary_metrics.threshold,
+            "precision": binary_metrics.precision,
+            "sensitivity": binary_metrics.sensitivity,
+            "f1": binary_metrics.f1,
+            "specificity": binary_metrics.specificity,
+            "fpr": binary_metrics.fpr,
+            "tpr": binary_metrics.tpr,
+            "tp": binary_metrics.tp,
+            "fp": binary_metrics.fp,
+            "tn": binary_metrics.tn,
+            "fn": binary_metrics.fn,
+        }
+    )
 
     # Multi-target specificity metrics
     if hasattr(config, "evaluation") and hasattr(config.evaluation, "control_spec_targets"):
@@ -909,7 +927,7 @@ def run_train(
             calibrator=oof_calibrator,
         )
         logger.info(f"Final model wrapped with OOF calibrator (method={oof_calibrator.method})")
-    elif config.calibration.enabled and config.model != "LinSVM_cal":
+    elif config.calibration.enabled and config.model != ModelName.LinSVM_cal:
         logger.info(f"Final model calibrated using {config.calibration.method}")
 
     # Extract selected proteins from final model for test panel
@@ -957,8 +975,8 @@ def run_train(
             final_pipeline, X_val, y_val, train_prev, val_target_prev, config
         )
 
-        logger.info(f"Val AUROC: {val_metrics['AUROC']:.3f}")
-        logger.info(f"Val PRAUC: {val_metrics['PR_AUC']:.3f}")
+        logger.info(f"Val AUROC: {val_metrics[METRIC_AUROC]:.3f}")
+        logger.info(f"Val PRAUC: {val_metrics[METRIC_PRAUC]:.3f}")
         logger.info(f"Selected threshold: {val_metrics['threshold']:.3f}")
         if final_selected_proteins:
             logger.info(f"Val evaluation using {len(final_selected_proteins)} selected proteins")
@@ -993,8 +1011,8 @@ def run_train(
         precomputed_threshold=val_threshold,
     )
 
-    logger.info(f"Test AUROC: {test_metrics['AUROC']:.3f}")
-    logger.info(f"Test PRAUC: {test_metrics['PR_AUC']:.3f}")
+    logger.info(f"Test AUROC: {test_metrics[METRIC_AUROC]:.3f}")
+    logger.info(f"Test PRAUC: {test_metrics[METRIC_PRAUC]:.3f}")
     if val_threshold is not None:
         logger.info(f"Test threshold (from val): {test_metrics['threshold']:.3f}")
     else:
@@ -1201,7 +1219,7 @@ def run_train(
                     )
 
                     xgb_spw = None
-                    if config.model == "XGBoost":
+                    if config.model == ModelName.XGBoost:
                         from ced_ml.models.training import _compute_xgb_scale_pos_weight
 
                         xgb_spw = _compute_xgb_scale_pos_weight(y_train, config)
@@ -1452,10 +1470,8 @@ def run_train(
     )
     # H4: Validate test predictions (NaN, Inf, bounds)
     test_probs = test_preds_df["y_prob"].values
-    if np.isnan(test_probs).any():
-        raise ValueError("Test predictions contain NaN values")
-    if np.isinf(test_probs).any():
-        raise ValueError("Test predictions contain Inf values")
+    if not np.isfinite(test_probs).all():
+        raise ValueError("Test predictions contain NaN or Inf values")
     if (test_probs < 0).any() or (test_probs > 1).any():
         raise ValueError(
             f"Test predictions out of [0,1] bounds: min={test_probs.min():.4f}, max={test_probs.max():.4f}"
@@ -1481,10 +1497,8 @@ def run_train(
         )
         # H4: Validate val predictions (NaN, Inf, bounds)
         val_probs = val_preds_df["y_prob"].values
-        if np.isnan(val_probs).any():
-            raise ValueError("Val predictions contain NaN values")
-        if np.isinf(val_probs).any():
-            raise ValueError("Val predictions contain Inf values")
+        if not np.isfinite(val_probs).all():
+            raise ValueError("Val predictions contain NaN or Inf values")
         if (val_probs < 0).any() or (val_probs > 1).any():
             raise ValueError(
                 f"Val predictions out of [0,1] bounds: min={val_probs.min():.4f}, max={val_probs.max():.4f}"
@@ -1509,10 +1523,8 @@ def run_train(
     for repeat in range(oof_preds.shape[0]):
         oof_preds_df[f"y_prob_repeat{repeat}"] = oof_preds[repeat, :]
     # H4: Validate OOF predictions (NaN, Inf, bounds)
-    if np.isnan(oof_preds).any():
-        raise ValueError("OOF predictions contain NaN values")
-    if np.isinf(oof_preds).any():
-        raise ValueError("OOF predictions contain Inf values")
+    if not np.isfinite(oof_preds).all():
+        raise ValueError("OOF predictions contain NaN or Inf values")
     if (oof_preds < 0).any() or (oof_preds > 1).any():
         raise ValueError(
             f"OOF predictions out of [0,1] bounds: min={oof_preds.min():.4f}, max={oof_preds.max():.4f}"
@@ -1658,9 +1670,11 @@ def run_train(
             dca_threshold=dca_thr,
         )
         youden_thr = test_bundle["youden_threshold"]
-        spec95_thr = test_bundle["spec_target_threshold"]
+        spec_target_thr = test_bundle["spec_target_threshold"]
         dca_str = f"{dca_thr:.4f}" if dca_thr is not None else "N/A"
-        logger.info(f"Thresholds: Youden={youden_thr:.4f}, Spec95={spec95_thr:.4f}, DCA={dca_str}")
+        logger.info(
+            f"Thresholds: Youden={youden_thr:.4f}, SpecTarget={spec_target_thr:.4f}, DCA={dca_str}"
+        )
 
         if config.output.plot_roc:
             plot_roc_curve(
@@ -1936,27 +1950,29 @@ def run_train(
     except Exception as e:
         logger.warning(f"Failed to save learning curve: {e}")
 
-    # --- Screening results export ---
+    # --- Screening results export (compute once and reuse) ---
+    screening_stats = pd.DataFrame()
     try:
         screen_method = getattr(config.features, "screen_method", "none")
         if screen_method and screen_method != "none":
-            # Request all proteins (top_n=0) to maximize cache reuse
-            # This will hit the cache from feature report generation above
+            # Compute screening stats once (will be reused for feature report below)
             _, screening_stats = screen_proteins(
                 X_train=X_train,
                 y_train=y_train,
                 protein_cols=protein_cols,
                 method=screen_method,
-                top_n=0,  # Get all proteins (reuses cache from feature report)
+                top_n=0,  # Get all proteins (no filtering)
             )
             if not screening_stats.empty:
-                screening_stats["scenario"] = scenario
-                screening_stats["model"] = config.model
+                # Save standalone screening results CSV
+                screening_stats_export = screening_stats.copy()
+                screening_stats_export["scenario"] = scenario
+                screening_stats_export["model"] = config.model
                 screening_path = (
                     Path(outdirs.diag_screening) / f"{config.model}__screening_results.csv"
                 )
-                screening_stats.to_csv(screening_path, index=False)
-                logger.info(f"Screening results saved: {screening_path} (cached)")
+                screening_stats_export.to_csv(screening_path, index=False)
+                logger.info(f"Screening results saved: {screening_path}")
     except Exception as e:
         logger.warning(f"Failed to save screening results: {e}")
 
@@ -1974,27 +1990,14 @@ def run_train(
                 [{"protein": p, "selection_freq": f} for p, f in selection_freq.items()]
             )
 
-            # Merge with screening statistics if available (effect_size, p_value)
-            screen_method = getattr(config.features, "screen_method", "none")
-            if screen_method and screen_method != "none":
-                screen_top_n = getattr(config.features, "screen_top_n", 1000)
-                try:
-                    _, screening_stats = screen_proteins(
-                        X_train=X_train,
-                        y_train=y_train,
-                        protein_cols=protein_cols,
-                        method=screen_method,
-                        top_n=0,  # Get all proteins, no filtering
-                    )
-                    # screening_stats has columns: protein, effect_size, p_value, rank
-                    if not screening_stats.empty:
-                        feature_report = feature_report.merge(
-                            screening_stats[["protein", "effect_size", "p_value"]],
-                            on="protein",
-                            how="left",
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not merge screening stats into feature report: {e}")
+            # Merge with screening statistics if available (reuse from above)
+            if not screening_stats.empty:
+                # screening_stats has columns: protein, effect_size, p_value, rank
+                feature_report = feature_report.merge(
+                    screening_stats[["protein", "effect_size", "p_value"]],
+                    on="protein",
+                    how="left",
+                )
 
             # Add NaN columns if not present (when screening is disabled)
             if "effect_size" not in feature_report.columns:
@@ -2110,10 +2113,10 @@ def run_train(
                         "n_test": len(y_test),
                         "n_boot": 1000,
                         "bootstrap_seed": seed,
-                        "AUROC": test_metrics["AUROC"],
+                        METRIC_AUROC: test_metrics[METRIC_AUROC],
                         "AUROC_ci_lo": auroc_lo,
                         "AUROC_ci_hi": auroc_hi,
-                        "PR_AUC": test_metrics["PR_AUC"],
+                        METRIC_PRAUC: test_metrics[METRIC_PRAUC],
                         "PR_AUC_ci_lo": prauc_lo,
                         "PR_AUC_ci_hi": prauc_hi,
                     }

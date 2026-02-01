@@ -10,6 +10,7 @@ References:
 - XGBoost tree_method controls CPU vs GPU acceleration
 """
 
+import logging
 import re
 from typing import Any
 
@@ -20,15 +21,19 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 
+from ..config.schema import TrainingConfig
+from ..data.schema import ModelName
+
+logger = logging.getLogger(__name__)
+
 try:
     from xgboost import XGBClassifier
 
     XGBOOST_AVAILABLE = True
 except (ImportError, Exception):
+    logger.debug("XGBoost not available; XGBoost models will raise ImportError if requested.")
     XGBOOST_AVAILABLE = False
     XGBClassifier = None  # type: ignore
-
-from ..config.schema import TrainingConfig
 
 
 # ----------------------------
@@ -59,6 +64,7 @@ def _parse_float_list(s: str) -> list[float]:
         try:
             out.append(float(tok))
         except Exception:
+            logger.debug(f"Failed to parse '{tok}' as float; skipping token.")
             continue
     return out
 
@@ -75,6 +81,7 @@ def _parse_int_list(s: str) -> list[int]:
         try:
             out.append(int(x))
         except Exception:
+            logger.debug(f"Failed to parse '{x}' as int; skipping token.")
             continue
     return out
 
@@ -109,11 +116,12 @@ def _parse_none_int_float_list(s: str) -> list:
                 out.append(int(tok))
                 continue
         except Exception:
-            pass
+            logger.debug(f"Failed to parse '{tok}' as int via regex; will try float.")
         try:
             out.append(float(tok))
             continue
         except Exception:
+            logger.debug(f"Failed to parse '{tok}' as float; keeping as string.")
             out.append(tok)
     return out
 
@@ -153,13 +161,14 @@ def _coerce_int_or_none_list(vals: list[Any], *, name: str) -> list[Any]:
                 out.append(int(vv))
                 continue
             except Exception:
-                pass
+                logger.debug(f"{name}: failed to parse '{v}' as int; will try float.")
             try:
                 fv = float(vv)
                 if float(fv).is_integer():
                     out.append(int(fv))
                     continue
             except Exception:
+                logger.debug(f"{name}: failed to parse '{v}' as float.")
                 pass
             raise ValueError(f"{name}: expected int or None, got '{v}'")
         raise ValueError(f"{name}: expected int or None, got {type(v).__name__}={v}")
@@ -206,7 +215,7 @@ def _coerce_min_samples_leaf_list(
                 out.append(iv)
                 continue
             except Exception:
-                pass
+                logger.debug(f"{name}: failed to parse '{v}' as int; will try float.")
             try:
                 fv = float(vv)
                 if 0.0 < fv < 1.0:
@@ -219,6 +228,7 @@ def _coerce_min_samples_leaf_list(
                     out.append(iv)
                     continue
             except Exception:
+                logger.debug(f"{name}: failed to parse '{v}' as float.")
                 pass
             raise ValueError(f"{name}: could not parse '{v}' as int>=1 or float in (0,1)")
         raise ValueError(f"{name}: unsupported type {type(v).__name__}={v}")
@@ -287,13 +297,29 @@ def make_logspace(
 
 
 def compute_scale_pos_weight_from_y(y: np.ndarray) -> float:
-    """Compute XGBoost scale_pos_weight from class distribution."""
+    """Compute XGBoost scale_pos_weight from class distribution.
+
+    Args:
+        y: Binary labels (0/1).
+
+    Returns:
+        scale_pos_weight value (ratio of negatives to positives, >= 1.0).
+        Returns 1.0 if no positive samples found (with warning).
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     y = np.asarray(y).astype(int)
-    pos = int(y.sum())
-    neg = int(len(y) - pos)
-    pos = max(1, pos)
-    neg = max(1, neg)
-    return float(neg / pos)
+    n_pos = int(np.sum(y == 1))
+    n_neg = int(np.sum(y == 0))
+
+    if n_pos == 0:
+        logger.warning("[xgb] No positive samples in training fold; using scale_pos_weight=1.0")
+        return 1.0
+
+    spw = float(n_neg) / float(n_pos)
+    return max(1.0, spw)
 
 
 # ----------------------------
@@ -407,7 +433,10 @@ def build_random_forest(
             v = float(max_samples)
             rf_kwargs["max_samples"] = int(v) if v.is_integer() else float(v)
         except Exception:
-            pass
+            logger.warning(
+                f"Failed to parse max_samples={max_samples}; omitting from RandomForestClassifier kwargs.",
+                exc_info=True,
+            )
 
     return RandomForestClassifier(**rf_kwargs)
 
@@ -493,7 +522,7 @@ def build_models(
         ValueError: If model_name is unknown
         ImportError: If XGBoost requested but not installed
     """
-    if model_name == "LR_EN":
+    if model_name == ModelName.LR_EN:
         return build_logistic_regression(
             solver=config.lr.solver,
             C=1.0,
@@ -504,7 +533,7 @@ def build_models(
             penalty="elasticnet",
         )
 
-    elif model_name == "LR_L1":
+    elif model_name == ModelName.LR_L1:
         return build_logistic_regression(
             solver=config.lr.solver,
             C=1.0,
@@ -515,7 +544,7 @@ def build_models(
             penalty="l1",
         )
 
-    elif model_name == "LinSVM_cal":
+    elif model_name == ModelName.LinSVM_cal:
         return build_linear_svm_calibrated(
             C=1.0,
             max_iter=config.svm.max_iter,
@@ -524,7 +553,7 @@ def build_models(
             random_state=random_state,
         )
 
-    elif model_name == "RF":
+    elif model_name == ModelName.RF:
         # Get first value from n_estimators_grid list for default model
         n_est = config.rf.n_estimators_grid[0] if config.rf.n_estimators_grid else 100
         return build_random_forest(
@@ -533,7 +562,7 @@ def build_models(
             n_jobs=int(max(1, n_jobs)),
         )
 
-    elif model_name == "XGBoost":
+    elif model_name == ModelName.XGBoost:
         # Get first values from grid lists for default model
         n_est = config.xgboost.n_estimators_grid[0] if config.xgboost.n_estimators_grid else 100
         max_d = config.xgboost.max_depth_grid[0] if config.xgboost.max_depth_grid else 5

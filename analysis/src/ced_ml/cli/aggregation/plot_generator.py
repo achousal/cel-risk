@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
 from ced_ml.metrics.thresholds import compute_threshold_bundle
 
 
@@ -139,7 +140,7 @@ def generate_aggregated_plots(
         model_threshold_info = threshold_info.get(model_name, {})
         dca_thr = model_threshold_info.get("dca_threshold")
         youden_metrics = model_threshold_info.get("youden_metrics", {})
-        alpha_metrics = model_threshold_info.get("alpha_metrics", {})
+        spec_target_metrics = model_threshold_info.get("spec_target_metrics", {})
         dca_metrics = model_threshold_info.get("dca_metrics", {})
 
         metrics_at_thresholds = {}
@@ -148,10 +149,10 @@ def generate_aggregated_plots(
                 "fpr": youden_metrics.get("fpr"),
                 "tpr": youden_metrics.get("tpr"),
             }
-        if alpha_metrics:
-            metrics_at_thresholds["alpha"] = {
-                "fpr": alpha_metrics.get("fpr"),
-                "tpr": alpha_metrics.get("tpr"),
+        if spec_target_metrics:
+            metrics_at_thresholds["spec_target"] = {
+                "fpr": spec_target_metrics.get("fpr"),
+                "tpr": spec_target_metrics.get("tpr"),
             }
         if dca_metrics:
             metrics_at_thresholds["dca"] = {
@@ -368,21 +369,21 @@ def generate_model_comparison_report(
             "model": model_name,
             "is_ensemble": model_name == "ENSEMBLE",
             # Test metrics
-            "test_AUROC": test_metrics.get("AUROC"),
-            "test_PR_AUC": test_metrics.get("PR_AUC"),
-            "test_Brier": test_metrics.get("Brier"),
+            "test_AUROC": test_metrics.get(METRIC_AUROC),
+            "test_PR_AUC": test_metrics.get(METRIC_PRAUC),
+            "test_Brier": test_metrics.get(METRIC_BRIER),
             "test_n_samples": test_metrics.get("n_samples"),
             "test_n_positive": test_metrics.get("n_positive"),
             "test_prevalence": test_metrics.get("prevalence"),
             # Calibration
             "test_calib_slope": test_metrics.get("calib_slope"),
             # Val metrics
-            "val_AUROC": val_metrics.get("AUROC"),
-            "val_PR_AUC": val_metrics.get("PR_AUC"),
-            "val_Brier": val_metrics.get("Brier"),
+            "val_AUROC": val_metrics.get(METRIC_AUROC),
+            "val_PR_AUC": val_metrics.get(METRIC_PRAUC),
+            "val_Brier": val_metrics.get(METRIC_BRIER),
             # Thresholds
             "youden_threshold": model_threshold.get("youden_threshold"),
-            "alpha_threshold": model_threshold.get("alpha_threshold"),
+            "spec_target_threshold": model_threshold.get("spec_target_threshold"),
             "dca_threshold": model_threshold.get("dca_threshold"),
         }
 

@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..data.schema import ModelName
+
 # ============================================================================
 # Data and Split Configuration
 # ============================================================================
@@ -112,8 +114,8 @@ class FeatureConfig(BaseModel):
         default="hybrid_stability",
         description=(
             "Feature selection strategy:\n"
-            "  - hybrid_stability: screen → kbest (tuned) → stability → model (recommended default)\n"
-            "  - rfecv: screen → light kbest cap → RFECV → model (automatic size discovery)\n"
+            "  - hybrid_stability: screen → kbest (tuned) → stability → model\n"
+            "  - rfecv: screen → light kbest cap → RFECV → model\n"
             "  - fixed_panel: use pre-specified feature panel from CSV file\n"
             "  - none: no feature selection"
         ),
@@ -151,31 +153,46 @@ class FeatureConfig(BaseModel):
     )
     rfe_step_strategy: Literal["adaptive", "linear", "geometric"] | int = Field(
         default="adaptive",
-        description="RFECV step strategy: adaptive (10% per iter), linear (1 per iter), geometric (same as adaptive), or integer for fixed step size",
+        description=(
+            "RFECV step strategy: adaptive (10% per iter), linear (1 per iter), "
+            "geometric, or integer for fixed step size"
+        ),
     )
     rfe_min_auroc_frac: float = Field(
         default=0.90,
         ge=0.5,
         le=1.0,
-        description="Early stop if AUROC drops below this fraction of max (currently unused in nested RFECV)",
+        description=(
+            "Early stop if AUROC drops below this fraction of max "
+            "(currently unused in nested RFECV)"
+        ),
     )
     rfe_consensus_thresh: float = Field(
         default=0.80,
         ge=0.5,
         le=1.0,
-        description="Consensus panel threshold: include features selected in >= this fraction of CV folds",
+        description=(
+            "Consensus panel threshold: include features selected in >= "
+            "this fraction of CV folds"
+        ),
     )
     rfe_cv_folds: int = Field(
         default=3, ge=2, description="Internal CV folds for RFECV (within each outer fold)"
     )
     rfe_kbest_prefilter: bool = Field(
         default=True,
-        description="Apply k-best univariate pre-filter before RFECV to reduce computational cost (~5× speedup)",
+        description=(
+            "Apply k-best univariate pre-filter before RFECV to reduce "
+            "computational cost (~5× speedup)"
+        ),
     )
     rfe_kbest_k: int = Field(
         default=100,
         ge=10,
-        description="Maximum features to retain before RFECV (reduces ~300 proteins → ~100 for 5× speedup)",
+        description=(
+            "Maximum features to retain before RFECV "
+            "(reduces ~300 proteins → ~100 for 5× speedup)"
+        ),
     )
 
     # RF permutation importance
@@ -382,13 +399,17 @@ class CalibrationConfig(BaseModel):
     Attributes:
         enabled: Whether calibration is enabled at all.
         strategy: Calibration strategy to use:
-            - "per_fold": Apply CalibratedClassifierCV inside each CV fold (default, current behavior).
-            - "oof_posthoc": Collect raw OOF predictions, then fit a single calibrator post-hoc.
+            - "per_fold": Apply CalibratedClassifierCV inside each CV fold
+                (default, current behavior).
+            - "oof_posthoc": Collect raw OOF predictions, then fit a single
+                calibrator post-hoc.
             - "none": No calibration applied.
-        method: Calibration method ("sigmoid" for Platt scaling, "isotonic" for isotonic regression).
+        method: Calibration method ("sigmoid" for Platt scaling,
+            "isotonic" for isotonic regression).
         cv: Number of CV folds for per_fold calibration.
-        per_model: Optional per-model strategy overrides. Keys are model names (e.g., "LR_EN"),
-            values are strategy names ("per_fold", "oof_posthoc", "none").
+        per_model: Optional per-model strategy overrides. Keys are model names
+            (e.g., "LR_EN"), values are strategy names ("per_fold", "oof_posthoc",
+            "none").
     """
 
     enabled: bool = True
@@ -604,7 +625,7 @@ class TrainingConfig(BaseModel):
     split_seed: int = 0
 
     # Model selection
-    model: str = "LR_EN"
+    model: str = ModelName.LR_EN
 
     # Sub-configurations
     columns: ColumnsConfig = Field(default_factory=ColumnsConfig)
@@ -821,6 +842,100 @@ class HoldoutEvalConfig(BaseModel):
     # Clinical thresholds
     clinical_threshold_points: list[float] = Field(default_factory=list)
     target_prevalence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+# ============================================================================
+# HPC Configuration
+# ============================================================================
+
+
+class HPCResourceConfig(BaseModel):
+    """HPC resource allocation for a single job type."""
+
+    queue: str = "medium"
+    cores: int = Field(default=4, ge=1)
+    mem_per_core: int = Field(default=4000, ge=1, description="Memory per core in MB")
+    walltime: str = Field(default="24:00", description="Wall time limit as HH:MM")
+
+
+class HPCConfig(BaseModel):
+    """HPC-specific configuration.
+
+    Attributes:
+        project: HPC project allocation code (e.g., acc_elahi).
+        scheduler: Scheduler type (currently only 'lsf' supported).
+        queue: Default queue for job submission.
+        cores: Default number of CPU cores per job.
+        mem_per_core: Default memory per core in MB.
+        walltime: Default wall time limit as HH:MM string.
+        training: Optional resource override for training jobs.
+        postprocessing: Optional resource override for aggregation/ensemble jobs.
+        optimization: Optional resource override for panel optimization jobs.
+    """
+
+    project: str = Field(
+        ...,
+        description="HPC project allocation code (e.g., acc_elahi, required)",
+    )
+    scheduler: str = Field(default="lsf", description="Scheduler type (lsf only)")
+    queue: str = Field(default="medium", description="Default queue name")
+    cores: int = Field(default=4, ge=1, description="Default number of CPU cores")
+    mem_per_core: int = Field(default=4000, ge=1, description="Default memory per core in MB")
+    walltime: str = Field(default="24:00", description="Default wall time limit as HH:MM")
+
+    # Optional per-stage resource overrides
+    training: HPCResourceConfig | None = None
+    postprocessing: HPCResourceConfig | None = None
+    optimization: HPCResourceConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_project(self) -> "HPCConfig":
+        """Validate that project is not a placeholder."""
+        placeholders = {"YOUR_PROJECT_ALLOCATION", "YOUR_ALLOCATION"}
+        if self.project in placeholders:
+            raise ValueError(
+                f"HPC project not configured. Got placeholder '{self.project}'. "
+                "Update 'hpc.project' in pipeline_hpc.yaml"
+            )
+        return self
+
+    def get_resources(self, stage: str = "default") -> dict[str, int | str]:
+        """Get resource config for a specific pipeline stage.
+
+        Args:
+            stage: Pipeline stage ('training', 'postprocessing', 'optimization', 'default').
+
+        Returns:
+            Dict with keys: queue, cores, mem_per_core, walltime.
+        """
+        if stage == "training" and self.training:
+            return {
+                "queue": self.training.queue,
+                "cores": self.training.cores,
+                "mem_per_core": self.training.mem_per_core,
+                "walltime": self.training.walltime,
+            }
+        elif stage == "postprocessing" and self.postprocessing:
+            return {
+                "queue": self.postprocessing.queue,
+                "cores": self.postprocessing.cores,
+                "mem_per_core": self.postprocessing.mem_per_core,
+                "walltime": self.postprocessing.walltime,
+            }
+        elif stage == "optimization" and self.optimization:
+            return {
+                "queue": self.optimization.queue,
+                "cores": self.optimization.cores,
+                "mem_per_core": self.optimization.mem_per_core,
+                "walltime": self.optimization.walltime,
+            }
+        else:
+            return {
+                "queue": self.queue,
+                "cores": self.cores,
+                "mem_per_core": self.mem_per_core,
+                "walltime": self.walltime,
+            }
 
 
 class RootConfig(BaseModel):

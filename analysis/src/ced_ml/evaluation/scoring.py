@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER
+
 logger = logging.getLogger(__name__)
 
 # Default weights for composite score components
@@ -87,13 +89,13 @@ def compute_selection_score(
         logger.warning("Empty weights provided, using defaults")
         weights = DEFAULT_WEIGHTS.copy()
 
-    # Extract metrics with flexible key matching
-    auroc = _extract_metric(
+    # Extract metrics using canonical keys (with fallback for legacy keys)
+    auroc = metrics.get(METRIC_AUROC) or _extract_metric(
         metrics,
         ["AUROC", "auroc", "auc", "roc_auc", "ROC_AUC"],
         default=0.5,
     )
-    brier = _extract_metric(
+    brier = metrics.get(METRIC_BRIER) or _extract_metric(
         metrics,
         ["Brier", "brier", "brier_score", "Brier_score"],
         default=0.25,

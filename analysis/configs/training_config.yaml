@@ -44,7 +44,7 @@ optuna:
 # All parameters for all strategies are defined below
 features:
   # Strategy selection (change this to switch methods)
-  feature_selection_strategy: fixed_panel  # Options: hybrid_stability, rfecv, fixed_panel, none
+  feature_selection_strategy: hybrid_stability  # Options: hybrid_stability, rfecv, fixed_panel, none
   # - hybrid_stability: Fast (~30 min), screen -> k-best -> stability -> corr-prune
   # - rfecv: Rigorous (~4-5h with k-best=100), screen -> RFE with CV
   # - fixed_panel: Use pre-specified panel from CSV (see fixed_panel_csv below)

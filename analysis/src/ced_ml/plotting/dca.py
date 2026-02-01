@@ -5,6 +5,7 @@ This module provides functions for visualizing DCA results to assess clinical ut
 of prediction models at different decision thresholds.
 """
 
+import logging
 from collections.abc import Sequence
 
 import matplotlib
@@ -13,6 +14,27 @@ import numpy as np
 import pandas as pd
 
 from ced_ml.metrics.dca import decision_curve_analysis
+from ced_ml.utils.constants import CI_LOWER_PCT, CI_UPPER_PCT
+
+from .style import (
+    ALPHA_CI,
+    ALPHA_SD,
+    BBOX_INCHES,
+    COLOR_FILL_ALPHA,
+    COLOR_PRIMARY,
+    DPI,
+    FIGSIZE_DCA,
+    FONT_LABEL,
+    FONT_LEGEND,
+    FONT_TITLE,
+    GRID_ALPHA,
+    LW_PRIMARY,
+    LW_SECONDARY,
+    PAD_INCHES,
+    configure_backend,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def apply_plot_metadata(
@@ -54,9 +76,9 @@ def plot_dca(dca_df: pd.DataFrame, out_path: str, meta_lines: Sequence[str] | No
         out_path: Path to save plot
         meta_lines: Optional metadata lines to display at bottom
     """
-    matplotlib.use("Agg")
+    configure_backend()
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_DCA)
 
     thresholds = dca_df["threshold_pct"].values
     nb_model = dca_df["net_benefit_model"].values
@@ -66,13 +88,13 @@ def plot_dca(dca_df: pd.DataFrame, out_path: str, meta_lines: Sequence[str] | No
     ax.plot(
         thresholds,
         nb_model,
-        color="steelblue",
+        color=COLOR_PRIMARY,
         linestyle="-",
-        linewidth=2,
+        linewidth=LW_PRIMARY,
         label="Model",
     )
-    ax.plot(thresholds, nb_all, "r--", linewidth=1.5, label="Treat All")
-    ax.plot(thresholds, nb_none, "k:", linewidth=1.5, label="Treat None")
+    ax.plot(thresholds, nb_all, "r--", linewidth=LW_SECONDARY, label="Treat All")
+    ax.plot(thresholds, nb_none, "k:", linewidth=LW_SECONDARY, label="Treat None")
 
     # Shade region where model is better than alternatives
     ax.fill_between(
@@ -80,16 +102,16 @@ def plot_dca(dca_df: pd.DataFrame, out_path: str, meta_lines: Sequence[str] | No
         np.maximum(nb_all, nb_none),
         nb_model,
         where=(nb_model > np.maximum(nb_all, nb_none)),
-        alpha=0.2,
-        color="steelblue",
+        alpha=COLOR_FILL_ALPHA,
+        color=COLOR_PRIMARY,
         label="Model Benefit",
     )
 
-    ax.set_xlabel("Threshold Probability (%)", fontsize=12)
-    ax.set_ylabel("Net Benefit", fontsize=12)
-    ax.set_title("Decision Curve Analysis", fontsize=14)
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Threshold Probability (%)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Net Benefit", fontsize=FONT_LABEL)
+    ax.set_title("Decision Curve Analysis", fontsize=FONT_TITLE)
+    ax.legend(loc="upper right", fontsize=FONT_LEGEND)
+    ax.grid(True, alpha=GRID_ALPHA)
 
     # Set reasonable y-axis limits with consistent padding
     y_min = min(nb_model.min(), nb_all.min(), nb_none.min())
@@ -113,7 +135,7 @@ def plot_dca(dca_df: pd.DataFrame, out_path: str, meta_lines: Sequence[str] | No
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.8)
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close()
 
 
@@ -149,9 +171,9 @@ def plot_dca_curve(
             Useful for ensemble models where CI and SD are redundant.
     """
     try:
-        matplotlib.use("Agg")
+        configure_backend()
     except Exception as e:
-        print(f"[PLOT] DCA plot failed to import dependencies: {e}")
+        logger.error(f"DCA plot failed to configure backend: {e}")
         return
 
     y = np.asarray(y_true).astype(int)
@@ -166,7 +188,7 @@ def plot_dca_curve(
     # Generate threshold array
     thresholds = np.arange(0.0005, max_pt + step, step)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=FIGSIZE_DCA)
 
     # Convert thresholds to percentage for consistent x-axis scale
     thresholds_pct = thresholds * 100
@@ -208,8 +230,8 @@ def plot_dca_curve(
 
             nb_model_mean = np.mean(nb_model_curves, axis=0)
             nb_model_sd = np.std(nb_model_curves, axis=0)
-            nb_model_lo = np.percentile(nb_model_curves, 2.5, axis=0)
-            nb_model_hi = np.percentile(nb_model_curves, 97.5, axis=0)
+            nb_model_lo = np.percentile(nb_model_curves, CI_LOWER_PCT, axis=0)
+            nb_model_hi = np.percentile(nb_model_curves, CI_UPPER_PCT, axis=0)
 
             nb_all_mean = np.mean(nb_all_curves, axis=0)
             nb_none_mean = np.mean(nb_none_curves, axis=0)
@@ -222,28 +244,28 @@ def plot_dca_curve(
                     thr_pct,
                     nb_model_lo,
                     nb_model_hi,
-                    color="steelblue",
-                    alpha=0.15,
+                    color=COLOR_PRIMARY,
+                    alpha=ALPHA_CI,
                     label="95% CI",
                 )
             ax.fill_between(
                 thr_pct,
                 np.maximum(0, nb_model_mean - nb_model_sd),
                 np.minimum(1, nb_model_mean + nb_model_sd),
-                color="steelblue",
-                alpha=0.30,
+                color=COLOR_PRIMARY,
+                alpha=ALPHA_SD,
                 label="±1 SD",
             )
             ax.plot(
                 thr_pct,
                 nb_model_mean,
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 linestyle="-",
-                linewidth=2,
+                linewidth=LW_PRIMARY,
                 label="Model",
             )
-            ax.plot(thr_pct, nb_all_mean, "r--", linewidth=1.5, label="Treat All")
-            ax.plot(thr_pct, nb_none_mean, "k:", linewidth=1.5, label="Treat None")
+            ax.plot(thr_pct, nb_all_mean, "r--", linewidth=LW_SECONDARY, label="Treat All")
+            ax.plot(thr_pct, nb_none_mean, "k:", linewidth=LW_SECONDARY, label="Treat None")
 
             # Shade region where model is better
             ax.fill_between(
@@ -252,7 +274,7 @@ def plot_dca_curve(
                 nb_model_mean,
                 where=(nb_model_mean > np.maximum(nb_all_mean, nb_none_mean)),
                 alpha=0.2,
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 label="Model Benefit",
             )
         else:
@@ -263,23 +285,23 @@ def plot_dca_curve(
                 ax.plot(
                     thr_pct,
                     dca_df["net_benefit_model"].values,
-                    color="steelblue",
+                    color=COLOR_PRIMARY,
                     linestyle="-",
-                    linewidth=2,
+                    linewidth=LW_PRIMARY,
                     label="Model",
                 )
                 ax.plot(
                     thr_pct,
                     dca_df["net_benefit_all"].values,
                     "r--",
-                    linewidth=1.5,
+                    linewidth=LW_SECONDARY,
                     label="Treat All",
                 )
                 ax.plot(
                     thr_pct,
                     dca_df["net_benefit_none"].values,
                     "k:",
-                    linewidth=1.5,
+                    linewidth=LW_SECONDARY,
                     label="Treat None",
                 )
                 ax.fill_between(
@@ -296,8 +318,8 @@ def plot_dca_curve(
                             dca_df["net_benefit_none"].values,
                         )
                     ),
-                    alpha=0.2,
-                    color="steelblue",
+                    alpha=COLOR_FILL_ALPHA,
+                    color=COLOR_PRIMARY,
                     label="Model Benefit",
                 )
     else:
@@ -308,23 +330,23 @@ def plot_dca_curve(
             ax.plot(
                 thr_pct,
                 dca_df["net_benefit_model"].values,
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 linestyle="-",
-                linewidth=2,
+                linewidth=LW_PRIMARY,
                 label="Model",
             )
             ax.plot(
                 thr_pct,
                 dca_df["net_benefit_all"].values,
                 "r--",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 label="Treat All",
             )
             ax.plot(
                 thr_pct,
                 dca_df["net_benefit_none"].values,
                 "k:",
-                linewidth=1.5,
+                linewidth=LW_SECONDARY,
                 label="Treat None",
             )
             ax.fill_between(
@@ -339,7 +361,7 @@ def plot_dca_curve(
                     )
                 ),
                 alpha=0.2,
-                color="steelblue",
+                color=COLOR_PRIMARY,
                 label="Model Benefit",
             )
 
@@ -390,17 +412,17 @@ def plot_dca_curve(
     x_max_display = min(100, x_max_data * 1.02)
     ax.set_xlim(0, x_max_display)
 
-    ax.set_xlabel("Threshold Probability (%)", fontsize=12)
-    ax.set_ylabel("Net Benefit", fontsize=12)
+    ax.set_xlabel("Threshold Probability (%)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Net Benefit", fontsize=FONT_LABEL)
     if subtitle:
-        ax.set_title(f"{title}\n{subtitle}", fontsize=12)
+        ax.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE)
     else:
-        ax.set_title(title, fontsize=12)
-    ax.legend(loc="upper right", fontsize=9)
-    ax.grid(True, alpha=0.3)
+        ax.set_title(title, fontsize=FONT_TITLE)
+    ax.legend(loc="upper right", fontsize=FONT_LEGEND)
+    ax.grid(True, alpha=GRID_ALPHA)
     ax.axhline(y=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.8)
+    plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close()

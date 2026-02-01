@@ -5,6 +5,8 @@ Defines column names, labels, and data structures used throughout the pipeline.
 Matches exactly with current implementation for behavioral equivalence.
 """
 
+from enum import Enum
+
 # ============================================================================
 # Column Names
 # ============================================================================
@@ -98,32 +100,37 @@ VALID_SPLITS = [SPLIT_TRAIN, SPLIT_VAL, SPLIT_TEST, SPLIT_HOLDOUT]
 # Model Names
 # ============================================================================
 
-# Valid model identifiers
-VALID_MODELS = [
-    "LR",
-    "LR_L1",
-    "LR_L2",
-    "LR_EN",
-    "LinSVM",
-    "LinSVM_cal",
-    "SVM_rbf",
-    "SVM_rbf_cal",
-    "RF",
-    "XGBoost",
-]
+
+class ModelName(str, Enum):
+    """Valid model identifiers."""
+
+    LR = "LR"
+    LR_L1 = "LR_L1"
+    LR_L2 = "LR_L2"
+    LR_EN = "LR_EN"
+    LinSVM = "LinSVM"
+    LinSVM_cal = "LinSVM_cal"
+    SVM_rbf = "SVM_rbf"
+    SVM_rbf_cal = "SVM_rbf_cal"
+    RF = "RF"
+    XGBoost = "XGBoost"
+
+
+# Valid model identifiers (derived from enum)
+VALID_MODELS = [m.value for m in ModelName]
 
 # Model display names
 MODEL_DISPLAY_NAMES = {
-    "LR": "Logistic Regression",
-    "LR_L1": "Logistic Regression (L1)",
-    "LR_L2": "Logistic Regression (L2)",
-    "LR_EN": "Logistic Regression (ElasticNet)",
-    "LinSVM": "Linear SVM",
-    "LinSVM_cal": "Linear SVM (calibrated)",
-    "SVM_rbf": "SVM (RBF kernel)",
-    "SVM_rbf_cal": "SVM (RBF, calibrated)",
-    "RF": "Random Forest",
-    "XGBoost": "XGBoost",
+    ModelName.LR: "Logistic Regression",
+    ModelName.LR_L1: "Logistic Regression (L1)",
+    ModelName.LR_L2: "Logistic Regression (L2)",
+    ModelName.LR_EN: "Logistic Regression (ElasticNet)",
+    ModelName.LinSVM: "Linear SVM",
+    ModelName.LinSVM_cal: "Linear SVM (calibrated)",
+    ModelName.SVM_rbf: "SVM (RBF kernel)",
+    ModelName.SVM_rbf_cal: "SVM (RBF, calibrated)",
+    ModelName.RF: "Random Forest",
+    ModelName.XGBoost: "XGBoost",
 }
 
 # ============================================================================

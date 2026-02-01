@@ -23,7 +23,11 @@ from sklearn.model_selection import RepeatedStratifiedKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 
 from ..config import TrainingConfig
+from ..data.schema import ModelName
 from ..metrics.scorers import get_scorer
+from ..models.registry import compute_scale_pos_weight_from_y
+from ..utils.constants import MAX_SAFE_PREVALENCE, MIN_SAFE_PREVALENCE
+from ..utils.feature_names import extract_protein_name
 from ..utils.logging import log_fold_header
 
 if TYPE_CHECKING:
@@ -59,11 +63,11 @@ def get_model_n_iter(model_name: str, config: TrainingConfig) -> int:
 
     # Per-model setting
     model_configs = {
-        "LR_EN": config.lr,
-        "LR_L1": config.lr,
-        "LinSVM_cal": config.svm,
-        "RF": config.rf,
-        "XGBoost": config.xgboost,
+        ModelName.LR_EN: config.lr,
+        ModelName.LR_L1: config.lr,
+        ModelName.LinSVM_cal: config.svm,
+        ModelName.RF: config.rf,
+        ModelName.XGBoost: config.xgboost,
     }
     model_cfg = model_configs.get(model_name)
     if model_cfg is not None and getattr(model_cfg, "n_iter", None) is not None:
@@ -203,15 +207,21 @@ def oof_predictions_with_nested_cv(
         )
 
         # Warn about extreme class imbalance
-        if train_prevalence < 0.01 or train_prevalence > 0.50:
+        if train_prevalence < MIN_SAFE_PREVALENCE or train_prevalence > MAX_SAFE_PREVALENCE:
             logger.warning(
                 f"Fold {split_idx+1}: Extreme class imbalance (prevalence={train_prevalence:.2%})"
             )
 
         # Handle XGBoost scale_pos_weight
         xgb_spw = None
-        if model_name == "XGBoost":
-            xgb_spw = _compute_xgb_scale_pos_weight(y[train_idx], config)
+        if model_name == ModelName.XGBoost:
+            # Check if user specified explicit value via scale_pos_weight_grid
+            spw_grid = getattr(config.xgboost, "scale_pos_weight_grid", None)
+            if spw_grid and len(spw_grid) == 1 and spw_grid[0] > 0:
+                xgb_spw = float(spw_grid[0])
+            else:
+                # Auto: compute from class distribution
+                xgb_spw = compute_scale_pos_weight_from_y(y[train_idx])
             # Set scale_pos_weight - fail fast if parameter doesn't exist (structural bug)
             base_pipeline.set_params(clf__scale_pos_weight=float(xgb_spw))
 
@@ -462,37 +472,6 @@ def oof_predictions_with_nested_cv(
     )
 
 
-def _compute_xgb_scale_pos_weight(y_train: np.ndarray, config: TrainingConfig) -> float:
-    """
-    Compute XGBoost scale_pos_weight parameter from training labels.
-
-    Default: ratio of negatives to positives (auto class balancing)
-    Override: config.xgboost.scale_pos_weight_grid[0] if explicitly set
-
-    Args:
-        y_train: Training labels (0/1)
-        config: TrainingConfiguration object
-
-    Returns:
-        scale_pos_weight value (>= 1.0)
-    """
-    # Check if user specified explicit value via scale_pos_weight_grid
-    spw_grid = getattr(config.xgboost, "scale_pos_weight_grid", None)
-    if spw_grid and len(spw_grid) == 1 and spw_grid[0] > 0:
-        return float(spw_grid[0])
-
-    # Auto: ratio of negatives to positives
-    n_pos = int(np.sum(y_train == 1))
-    n_neg = int(np.sum(y_train == 0))
-
-    if n_pos == 0:
-        logger.warning("[xgb] No positive samples in training fold; using spw=1.0")
-        return 1.0
-
-    spw = float(n_neg) / float(n_pos)
-    return max(1.0, spw)
-
-
 def _resolve_rfecv_step(strategy: str, n_features: int) -> int | float:
     """
     Resolve RFECV step parameter from strategy string.
@@ -715,7 +694,7 @@ def _get_search_n_jobs(model_name: str, config: TrainingConfig) -> int:
         return max(1, min(cpus, tune_n_jobs))
 
     # Auto strategy
-    if model_name in ("LR_EN", "LR_L1", "LinSVM_cal"):
+    if model_name in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal):
         # Parallelize search for single-threaded models
         return max(1, cpus)
     else:
@@ -763,7 +742,7 @@ def _apply_per_fold_calibration(
 
     # per_fold strategy: apply CalibratedClassifierCV
     # SVM is already calibrated
-    if model_name == "LinSVM_cal":
+    if model_name == ModelName.LinSVM_cal:
         return estimator
 
     # Don't double-calibrate
@@ -967,18 +946,11 @@ def _extract_from_kbest_transformed(pipeline: Pipeline, protein_cols: list[str])
     # Extract protein columns (handle different feature naming patterns)
     proteins = set()
     for name in selected_names:
-        # Handle different feature naming patterns:
-        # - {protein} (plain name, verbose_feature_names_out=False)
-        # - num__{protein} (legacy/standard sklearn ColumnTransformer with prefix)
-        # - {protein}_resid (ResidualTransformer output)
+        # Handle different feature naming patterns via extract_protein_name
         if name in protein_cols:
             proteins.add(name)
-        elif name.startswith("num__"):
-            orig = name[len("num__") :]
-            if orig in protein_cols:
-                proteins.add(orig)
-        elif name.endswith("_resid"):
-            orig = name[: -len("_resid")]
+        else:
+            orig = extract_protein_name(name)
             if orig in protein_cols:
                 proteins.add(orig)
 
@@ -1012,7 +984,7 @@ def _extract_from_model_coefficients(
     clf = pipeline.named_steps["clf"]
 
     # Handle CalibratedClassifierCV wrapper for LinSVM
-    if model_name == "LinSVM_cal" and hasattr(clf, "calibrated_classifiers_"):
+    if model_name == ModelName.LinSVM_cal and hasattr(clf, "calibrated_classifiers_"):
         # Average coefficients across calibration folds
         coefs_list = []
         for cc in clf.calibrated_classifiers_:
@@ -1043,16 +1015,7 @@ def _extract_from_model_coefficients(
     # Extract proteins with |coef| > threshold
     proteins = set()
     for name, c in zip(feature_names, coefs, strict=False):
-        # Handle different feature naming patterns:
-        # - num__{protein} (legacy/standard sklearn ColumnTransformer)
-        # - {protein}_resid (ResidualTransformer output)
-        if name.startswith("num__"):
-            orig = name[len("num__") :]
-        elif name.endswith("_resid"):
-            orig = name[: -len("_resid")]
-        else:
-            continue
-
+        orig = extract_protein_name(name)
         if orig in protein_cols and abs(c) > coef_thresh:
             proteins.add(orig)
 
@@ -1119,16 +1082,7 @@ def _extract_from_rf_permutation(
         if not np.isfinite(imp):
             continue
 
-        # Handle different feature naming patterns:
-        # - num__{protein} (legacy/standard sklearn ColumnTransformer)
-        # - {protein}_resid (ResidualTransformer output)
-        if name.startswith("num__"):
-            orig = name[len("num__") :]
-        elif name.endswith("_resid"):
-            orig = name[: -len("_resid")]
-        else:
-            continue
-
+        orig = extract_protein_name(name)
         if orig in protein_cols:
             protein_importance[orig] = protein_importance.get(orig, 0.0) + float(imp)
 
