@@ -1,224 +1,167 @@
-# Factorial Experiment Analysis
+# 2x2x2 Factorial Experiment: Training Set Composition
 
-This directory contains tools for analyzing factorial experiments to investigate sources of variability in model performance, feature selection, and risk scores.
+Standalone experiment investigating how training set composition affects model performance.
 
-## Scripts
+## Design
 
-### `investigate_factorial.py` (Original)
-**Design**: 2×2 factorial
-- Factor 1: prevalent_train_frac (0.5 vs 1.0)
-- Factor 2: train_control_per_case (1:1 vs 1:5)
-- Total configs: 4
+**Factors** (8 cells total):
 
-**Use case**: Original prevalence/ratio experiment
+| Factor | Levels | Description |
+|--------|--------|-------------|
+| `n_cases` | 50, 149 | Number of incident cases in training |
+| `ratio` | 1, 5 | Controls per case |
+| `prevalent_frac` | 0.5, 1.0 | Fraction of prevalent cases included |
 
-### `investigate_factorial_extended.py` (New)
-**Design**: 3-factor factorial
-- Factor 1: fold_size (k in k-fold CV)
-- Factor 2: train_size (absolute N)
-- Factor 3: calibration_method (isotonic, platt, oof_posthoc)
+**Derived**: `train_N = n_cases + round(prevalent_frac * n_cases) + ratio * n_cases`
 
-**Feature selection**: Fixed at **hybrid** for all experiments
+**Models**: LR_EN, XGBoost
+**Panel**: Fixed 25-protein panel (`data/fixed_panel.csv`)
+**Seeds**: 10 (configurable)
+**Total runs**: 8 cells x 10 seeds x 2 models = 160
 
-**Use case**: Investigating calibration robustness, fold size impact, and training set size effects
+## Three Guardrails
 
-## Experimental Setup
+### 1. Fixed TEST set
+One global stratified test split (seed=42). All cells evaluate on the same TEST set.
+Prevalent cases are excluded from TEST entirely.
 
-### Factor Levels
+### 2. Paired seeds (nesting)
+For each seed, the same shuffled pools are used. Cells take **prefixes** from the shuffled pools:
+- `n_cases=50` is a strict subset of `n_cases=149` within the same seed
+- This reduces variance and enables paired statistical tests
 
-| Factor | Recommended Levels | Rationale |
-|--------|-------------------|-----------|
-| **fold_size** | 3, 5, 10 | Small k (3) → large folds, less variance<br>Large k (10) → small folds, more variance |
-| **train_size** | 298, 596, 894 | Corresponds to 1:1, 1:3, 1:5 control:case ratios<br>Tests learning curve effects |
-| **calib_method** | isotonic, platt, oof_posthoc | Different calibration strategies (see ADR-014) |
+### 3. Frozen features + hyperparams
+- **Panel**: Fixed 25-protein panel (no feature selection during experiment)
+- **Hyperparams**: Tuned once on baseline cell (n_cases=149, ratio=5, prev_frac=0.5), then frozen
 
-### Example: 3×3×3 = 27 Configurations
+## Usage
 
-```
-k3_N298_isotonic    k3_N298_platt    k3_N298_oof_posthoc
-k3_N596_isotonic    k3_N596_platt    k3_N596_oof_posthoc
-k3_N894_isotonic    k3_N894_platt    k3_N894_oof_posthoc
-
-k5_N298_isotonic    k5_N298_platt    k5_N298_oof_posthoc
-k5_N596_isotonic    k5_N596_platt    k5_N596_oof_posthoc
-k5_N894_isotonic    k5_N894_platt    k5_N894_oof_posthoc
-
-k10_N298_isotonic   k10_N298_platt   k10_N298_oof_posthoc
-k10_N596_isotonic   k10_N596_platt   k10_N596_oof_posthoc
-k10_N894_isotonic   k10_N894_platt   k10_N894_oof_posthoc
-```
-
-Each config should be run with multiple random seeds (5-10 recommended) and 2 models (e.g., LR_EN, XGBoost).
-
-**Total runs**: 27 configs × 5 seeds × 2 models = **270 runs**
-
-## Running Experiments
-
-### Step 1: Configure Factorial Design
-
-Create config files for each factor combination. Example for `k5_N596_isotonic`:
-
-```yaml
-# configs/factorial/k5_N596_isotonic.yaml
-cv_config:
-  n_splits: 5
-  strategy: stratified
-
-training:
-  n_train: 596
-  train_control_per_case: 3  # (596 - 149) / 149 ≈ 3
-
-feature_selection:
-  method: hybrid  # FIXED for all experiments
-  stability:
-    threshold: 0.75
-  kbest:
-    k: 100
-
-calibration:
-  method: isotonic
-
-models:
-  - LR_EN
-  - XGBoost
-
-split_seeds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-```
-
-### Step 2: Run Pipeline for Each Config
+### Step 1: Tune baseline hyperparams
 
 ```bash
-# Run all configs in batch
-for config in configs/factorial/*.yaml; do
-    ced run-pipeline --config "$config" --output-suffix "$(basename $config .yaml)"
-done
-
-# Or run individually
-ced run-pipeline --config configs/factorial/k5_N596_isotonic.yaml
+python run_factorial_2x2x2.py \
+    --data-path ../../data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path ../../data/fixed_panel.csv \
+    --output-dir ../../results/factorial_2x2x2 \
+    --tune-baseline
 ```
 
-### Step 3: Analyze Results
+Saves `frozen_hyperparams.yaml` via Optuna (50 trials per model).
+
+### Step 2: Run experiment
 
 ```bash
-# Analyze latest run
-python investigate_factorial_extended.py
-
-# Or specify run ID
-python investigate_factorial_extended.py --run-id run_20260202_120000
-
-# Custom output location
-python investigate_factorial_extended.py \
-    --results-dir results/ \
-    --output-dir analysis/factorial_results/
+python run_factorial_2x2x2.py \
+    --data-path ../../data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path ../../data/fixed_panel.csv \
+    --output-dir ../../results/factorial_2x2x2 \
+    --hyperparams-path ../../results/factorial_2x2x2/frozen_hyperparams.yaml \
+    --n-seeds 10
 ```
 
-## Outputs
+Outputs `factorial_results.csv` (one row per seed x cell x model) and `feature_importances.csv` (one row per seed x cell x model x feature).
 
-The analysis script generates:
+### Step 3: Analyze
 
-| File | Description |
-|------|-------------|
-| `metrics_all.csv` | Raw metrics for all runs (one row per split_seed) |
-| `comparison_table.csv` | Aggregated stats by config (mean ± std, 95% CI) |
-| `main_effects.csv` | Main effect tests for each factor |
-| `interactions.csv` | Two-way interaction tests (fold × train, fold × calib, train × calib) |
-| `power_analysis.csv` | Statistical power for each comparison |
-| `summary.md` | Human-readable report with interpretation |
+```bash
+python analyze_factorial_2x2x2.py \
+    --results ../../results/factorial_2x2x2/factorial_results.csv \
+    --top-k 15
+```
 
-## Statistical Tests
+Optional flags:
+- `--feature-importances PATH` -- override path to `feature_importances.csv` (default: sibling of results file)
+- `--top-k K` -- number of top features for Jaccard overlap analysis (default: 15)
 
-### Main Effects
-For each factor (fold_size, train_size, calib_method):
-- Pairwise comparisons between all levels
-- Paired t-tests (matched by split_seed)
-- Bonferroni correction for multiple comparisons
-- Effect sizes (Cohen's d)
+## Sampling Procedure
 
-**Example**: Does k=5 produce significantly different AUROC than k=10?
+For each seed s:
+1. Shuffle `I_pool` (incident), `P_pool` (prevalent), `C_pool` (controls) with seed s
+2. For each cell `(n_cases, ratio, prevalent_frac)`:
+   - `I = first n_cases from I_pool`
+   - `P = first round(prevalent_frac * n_cases) from P_pool`
+   - `C = first (ratio * n_cases) from C_pool`
+   - Train on `I + P + C`
+
+Prefixes guarantee nesting: smaller cells are subsets of larger cells within the same seed.
+
+## Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| AUROC | Discrimination | Area under ROC curve |
+| PRAUC | Discrimination | Area under precision-recall curve |
+| Brier | Calibration | Brier score (lower = better) |
+| cal_slope | Calibration | Logistic calibration slope (ideal = 1) |
+| cal_intercept | Calibration | Logistic calibration intercept (ideal = 0) |
+| sens_at_spec95 | Clinical | Sensitivity at 95% specificity |
+| mean_prob_incident | Score distribution | Mean predicted probability for incident cases (test set) |
+| mean_prob_prevalent | Score distribution | Mean predicted probability for prevalent cases (train set) |
+| mean_prob_control | Score distribution | Mean predicted probability for controls (test set) |
+| score_gap | Score distribution | `mean_prob_incident - mean_prob_prevalent` (positive = incident scored higher) |
+
+## Statistical Analysis
+
+### Main effects (paired contrasts)
+For each factor, compute `high - low` averaged over other factors, paired by seed:
+- Mean delta, 95% CI, Cohen's d (paired), paired t-test
 
 ### Interactions
-Two-way ANOVA to detect interaction effects:
-- **fold_size × train_size**: Does fold size impact change with training set size?
-- **fold_size × calib_method**: Does calibration quality depend on fold size?
-- **train_size × calib_method**: Does calibration method effectiveness vary with N?
+- **2-way**: Does the effect of factor A depend on the level of factor B?
+- **3-way**: Does the n_cases x ratio interaction depend on prevalent_frac?
 
-**Interpretation**: Significant interaction → the effect of one factor depends on the level of another
+### Feature importance overlap (Jaccard)
+For each (model, seed, n_cases, ratio) combination, the top-K features by importance
+are compared between `prevalent_frac=0.5` and `prevalent_frac=1.0`.
+Jaccard similarity measures how much the two feature sets overlap:
+- **Jaccard = 1.0**: identical top-K features regardless of prevalent fraction
+- **Jaccard << 1.0**: including more prevalent cases shifts which biomarkers the model relies on
 
-### Multiple Testing Correction
-- **Main effects**: Bonferroni correction across all pairwise comparisons
-- **Interactions**: Uncorrected p < 0.05 (exploratory)
+This is computed from `feature_importances.csv` (absolute LR coefficients or XGB `feature_importances_`).
 
-## Research Questions
+### Interpretation (Cohen's d)
+- `|d| < 0.2`: negligible
+- `0.2 <= |d| < 0.5`: small
+- `0.5 <= |d| < 0.8`: medium
+- `|d| >= 0.8`: large
 
-### Fold Size (k in CV)
-1. Does smaller k (larger folds) improve calibration quality?
-2. Are features more stable with larger k (more iterations)?
-3. What's the compute/performance trade-off?
+## Output Schema
 
-### Train Set Size (N)
-4. Does performance plateau after a certain N?
-5. How does N affect feature selection consistency?
-6. Can we achieve adequate performance with smaller N (faster iteration)?
-
-### Calibration Method
-7. Which method produces the best-calibrated risk scores?
-8. Does optimal method depend on N or k?
-9. How robust is each method to distribution shift?
-
-## Interpretation Guide
-
-### Cohen's d Effect Sizes
-- **|d| < 0.2**: Negligible difference (likely not practically important)
-- **0.2 ≤ |d| < 0.5**: Small effect (may be important at scale)
-- **0.5 ≤ |d| < 0.8**: Medium effect (likely important)
-- **|d| ≥ 0.8**: Large effect (definitely important)
-
-### Statistical Power
-- **Power < 0.5**: Underpowered (may miss true effects)
-- **0.5 ≤ Power < 0.8**: Moderate (acceptable for exploratory)
-- **Power ≥ 0.8**: Well-powered (standard threshold)
-
-### Eta-Squared (η²) for Interactions
-- **η² < 0.01**: Small interaction effect
-- **0.01 ≤ η² < 0.06**: Medium interaction
-- **η² ≥ 0.06**: Large interaction (investigate further)
-
-## Example Workflows
-
-### Quick Test (Subset Design)
-Test a 2×2×2 subset to validate pipeline:
+`factorial_results.csv`:
 ```
-Fold sizes: 5, 10
-Train sizes: 298, 894
-Calib methods: isotonic, platt
-Total: 8 configs × 3 seeds × 2 models = 48 runs
+seed, n_cases, ratio, prevalent_frac, train_N, model,
+AUROC, PRAUC, Brier, cal_slope, cal_intercept, sens_at_spec95,
+mean_prob_incident, mean_prob_prevalent, mean_prob_control, score_gap,
+runtime_s
 ```
 
-### Full Factorial (Comprehensive)
-3×3×3 design with 5 seeds:
+`feature_importances.csv`:
 ```
-Total: 27 configs × 5 seeds × 2 models = 270 runs
-Estimated time: ~45 hours on HPC (parallel), ~10 days sequential
+seed, n_cases, ratio, prevalent_frac, model, feature, importance
 ```
 
-### Sensitivity Analysis (One-Factor-at-a-Time)
-Fix baseline (k=5, N=596, isotonic), vary one factor:
-```
-Fold size: k3, k5, k10 (3 configs)
-Train size: N298, N596, N894 (3 configs)
-Calib method: isotonic, platt, oof_posthoc (3 configs)
-Total: 9 configs × 5 seeds × 2 models = 90 runs
-```
+`analysis/` directory:
 
-## References
+**CSV outputs:**
+- `main_effects.csv` -- paired contrasts for all metrics (including score distributions)
+- `interactions.csv` -- 2-way and 3-way interaction tests
+- `feature_jaccard.csv` -- per-cell Jaccard similarity of top-K features across prevalent_frac levels
 
-- [ADR-006](../adr/ADR-006-nested-cv.md): Nested CV structure
-- [ADR-013](../adr/ADR-013-four-strategy-feature-selection.md): Feature selection framework
-- [ADR-014](../adr/ADR-014-oof-posthoc-calibration.md): OOF-posthoc calibration
-- [Cohen's d](https://en.wikipedia.org/wiki/Effect_size#Cohen's_d): Effect size interpretation
-- [Bonferroni correction](https://en.wikipedia.org/wiki/Bonferroni_correction): Multiple testing adjustment
+**Markdown reports:**
+- `feature_overlap.md` -- markdown summary of feature overlap analysis
+- `summary_{model}.md` -- per-model markdown report (includes Jaccard section)
+
+**Visualization plots (PNG):**
+- `main_effects_{model}.png` -- forest plots of main effects with 95% CIs (* = p<0.05)
+- `interactions_{model}.png` -- 2-way interaction plots for AUROC, Brier, sens_at_spec95
+- `score_distributions_{model}.png` -- box plots of mean predicted probabilities by case type
+- `cell_means_{model}.png` -- bar plots of cell means for AUROC, PRAUC, Brier, sens_at_spec95
+- `jaccard_heatmap_{model}.png` -- heatmap of feature overlap across design factors
+
+## Seed Count Guidance
+
+| Purpose | Seeds | Total runs |
+|---------|-------|------------|
+| Quick validation | 2 | 32 |
+| Real inference | 10 | 160 |
+| High precision | 20 | 320 |

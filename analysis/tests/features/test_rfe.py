@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from ced_ml.features.rfe import (
     RFEResult,
+    aggregate_rfe_results,
     compute_eval_sizes,
     compute_feature_importance,
     detect_knee_point,
@@ -326,3 +327,144 @@ class TestSaveRFEResults:
             outdir = Path(tmpdir) / "nested" / "output"
             save_rfe_results(result, str(outdir), "LR_EN", 0)
             assert outdir.exists()
+
+
+class TestAggregateRFEResults:
+    """Tests for aggregate_rfe_results function."""
+
+    def _make_result(self, seed, auroc_offset=0.0):
+        """Create a synthetic RFEResult for testing."""
+        curve = [
+            {
+                "size": 100,
+                "auroc_cv": 0.80 + auroc_offset,
+                "auroc_cv_std": 0.02,
+                "auroc_val": 0.85 + auroc_offset,
+                "auroc_val_std": 0.03,
+                "auroc_val_ci_low": 0.82 + auroc_offset,
+                "auroc_val_ci_high": 0.88 + auroc_offset,
+                "prauc_cv": 0.40,
+                "prauc_val": 0.45 + auroc_offset,
+                "brier_cv": 0.07,
+                "brier_val": 0.06,
+                "sens_at_95spec_cv": 0.50,
+                "sens_at_95spec_val": 0.55 + auroc_offset,
+                "proteins": [f"prot_{i}" for i in range(100)],
+            },
+            {
+                "size": 50,
+                "auroc_cv": 0.78 + auroc_offset,
+                "auroc_cv_std": 0.03,
+                "auroc_val": 0.83 + auroc_offset,
+                "auroc_val_std": 0.04,
+                "auroc_val_ci_low": 0.79 + auroc_offset,
+                "auroc_val_ci_high": 0.87 + auroc_offset,
+                "prauc_cv": 0.38,
+                "prauc_val": 0.42 + auroc_offset,
+                "brier_cv": 0.08,
+                "brier_val": 0.07,
+                "sens_at_95spec_cv": 0.45,
+                "sens_at_95spec_val": 0.50 + auroc_offset,
+                "proteins": [f"prot_{i}" for i in range(50)],
+            },
+            {
+                "size": 10,
+                "auroc_cv": 0.70 + auroc_offset,
+                "auroc_cv_std": 0.05,
+                "auroc_val": 0.72 + auroc_offset,
+                "auroc_val_std": 0.06,
+                "auroc_val_ci_low": 0.66 + auroc_offset,
+                "auroc_val_ci_high": 0.78 + auroc_offset,
+                "prauc_cv": 0.30,
+                "prauc_val": 0.32 + auroc_offset,
+                "brier_cv": 0.10,
+                "brier_val": 0.09,
+                "sens_at_95spec_cv": 0.30,
+                "sens_at_95spec_val": 0.35 + auroc_offset,
+                "proteins": [f"prot_{i}" for i in range(10)],
+            },
+        ]
+        ranking = {f"prot_{i}": i + seed for i in range(90)}
+        return RFEResult(
+            curve=curve,
+            feature_ranking=ranking,
+            recommended_panels={"min_size_95pct": 50, "knee_point": 50},
+            max_auroc=0.85 + auroc_offset,
+            model_name="LR_EN",
+        )
+
+    def test_single_seed_passthrough(self):
+        """Single seed returns the result as-is."""
+        r = self._make_result(seed=0)
+        agg = aggregate_rfe_results([r])
+        assert agg is r
+
+    def test_empty_raises(self):
+        """Empty list raises ValueError."""
+        with pytest.raises(ValueError, match="empty"):
+            aggregate_rfe_results([])
+
+    def test_two_seeds_mean_auroc(self):
+        """Two seeds produce mean AUROC values."""
+        r0 = self._make_result(seed=0, auroc_offset=0.0)
+        r1 = self._make_result(seed=1, auroc_offset=0.04)
+        agg = aggregate_rfe_results([r0, r1])
+
+        # Check curve has 3 sizes
+        assert len(agg.curve) == 3
+        sizes = [p["size"] for p in agg.curve]
+        assert sizes == [100, 50, 10]
+
+        # Mean auroc_val at size 100: (0.85 + 0.89) / 2 = 0.87
+        size_100 = next(p for p in agg.curve if p["size"] == 100)
+        assert abs(size_100["auroc_val"] - 0.87) < 1e-6
+
+    def test_two_seeds_ci(self):
+        """Cross-seed CI computed from percentiles."""
+        r0 = self._make_result(seed=0, auroc_offset=0.0)
+        r1 = self._make_result(seed=1, auroc_offset=0.04)
+        agg = aggregate_rfe_results([r0, r1])
+
+        size_100 = next(p for p in agg.curve if p["size"] == 100)
+        # With 2 seeds, percentile CI is just min/max approximately
+        assert size_100["auroc_val_ci_low"] <= size_100["auroc_val"]
+        assert size_100["auroc_val_ci_high"] >= size_100["auroc_val"]
+
+    def test_feature_ranking_aggregated(self):
+        """Feature rankings are averaged and re-ranked."""
+        r0 = self._make_result(seed=0)
+        r1 = self._make_result(seed=1)
+        agg = aggregate_rfe_results([r0, r1])
+
+        # All proteins present
+        assert len(agg.feature_ranking) == 90
+        # Rankings are 0-indexed integers
+        ranks = sorted(agg.feature_ranking.values())
+        assert ranks == list(range(90))
+
+    def test_recommended_panels_computed(self):
+        """Recommended panels derived from aggregated curve."""
+        r0 = self._make_result(seed=0)
+        r1 = self._make_result(seed=1, auroc_offset=0.02)
+        agg = aggregate_rfe_results([r0, r1])
+
+        assert "knee_point" in agg.recommended_panels
+        assert agg.model_name == "LR_EN"
+
+    def test_max_auroc_from_mean(self):
+        """max_auroc reflects aggregated mean, not single-seed max."""
+        r0 = self._make_result(seed=0, auroc_offset=0.0)
+        r1 = self._make_result(seed=1, auroc_offset=0.04)
+        agg = aggregate_rfe_results([r0, r1])
+
+        # Mean of 0.85 and 0.89 = 0.87
+        assert abs(agg.max_auroc - 0.87) < 1e-6
+
+    def test_n_seeds_in_curve(self):
+        """Each curve point records number of seeds."""
+        r0 = self._make_result(seed=0)
+        r1 = self._make_result(seed=1)
+        agg = aggregate_rfe_results([r0, r1])
+
+        for point in agg.curve:
+            assert point["n_seeds"] == 2

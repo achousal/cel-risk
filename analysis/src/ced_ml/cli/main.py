@@ -269,7 +269,7 @@ def train(ctx, config, **kwargs):
     "--model",
     type=str,
     required=False,
-    help="Model name for --run-id mode (e.g., LR_EN). If not specified, uses all models for run.",
+    help="Model name for --run-id mode (e.g., LR_EN). If not specified with --run-id, aggregates all models for the run.",
 )
 @click.option(
     "--stability-threshold",
@@ -317,15 +317,18 @@ def aggregate_splits(ctx, **kwargs):
         # Explicit path (original)
         ced aggregate-splits --results-dir results/run_20260127_115115/LR_EN/
 
-        # Auto-detection (new)
+        # Auto-detection - single model
         ced aggregate-splits --run-id 20260127_115115 --model LR_EN
-        ced aggregate-splits --run-id 20260127_115115  # All models for run
+
+        # Auto-detection - all models for run (new)
+        ced aggregate-splits --run-id 20260127_115115
 
     Example:
         ced aggregate-splits --results-dir results_local/
         ced aggregate-splits --results-dir results_local/ --stability-threshold 0.80
         ced aggregate-splits --results-dir results_local/ --plot-formats png --plot-formats pdf
         ced aggregate-splits --run-id 20260127_115115 --model LR_EN
+        ced aggregate-splits --run-id 20260127_115115  # All models
     """
     from ced_ml.cli.aggregate_splits import resolve_results_dir_from_run_id, run_aggregate_splits
 
@@ -339,7 +342,8 @@ def aggregate_splits(ctx, **kwargs):
             "Either --results-dir or --run-id must be provided.\n"
             "Examples:\n"
             "  ced aggregate-splits --results-dir results/run_20260127_115115/LR_EN/\n"
-            "  ced aggregate-splits --run-id 20260127_115115 --model LR_EN"
+            "  ced aggregate-splits --run-id 20260127_115115 --model LR_EN\n"
+            "  ced aggregate-splits --run-id 20260127_115115  # All models"
         )
 
     if results_dir and run_id:
@@ -348,12 +352,62 @@ def aggregate_splits(ctx, **kwargs):
             "Use --results-dir for explicit path OR --run-id for auto-detection."
         )
 
+    # Convert tuple to list for plot_formats
+    kwargs["plot_formats"] = list(kwargs["plot_formats"]) if kwargs["plot_formats"] else ["png"]
+
     # Auto-detect results_dir from run_id
     if run_id:
         try:
-            results_dir = resolve_results_dir_from_run_id(run_id=run_id, model=model)
-            kwargs["results_dir"] = results_dir
-            click.echo(f"Auto-detected results directory: {results_dir}")
+            # Check if we should aggregate all models or just one
+            return_all = model is None
+
+            model_dirs = resolve_results_dir_from_run_id(
+                run_id=run_id, model=model, return_all_models=return_all
+            )
+
+            # If return_all_models=False, we get a string; convert to dict for uniform handling
+            if isinstance(model_dirs, str):
+                # Single model case (either --model was specified or only one model exists)
+                # Extract model name from path: results/run_{id}/{model}/
+                from pathlib import Path
+
+                model_name = Path(model_dirs).name
+                model_dirs = {model_name: model_dirs}
+
+            # Display what we found
+            if len(model_dirs) == 1:
+                model_name, results_dir = next(iter(model_dirs.items()))
+                click.echo(f"Auto-detected results directory: {results_dir}")
+            else:
+                click.echo(
+                    f"Auto-discovered {len(model_dirs)} model(s) with results for run {run_id}:"
+                )
+                for model_name in sorted(model_dirs.keys()):
+                    click.echo(f"  - {model_name}")
+                click.echo("")
+
+            # Process each model
+            for model_name, results_dir in model_dirs.items():
+                if len(model_dirs) > 1:
+                    click.echo(f"\n{'='*70}")
+                    click.echo(f"Aggregating splits for: {model_name}")
+                    click.echo(f"{'='*70}\n")
+
+                # Prepare kwargs for this model
+                model_kwargs = kwargs.copy()
+                model_kwargs["results_dir"] = results_dir
+                model_kwargs.pop("run_id", None)
+                model_kwargs.pop("model", None)
+
+                run_aggregate_splits(**model_kwargs, log_level=ctx.obj.get("log_level"))
+
+            if len(model_dirs) > 1:
+                click.echo(f"\n{'='*70}")
+                click.echo(f"Aggregation complete for all {len(model_dirs)} model(s)")
+                click.echo(f"{'='*70}\n")
+
+            return
+
         except FileNotFoundError as e:
             click.echo(f"Error: {e}", err=True)
             ctx.exit(1)
@@ -361,10 +415,7 @@ def aggregate_splits(ctx, **kwargs):
             click.echo(f"Error: {e}", err=True)
             ctx.exit(1)
 
-    # Convert tuple to list for plot_formats
-    kwargs["plot_formats"] = list(kwargs["plot_formats"]) if kwargs["plot_formats"] else ["png"]
-
-    # Remove run_id and model from kwargs (not needed by run_aggregate_splits)
+    # Single explicit results_dir provided
     kwargs.pop("run_id", None)
     kwargs.pop("model", None)
 
@@ -569,7 +620,7 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     "--cv-folds",
     type=int,
     default=None,
-    help="CV folds for OOF AUROC estimation (default: 5)",
+    help="CV folds for OOF AUROC estimation (default: 0 = skip, validation-only)",
 )
 @click.option(
     "--step-strategy",
@@ -582,6 +633,30 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     type=click.Path(),
     default=None,
     help="Output directory (default: results_dir/aggregated/optimize_panel/)",
+)
+@click.option(
+    "--n-jobs",
+    type=int,
+    default=None,
+    help="Parallel jobs for multi-seed RFE (1=sequential, -1=all CPUs, default: 1 local / -1 HPC)",
+)
+@click.option(
+    "--hpc",
+    is_flag=True,
+    default=False,
+    help="Submit LSF jobs to HPC cluster instead of running locally",
+)
+@click.option(
+    "--hpc-config",
+    type=click.Path(exists=True),
+    default=None,
+    help="HPC config file (default: configs/pipeline_hpc.yaml)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview HPC job submission without executing (--hpc mode only)",
 )
 @click.pass_context
 def optimize_panel(ctx, config, **kwargs):
@@ -617,6 +692,18 @@ def optimize_panel(ctx, config, **kwargs):
 
         # Override config values with CLI args
         ced optimize-panel --config configs/optimize_panel.yaml --cv-folds 10
+
+        # HPC mode - submit parallel jobs for all models
+        ced optimize-panel --run-id 20260127_115115 --hpc
+
+        # HPC mode - optimize specific model(s)
+        ced optimize-panel --run-id 20260127_115115 --model LR_EN --hpc
+
+        # HPC dry run - preview without submitting
+        ced optimize-panel --run-id 20260127_115115 --hpc --dry-run
+
+        # HPC with custom config
+        ced optimize-panel --run-id 20260127_115115 --hpc --hpc-config configs/pipeline_custom.yaml
 
     Outputs (in results_dir/aggregated/optimize_panel/)
         - panel_curve_aggregated.csv: AUROC vs panel size
@@ -658,6 +745,7 @@ def optimize_panel(ctx, config, **kwargs):
         "cv_folds",
         "step_strategy",
         "outdir",
+        "n_jobs",
     ]:
         if kwargs.get(key) is None and key in config_params:
             kwargs[key] = config_params[key]
@@ -671,6 +759,102 @@ def optimize_panel(ctx, config, **kwargs):
 
     if not kwargs.get("results_dir") and not kwargs.get("run_id"):
         raise click.UsageError("Either --results-dir or --run-id is required.")
+
+    # HPC mode: submit jobs and exit
+    hpc_flag = kwargs.get("hpc", False)
+    dry_run_flag = kwargs.get("dry_run", False)
+
+    if hpc_flag:
+        import os
+        from pathlib import Path
+
+        from ced_ml.hpc.lsf import detect_environment, load_hpc_config, submit_job
+        from ced_ml.utils.paths import get_project_root
+
+        # Only --run-id mode is supported for HPC (not --results-dir)
+        if not kwargs.get("run_id"):
+            raise click.UsageError(
+                "HPC mode (--hpc) requires --run-id. "
+                "Use --run-id instead of --results-dir for parallel HPC execution."
+            )
+
+        run_id = kwargs["run_id"]
+
+        # Load HPC config
+        hpc_config_path = kwargs.get("hpc_config")
+        if not hpc_config_path:
+            default_hpc_config = get_project_root() / "configs" / "pipeline_hpc.yaml"
+            if default_hpc_config.exists():
+                hpc_config_path = str(default_hpc_config)
+            else:
+                raise click.UsageError(
+                    "HPC mode requires --hpc-config or configs/pipeline_hpc.yaml to exist."
+                )
+
+        hpc_config = load_hpc_config(hpc_config_path)
+        env_info = detect_environment()
+
+        # Discover models to submit jobs for
+        results_root_env = os.environ.get("CED_RESULTS_DIR")
+        results_root = (
+            Path(results_root_env) if results_root_env else get_project_root() / "results"
+        )
+
+        from ced_ml.cli.optimize_panel import discover_models_by_run_id
+
+        model_dirs = discover_models_by_run_id(
+            run_id=run_id,
+            results_root=results_root,
+            model_filter=kwargs.get("model"),
+        )
+
+        if not model_dirs:
+            if kwargs.get("model"):
+                raise click.ClickException(
+                    f"No models matching '{kwargs['model']}' found with run_id={run_id} "
+                    f"and aggregated results in {results_root}"
+                )
+            else:
+                raise click.ClickException(
+                    f"No models found with run_id={run_id} and aggregated results in {results_root}"
+                )
+
+        click.echo(f"\nSubmitting {len(model_dirs)} panel optimization job(s) to HPC:")
+        for model_name in model_dirs.keys():
+            click.echo(f"  - {model_name}")
+
+        # Build and submit jobs for each model
+        submitted_jobs = []
+        for model_name in model_dirs.keys():
+            from ced_ml.hpc.lsf import _build_panel_optimization_command
+
+            cmd = _build_panel_optimization_command(run_id=run_id, model=model_name)
+
+            job_name = f"opt_panel_{model_name}_{run_id}"
+
+            if dry_run_flag:
+                click.echo(f"\n[DRY RUN] Would submit job: {job_name}")
+                click.echo(f"  Command: {cmd}")
+                continue
+
+            job_id = submit_job(
+                command=cmd,
+                job_name=job_name,
+                config=hpc_config,
+                env_info=env_info,
+                dependency_ids=None,
+            )
+
+            submitted_jobs.append((model_name, job_id))
+            click.echo(f"  Submitted {model_name}: job_id={job_id}")
+
+        if dry_run_flag:
+            click.echo("\n[DRY RUN] No jobs were actually submitted.")
+        else:
+            click.echo(f"\nSuccessfully submitted {len(submitted_jobs)} job(s)")
+            click.echo("Monitor with: bjobs")
+
+        return
 
     # Auto-discover models if using --run-id
     if kwargs.get("run_id"):
@@ -770,6 +954,9 @@ def optimize_panel(ctx, config, **kwargs):
             click.echo(f"Optimizing panel for: {model_name}")
             click.echo(f"{'='*70}\n")
 
+            # Default n_jobs: -1 on HPC (via config), 1 locally
+            n_jobs = kwargs.get("n_jobs") or config_params.get("n_jobs_hpc", 1)
+
             run_optimize_panel_aggregated(
                 results_dir=results_dir,
                 infile=infile,
@@ -778,10 +965,11 @@ def optimize_panel(ctx, config, **kwargs):
                 stability_threshold=kwargs.get("stability_threshold") or 0.75,
                 min_size=kwargs.get("min_size") or 5,
                 min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
-                cv_folds=kwargs.get("cv_folds") or 5,
+                cv_folds=kwargs.get("cv_folds") or 0,
                 step_strategy=kwargs.get("step_strategy") or "geometric",
                 outdir=kwargs.get("outdir"),
                 log_level=ctx.obj.get("log_level"),
+                n_jobs=n_jobs,
             )
 
         click.echo(f"\n{'='*70}")
@@ -804,10 +992,11 @@ def optimize_panel(ctx, config, **kwargs):
             stability_threshold=kwargs.get("stability_threshold") or 0.75,
             min_size=kwargs.get("min_size") or 5,
             min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
-            cv_folds=kwargs.get("cv_folds") or 5,
+            cv_folds=kwargs.get("cv_folds") or 0,
             step_strategy=kwargs.get("step_strategy") or "geometric",
             outdir=kwargs.get("outdir"),
             log_level=ctx.obj.get("log_level"),
+            n_jobs=kwargs.get("n_jobs") or 1,
         )
 
 

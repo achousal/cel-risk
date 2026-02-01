@@ -85,21 +85,27 @@ def _find_results_root() -> Path:
 def resolve_results_dir_from_run_id(
     run_id: str | None = None,
     model: str | None = None,
-) -> str:
+    return_all_models: bool = False,
+) -> str | dict[str, str]:
     """Auto-detect results directory from run_id.
 
     Directory layout: results/run_{RUN_ID}/{MODEL}/
 
     Args:
         run_id: Run ID (e.g., "20260127_115115"). If None, auto-detects latest.
-        model: Model name (e.g., "LR_EN"). Required if run_id is provided.
+        model: Model name (e.g., "LR_EN"). If None and return_all_models is False,
+               requires single model. If specified, only returns that model.
+        return_all_models: If True, returns dict of all models. If False, returns
+                          single path string (requires exactly one model unless
+                          model is specified).
 
     Returns:
-        Path to model results directory (e.g., "results/run_20260127_115115/LR_EN/")
+        If return_all_models is True: Dict mapping model names to their paths
+        If return_all_models is False: String path to model results directory
 
     Raises:
         FileNotFoundError: If no matching results found
-        ValueError: If configuration is invalid
+        ValueError: If configuration is invalid (e.g., multiple models without specification)
     """
     results_dir = _find_results_root()
 
@@ -126,6 +132,8 @@ def resolve_results_dir_from_run_id(
     if model:
         model_path = run_path / model
         if model_path.exists():
+            if return_all_models:
+                return {model: str(model_path)}
             return str(model_path)
 
         raise FileNotFoundError(
@@ -154,6 +162,11 @@ def resolve_results_dir_from_run_id(
             f"Tip: Specify --model to target a specific model."
         )
 
+    # If return_all_models is True, return dict of all models
+    if return_all_models:
+        return dict(matching_models)
+
+    # Otherwise, require single model
     if len(matching_models) > 1:
         model_names = ", ".join([m[0] for m in matching_models])
         raise ValueError(

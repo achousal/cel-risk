@@ -30,6 +30,9 @@ git clone https://github.com/achousal/CeliacRiskML.git
 ```bash
 cd CeliacRiskML/
 pip install -e analysis/
+
+conda activate ced_ml
+
 ced run-pipeline
 ```
 
@@ -37,6 +40,8 @@ ced run-pipeline
 ```bash
 cd CeliacRiskML/
 bash analysis/scripts/hpc_setup.sh
+
+source venv/bin/activate  # Required if using venv
 
 # Submit pipeline with LSF job dependency chains
 ced run-pipeline --hpc

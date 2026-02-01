@@ -447,7 +447,7 @@ def recursive_feature_elimination(
     cat_cols: list[str],
     meta_num_cols: list[str],
     min_size: int = 5,
-    cv_folds: int = 5,
+    cv_folds: int = 0,
     step_strategy: str = "geometric",
     min_auroc_frac: float = 0.90,
     random_state: int = 42,
@@ -457,6 +457,11 @@ def recursive_feature_elimination(
 
     Iteratively removes least important proteins, evaluating AUROC at each
     step. Returns the Pareto curve and recommended panel sizes.
+
+    WARNING: When cv_folds > 0, the OOF AUROC estimates are optimistically
+    biased because feature ranking is computed on the full training set before
+    CV. The validation AUROC (auroc_val) is the honest metric. Default
+    cv_folds=0 skips CV entirely to avoid confusion.
 
     Args:
         X_train: Training features (DataFrame with protein + metadata columns).
@@ -469,7 +474,7 @@ def recursive_feature_elimination(
         cat_cols: Categorical metadata columns.
         meta_num_cols: Numeric metadata columns.
         min_size: Smallest panel to evaluate.
-        cv_folds: CV folds for OOF AUROC estimation.
+        cv_folds: CV folds for OOF AUROC estimation (default 0 = skip CV).
         step_strategy: Elimination strategy ("geometric", "fine", "linear").
         min_auroc_frac: Early stop if AUROC drops below this fraction of max.
         random_state: Random seed.
@@ -570,7 +575,7 @@ def recursive_feature_elimination(
                 logger.info(
                     f"  CV AUROC: {auroc_cv:.4f}, PR-AUC: {prauc_cv:.4f}, Brier: {brier_cv:.4f}"
                 )
-                auroc_cv_std = _bootstrap_auroc_std(y_train, oof_probs, n_bootstrap=50)
+                auroc_cv_std, _, _ = _bootstrap_auroc_ci(y_train, oof_probs, n_bootstrap=50)
             else:
                 # No CV: use training set metrics (biased but fast)
                 train_probs = pipeline.predict_proba(X_train_subset)[:, 1]
@@ -591,6 +596,9 @@ def recursive_feature_elimination(
             prauc_val = prauc(y_val, val_probs)
             brier_val = compute_brier_score(y_val, val_probs)
             sens_val = alpha_sensitivity_at_specificity(y_val, val_probs, target_specificity=0.95)
+            auroc_val_std, auroc_val_ci_low, auroc_val_ci_high = _bootstrap_auroc_ci(
+                y_val, val_probs, n_bootstrap=200
+            )
 
         except Exception as e:
             logger.error(f"Evaluation failed at size {len(current_proteins)}: {e}")
@@ -602,6 +610,9 @@ def recursive_feature_elimination(
             "auroc_cv": auroc_cv,
             "auroc_cv_std": auroc_cv_std,
             "auroc_val": auroc_val,
+            "auroc_val_std": auroc_val_std,
+            "auroc_val_ci_low": auroc_val_ci_low,
+            "auroc_val_ci_high": auroc_val_ci_high,
             "prauc_cv": prauc_cv,
             "prauc_val": prauc_val,
             "brier_cv": brier_cv,
@@ -640,13 +651,19 @@ def recursive_feature_elimination(
     )
 
 
-def _bootstrap_auroc_std(
+def _bootstrap_auroc_ci(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    n_bootstrap: int = 50,
+    n_bootstrap: int = 200,
+    ci_level: float = 0.95,
     random_state: int = 42,
-) -> float:
-    """Compute bootstrap standard deviation of AUROC."""
+) -> tuple[float, float, float]:
+    """Compute bootstrap percentile confidence interval for AUROC.
+
+    Returns:
+        Tuple of (std, ci_low, ci_high) where ci_low/ci_high are the
+        percentile-based bounds at the requested confidence level.
+    """
     rng = np.random.default_rng(random_state)
     n = len(y_true)
     aurocs = []
@@ -665,7 +682,13 @@ def _bootstrap_auroc_std(
         except Exception:
             continue
 
-    return float(np.std(aurocs)) if aurocs else 0.0
+    if not aurocs:
+        return 0.0, 0.0, 0.0
+
+    alpha = 1.0 - ci_level
+    ci_low = float(np.percentile(aurocs, 100 * alpha / 2))
+    ci_high = float(np.percentile(aurocs, 100 * (1 - alpha / 2)))
+    return float(np.std(aurocs)), ci_low, ci_high
 
 
 def save_rfe_results(
@@ -703,6 +726,9 @@ def save_rfe_results(
                 "auroc_cv": p["auroc_cv"],
                 "auroc_cv_std": p["auroc_cv_std"],
                 "auroc_val": p["auroc_val"],
+                "auroc_val_std": p.get("auroc_val_std", 0.0),
+                "auroc_val_ci_low": p.get("auroc_val_ci_low", 0.0),
+                "auroc_val_ci_high": p.get("auroc_val_ci_high", 0.0),
                 "prauc_cv": p.get("prauc_cv", float("nan")),
                 "prauc_val": p.get("prauc_val", float("nan")),
                 "brier_cv": p.get("brier_cv", float("nan")),
@@ -748,14 +774,17 @@ def save_rfe_results(
             {
                 "size": p["size"],
                 "auroc_cv": p["auroc_cv"],
+                "auroc_cv_std": p["auroc_cv_std"],
                 "auroc_val": p["auroc_val"],
+                "auroc_val_std": p.get("auroc_val_std", 0.0),
+                "auroc_val_ci_low": p.get("auroc_val_ci_low", 0.0),
+                "auroc_val_ci_high": p.get("auroc_val_ci_high", 0.0),
                 "prauc_cv": p.get("prauc_cv", float("nan")),
                 "prauc_val": p.get("prauc_val", float("nan")),
                 "brier_cv": p.get("brier_cv", float("nan")),
                 "brier_val": p.get("brier_val", float("nan")),
                 "sens_at_95spec_cv": p.get("sens_at_95spec_cv", float("nan")),
                 "sens_at_95spec_val": p.get("sens_at_95spec_val", float("nan")),
-                "auroc_cv_std": p["auroc_cv_std"],
             }
             for p in result.curve
         ]
@@ -765,3 +794,134 @@ def save_rfe_results(
 
     logger.info(f"Saved RFE results to {output_dir}")
     return paths
+
+
+def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
+    """Aggregate RFE results across multiple split seeds.
+
+    Combines per-seed Pareto curves into a single curve with cross-seed
+    mean and percentile-based 95% confidence intervals. Feature rankings
+    are aggregated via mean elimination order.
+
+    Args:
+        results: List of RFEResult objects, one per split seed.
+
+    Returns:
+        Aggregated RFEResult with mean validation metrics, cross-seed CIs,
+        mean feature rankings, and recommendations from the aggregated curve.
+
+    Raises:
+        ValueError: If results list is empty.
+    """
+    if not results:
+        raise ValueError("Cannot aggregate empty results list")
+
+    if len(results) == 1:
+        logger.info("Single seed: skipping aggregation, returning as-is")
+        return results[0]
+
+    n_seeds = len(results)
+    logger.info(f"Aggregating RFE curves across {n_seeds} seeds")
+
+    # -- Aggregate curves by panel size --
+    # Collect all curve points keyed by size
+    size_to_metrics: dict[int, list[dict[str, Any]]] = {}
+    size_to_proteins: dict[int, list[list[str]]] = {}
+    for r in results:
+        for point in r.curve:
+            size = point["size"]
+            if size not in size_to_metrics:
+                size_to_metrics[size] = []
+                size_to_proteins[size] = []
+            size_to_metrics[size].append(point)
+            size_to_proteins[size].append(point["proteins"])
+
+    # Only keep sizes present in ALL seeds for a clean curve
+    all_seed_sizes = [size for size, points in size_to_metrics.items() if len(points) == n_seeds]
+    all_seed_sizes.sort(reverse=True)
+
+    if not all_seed_sizes:
+        # Fallback: use sizes present in at least half the seeds
+        all_seed_sizes = [
+            size for size, points in size_to_metrics.items() if len(points) >= max(1, n_seeds // 2)
+        ]
+        all_seed_sizes.sort(reverse=True)
+        logger.warning(
+            f"No panel sizes common to all {n_seeds} seeds; "
+            f"using {len(all_seed_sizes)} sizes present in >= {max(1, n_seeds // 2)} seeds"
+        )
+
+    val_metrics = ["auroc_val", "prauc_val", "brier_val", "sens_at_95spec_val"]
+    cv_metrics = ["auroc_cv", "prauc_cv", "brier_cv", "sens_at_95spec_cv"]
+
+    aggregated_curve: list[dict[str, Any]] = []
+    for size in all_seed_sizes:
+        points = size_to_metrics[size]
+        agg: dict[str, Any] = {"size": size}
+
+        for metric in val_metrics + cv_metrics:
+            values = np.array([p.get(metric, np.nan) for p in points])
+            values = values[~np.isnan(values)]
+            if len(values) > 0:
+                agg[metric] = float(np.mean(values))
+                agg[f"{metric}_std"] = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+            else:
+                agg[metric] = np.nan
+                agg[f"{metric}_std"] = 0.0
+
+        # Cross-seed percentile CI for auroc_val
+        auroc_vals = np.array([p["auroc_val"] for p in points])
+        if len(auroc_vals) > 1:
+            agg["auroc_val_ci_low"] = float(np.percentile(auroc_vals, 2.5))
+            agg["auroc_val_ci_high"] = float(np.percentile(auroc_vals, 97.5))
+        else:
+            agg["auroc_val_ci_low"] = agg["auroc_val"]
+            agg["auroc_val_ci_high"] = agg["auroc_val"]
+
+        agg["auroc_cv_std"] = agg.get("auroc_cv_std", 0.0)
+        agg["n_seeds"] = len(points)
+
+        # Use proteins from the first seed at this size (ordering is seed-dependent)
+        agg["proteins"] = size_to_proteins[size][0]
+
+        aggregated_curve.append(agg)
+
+    # -- Aggregate feature rankings via mean elimination order --
+    all_proteins: set[str] = set()
+    for r in results:
+        all_proteins.update(r.feature_ranking.keys())
+
+    aggregated_ranking: dict[str, float] = {}
+    for protein in all_proteins:
+        orders = [r.feature_ranking[protein] for r in results if protein in r.feature_ranking]
+        aggregated_ranking[protein] = float(np.mean(orders))
+
+    # Convert to int-keyed dict sorted by mean order (for compatibility)
+    sorted_ranking = {
+        p: rank
+        for rank, (p, _) in enumerate(sorted(aggregated_ranking.items(), key=lambda x: x[1]))
+    }
+
+    # -- Recommendations from aggregated curve --
+    recommended = find_recommended_panels(aggregated_curve)
+
+    # -- Max AUROC from aggregated curve --
+    max_auroc = max(
+        (p["auroc_val"] for p in aggregated_curve),
+        default=0.0,
+    )
+
+    model_name = results[0].model_name
+
+    logger.info(
+        f"Aggregated {len(aggregated_curve)} panel sizes across {n_seeds} seeds, "
+        f"max mean AUROC={max_auroc:.4f}"
+    )
+
+    return RFEResult(
+        curve=aggregated_curve,
+        feature_ranking=sorted_ranking,
+        recommended_panels=recommended,
+        max_auroc=max_auroc,
+        model_name=model_name,
+    )

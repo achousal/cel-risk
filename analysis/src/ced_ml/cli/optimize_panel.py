@@ -37,6 +37,7 @@ from ced_ml.data.io import read_proteomics_file
 from ced_ml.data.schema import TARGET_COL, get_positive_label
 from ced_ml.features.rfe import (
     RFEResult,
+    aggregate_rfe_results,
     recursive_feature_elimination,
     save_rfe_results,
 )
@@ -147,7 +148,7 @@ def run_optimize_panel(
     start_size: int = 100,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
-    cv_folds: int = 5,
+    cv_folds: int = 0,
     step_strategy: str = "geometric",
     outdir: str | None = None,
     use_stability_panel: bool = True,
@@ -439,6 +440,11 @@ def run_optimize_panel(
             out_path=plot_path,
             title="Panel Size vs AUROC (RFE)",
             model_name=model_name,
+            n_train_samples=len(X_train),
+            n_val_samples=len(X_val),
+            n_train_cases=int(y_train.sum()),
+            n_val_cases=int(y_val.sum()),
+            feature_selection_method="Single-split RFE",
         )
         paths["panel_curve_plot"] = str(plot_path)
         logger.info(f"Saved panel curve plot to {plot_path}")
@@ -449,6 +455,7 @@ def run_optimize_panel(
             out_path=ranking_plot_path,
             top_n=30,
             title=f"Feature Importance Ranking ({model_name})",
+            feature_selection_method="Single-split RFE",
         )
         paths["feature_ranking_plot"] = str(ranking_plot_path)
         logger.info(f"Saved feature ranking plot to {ranking_plot_path}")
@@ -553,15 +560,17 @@ def run_optimize_panel_aggregated(
     stability_threshold: float = 0.75,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
-    cv_folds: int = 5,
+    cv_folds: int = 0,
     step_strategy: str = "geometric",
     outdir: str | None = None,
     log_level: int | None = None,
+    n_jobs: int = 1,
 ) -> RFEResult:
     """Run panel optimization using aggregated stability panel.
 
-    This function operates on the aggregated stability panel from cross-validation,
-    providing a more robust feature ranking than single-split optimization.
+    Runs RFE independently on each available split seed, then aggregates
+    the validation curves (mean + cross-seed 95% CI). This produces a
+    more robust Pareto curve than single-seed optimization.
 
     Args:
         results_dir: Path to model's aggregated results directory
@@ -575,6 +584,7 @@ def run_optimize_panel_aggregated(
         step_strategy: Elimination strategy ("geometric", "fine", "linear")
         outdir: Output directory (default: results_dir/optimize_panel)
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
+        n_jobs: Parallel jobs for multi-seed RFE (1=sequential, -1=all CPUs)
 
     Returns:
         RFEResult with optimization curve and recommendations
@@ -647,11 +657,8 @@ def run_optimize_panel_aggregated(
         f"Found {len(stable_proteins)} stable proteins (≥{stability_threshold:.2f} threshold)"
     )
 
-    # Load a representative model to get metadata (auto-discover first available split)
-    # results_dir is: ../results/LR_EN/run_20260127_115115/aggregated
+    # Discover available split seeds
     run_dir = results_path.parent
-
-    # Discover available split seeds in splits/ subdirectory
     split_dirs = sorted(run_dir.glob("splits/split_seed*"))
     if not split_dirs:
         raise FileNotFoundError(
@@ -659,9 +666,8 @@ def run_optimize_panel_aggregated(
             f"Expected at least one split_seed* directory."
         )
 
-    # Use the first available split for metadata extraction
+    # Load metadata from first split (columns, scenario are identical across seeds)
     representative_split = split_dirs[0]
-    representative_seed = int(representative_split.name.replace("split_seed", ""))
     model_path = representative_split / "core" / f"{model_name}__final_model.joblib"
 
     if not model_path.exists():
@@ -676,12 +682,8 @@ def run_optimize_panel_aggregated(
     if not isinstance(bundle, dict):
         raise ValueError("Model bundle must be a dictionary")
 
-    pipeline = bundle.get("model")
     resolved_cols = bundle.get("resolved_columns", {})
     scenario = bundle.get("scenario", "IncidentOnly")
-
-    if pipeline is None:
-        raise ValueError("Model bundle missing 'model' key")
 
     protein_cols = resolved_cols.get("protein_cols", [])
     cat_cols = resolved_cols.get("categorical_metadata", [])
@@ -692,40 +694,14 @@ def run_optimize_panel_aggregated(
 
     logger.info(f"Model metadata: {len(protein_cols)} total proteins, scenario={scenario}")
 
-    # DEBUG: Show sample protein columns from model
-    if protein_cols:
-        logger.info(f"Sample protein_cols from model (first 3): {protein_cols[:3]}")
-
-    # Load data
+    # Load data once (shared across all seeds)
     logger.info(f"Loading data from {infile}")
     df_raw = read_proteomics_file(infile, validate=True)
 
-    # Apply row filters
     logger.info("Applying row filters...")
     df, filter_stats = apply_row_filters(df_raw, meta_num_cols=meta_num_cols)
     logger.info(f"Filtered: {filter_stats['n_in']:,} → {filter_stats['n_out']:,} rows")
 
-    # Load train/val splits (use representative seed discovered above)
-    split_path = Path(split_dir)
-    train_file = split_path / f"train_idx_{scenario}_seed{representative_seed}.csv"
-    val_file = split_path / f"val_idx_{scenario}_seed{representative_seed}.csv"
-
-    if not train_file.exists() or not val_file.exists():
-        raise FileNotFoundError(
-            f"Split files not found: {train_file}, {val_file}\n"
-            f"Run 'ced save-splits' to generate splits with scenario={scenario}"
-        )
-
-    logger.info(f"Loading splits from {split_path}")
-    train_idx = pd.read_csv(train_file).squeeze().values
-    val_idx = pd.read_csv(val_file).squeeze().values
-
-    if len(train_idx) == 0 or len(val_idx) == 0:
-        raise ValueError("Split files contain empty indices")
-
-    logger.info(f"Loaded splits: train={len(train_idx)}, val={len(val_idx)}")
-
-    # Prepare data
     feature_cols = protein_cols + cat_cols + meta_num_cols
     missing = [c for c in feature_cols if c not in df.columns]
     if missing:
@@ -733,58 +709,95 @@ def run_optimize_panel_aggregated(
         feature_cols = [c for c in feature_cols if c in df.columns]
         protein_cols = [c for c in protein_cols if c in df.columns]
 
-    # Create target
     if TARGET_COL not in df.columns:
         raise ValueError(f"Target column '{TARGET_COL}' not found")
 
     positive_label = get_positive_label(scenario)
     y_all = (df[TARGET_COL] == positive_label).astype(int).values
 
-    # Subset to train/val
-    X_train = df.iloc[train_idx][feature_cols].copy()
-    y_train = y_all[train_idx]
-
-    X_val = df.iloc[val_idx][feature_cols].copy()
-    y_val = y_all[val_idx]
-
-    logger.info(f"Train: {len(X_train)} samples, {y_train.sum()} cases")
-    logger.info(f"Val: {len(X_val)} samples, {y_val.sum()} cases")
-
-    # Filter stable proteins to those available in data
-    initial_proteins = [p for p in stable_proteins if p in X_train.columns]
-
+    # Filter stable proteins
+    initial_proteins = [p for p in stable_proteins if p in df.columns]
     if len(initial_proteins) < min_size:
         raise ValueError(
             f"Only {len(initial_proteins)} stable proteins available, "
             f"less than min_size={min_size}"
         )
 
-    logger.info(f"Starting RFE with {len(initial_proteins)} aggregated stable proteins")
-
-    # Prepare filtered metadata columns
-    filtered_cat_cols = [c for c in cat_cols if c in X_train.columns]
-    filtered_meta_num_cols = [c for c in meta_num_cols if c in X_train.columns]
+    filtered_cat_cols = [c for c in cat_cols if c in df.columns]
+    filtered_meta_num_cols = [c for c in meta_num_cols if c in df.columns]
+    logger.info(f"Starting multi-seed RFE with {len(initial_proteins)} stable proteins")
     logger.info(
-        f"Categorical cols: {len(filtered_cat_cols)}, Numeric metadata: {len(filtered_meta_num_cols)}"
+        f"Seeds: {len(split_dirs)}, "
+        f"Categorical cols: {len(filtered_cat_cols)}, "
+        f"Numeric metadata: {len(filtered_meta_num_cols)}"
     )
 
-    # Run RFE
-    result = recursive_feature_elimination(
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        base_pipeline=pipeline,
-        model_name=model_name,
-        initial_proteins=initial_proteins,
-        cat_cols=filtered_cat_cols,
-        meta_num_cols=filtered_meta_num_cols,
-        min_size=min_size,
-        cv_folds=cv_folds,
-        step_strategy=step_strategy,
-        min_auroc_frac=min_auroc_frac,
-        random_state=0,  # Fixed seed for aggregated RFE (consistent results across runs)
-    )
+    # -- Run RFE for each split seed --
+    def _run_rfe_for_seed(seed_dir: Path) -> RFEResult:
+        """Run RFE for a single split seed."""
+        seed = int(seed_dir.name.replace("split_seed", ""))
+        seed_model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
+
+        if not seed_model_path.exists():
+            raise FileNotFoundError(f"Model not found for seed {seed}: {seed_model_path}")
+
+        seed_bundle = joblib.load(seed_model_path)
+        pipeline = seed_bundle.get("model")
+        if pipeline is None:
+            raise ValueError(f"Model bundle missing 'model' key for seed {seed}")
+
+        split_path = Path(split_dir)
+        train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
+        val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+
+        if not train_file.exists() or not val_file.exists():
+            raise FileNotFoundError(
+                f"Split files not found for seed {seed}: {train_file}, {val_file}"
+            )
+
+        train_idx = pd.read_csv(train_file).squeeze().values
+        val_idx = pd.read_csv(val_file).squeeze().values
+
+        X_train = df.iloc[train_idx][feature_cols].copy()
+        y_train = y_all[train_idx]
+        X_val = df.iloc[val_idx][feature_cols].copy()
+        y_val = y_all[val_idx]
+
+        logger.info(
+            f"Seed {seed}: train={len(X_train)} ({y_train.sum()} cases), "
+            f"val={len(X_val)} ({y_val.sum()} cases)"
+        )
+
+        return recursive_feature_elimination(
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            base_pipeline=pipeline,
+            model_name=model_name,
+            initial_proteins=initial_proteins,
+            cat_cols=filtered_cat_cols,
+            meta_num_cols=filtered_meta_num_cols,
+            min_size=min_size,
+            cv_folds=cv_folds,
+            step_strategy=step_strategy,
+            min_auroc_frac=min_auroc_frac,
+            random_state=seed,
+        )
+
+    if len(split_dirs) > 1 and n_jobs != 1:
+        from joblib import Parallel, delayed
+
+        effective_jobs = n_jobs if n_jobs != 0 else 1
+        logger.info(f"Running RFE across {len(split_dirs)} seeds (n_jobs={effective_jobs})")
+        per_seed_results: list[RFEResult] = Parallel(n_jobs=effective_jobs)(
+            delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
+        )
+    else:
+        per_seed_results = [_run_rfe_for_seed(sd) for sd in split_dirs]
+
+    # Aggregate across seeds
+    result = aggregate_rfe_results(per_seed_results)
 
     # Save results
     if outdir is None:
@@ -799,14 +812,18 @@ def run_optimize_panel_aggregated(
     logger.info(f"Saved RFE results to {outdir}")
 
     # Generate plots
+    n_seeds = len(split_dirs)
     try:
         plot_path = Path(outdir) / "panel_curve_aggregated.png"
         plot_pareto_curve(
             curve=result.curve,
             recommended=result.recommended_panels,
             out_path=plot_path,
-            title=f"Panel Size Optimization ({model_name}, Aggregated)",
+            title=f"Panel Size Optimization ({model_name}, {n_seeds} seeds)",
             model_name=model_name,
+            n_splits=n_seeds,
+            feature_selection_method="Aggregated RFE",
+            run_id=_run_id,
         )
         paths["panel_curve_plot"] = str(plot_path)
         logger.info(f"Saved panel curve plot to {plot_path}")
@@ -816,7 +833,10 @@ def run_optimize_panel_aggregated(
             feature_ranking=result.feature_ranking,
             out_path=ranking_plot_path,
             top_n=30,
-            title=f"Feature Importance Ranking ({model_name}, Aggregated)",
+            title=f"Feature Importance Ranking ({model_name}, {n_seeds} seeds)",
+            n_splits=n_seeds,
+            feature_selection_method="Aggregated RFE",
+            run_id=_run_id,
         )
         paths["feature_ranking_plot"] = str(ranking_plot_path)
         logger.info(f"Saved feature ranking plot to {ranking_plot_path}")
@@ -827,8 +847,9 @@ def run_optimize_panel_aggregated(
     print(f"\n{'='*60}")
     print(f"Aggregated Panel Optimization Complete: {model_name}")
     print(f"{'='*60}")
+    print(f"Seeds aggregated: {n_seeds}")
     print(f"Starting panel size: {len(initial_proteins)} (aggregated stable proteins)")
-    print(f"Max AUROC: {result.max_auroc:.4f}")
+    print(f"Max mean AUROC: {result.max_auroc:.4f}")
 
     if result.curve:
         best_point = max(result.curve, key=lambda x: x["auroc_val"])

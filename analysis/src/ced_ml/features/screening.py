@@ -240,7 +240,7 @@ def screen_proteins(
     min_n_per_group: int = 10,
     use_cache: bool = True,
     verbose: bool = True,
-) -> tuple[list[str], pd.DataFrame]:
+) -> tuple[list[str], pd.DataFrame, bool]:
     """
     Screen proteins using univariate statistical tests.
 
@@ -273,6 +273,8 @@ def screen_proteins(
         Top N proteins (or all if top_n=0)
     screening_stats : pd.DataFrame
         Test statistics for screened proteins
+    was_cached : bool
+        True if results were retrieved from cache, False if computed fresh
 
     Raises
     ------
@@ -281,11 +283,11 @@ def screen_proteins(
 
     Examples
     --------
-    >>> selected, stats = screen_proteins(
+    >>> selected, stats, was_cached = screen_proteins(
     ...     X_train, y_train, protein_cols,
     ...     method="mannwhitney", top_n=1000
     ... )
-    >>> print(f"Selected {len(selected)} proteins")
+    >>> print(f"Selected {len(selected)} proteins (cached: {was_cached})")
     >>> print(stats.head())
     """
     method = (method or "").strip().lower()
@@ -293,7 +295,7 @@ def screen_proteins(
     # Handle empty protein list (no caching needed)
     if len(protein_cols) == 0:
         logger.debug("Screening disabled (no proteins), returning empty list")
-        return protein_cols, pd.DataFrame()
+        return protein_cols, pd.DataFrame(), False
 
     # Try cache lookup (even for top_n=0 to get full stats)
     if use_cache:
@@ -303,10 +305,10 @@ def screen_proteins(
         cached_result = cache.get(X_train, y_train, protein_cols, method, top_n)
         if cached_result is not None:
             selected, stats = cached_result
-            logger.info(
+            logger.debug(
                 f"Feature Screening ({method}) - CACHED: {len(selected)}/{len(protein_cols)} proteins (top_n={top_n})"
             )
-            return selected, stats
+            return selected, stats, True
 
     # Run screening (with optional logging level control for repeated CV folds)
     log_level = logger.info if verbose else logger.debug
@@ -329,7 +331,7 @@ def screen_proteins(
     # Log screening results (compact single-line format)
     if stats.empty:
         logger.warning("Screening failed: no proteins tested (check data quality)")
-        return selected, stats
+        return selected, stats, False
 
     n_selected = len(selected)
 
@@ -365,7 +367,7 @@ def screen_proteins(
     elif n_selected < top_n:
         logger.warning(f"Only {n_selected} proteins available (requested top_n={top_n})")
 
-    return selected, stats
+    return selected, stats, False
 
 
 def variance_missingness_prefilter(

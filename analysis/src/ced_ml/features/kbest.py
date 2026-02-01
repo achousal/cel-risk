@@ -384,19 +384,13 @@ class ScreeningTransformer:
 
     Wraps screen_proteins to work as an sklearn transformer.
     Screens features using Mann-Whitney or F-statistic, keeping top-N.
-
-    Implements caching to avoid redundant screening on identical data.
     """
-
-    # Class-level cache: {(data_hash, method, top_n): (selected_features, stats)}
-    _screening_cache = {}
 
     def __init__(
         self,
         method: str = "mannwhitney",
         top_n: int = 1000,
         protein_cols: list[str] | None = None,
-        enable_cache: bool = True,
     ):
         """Initialize screening transformer.
 
@@ -404,12 +398,10 @@ class ScreeningTransformer:
             method: "mannwhitney" or "f_classif"
             top_n: Number of top features to keep
             protein_cols: List of protein column names (set during fit)
-            enable_cache: Enable caching to avoid redundant screening (default: True)
         """
         self.method = method
         self.top_n = top_n
         self.protein_cols = protein_cols or []
-        self.enable_cache = enable_cache
         self.selected_features_ = None
         self.screening_stats_ = None
 
@@ -426,55 +418,29 @@ class ScreeningTransformer:
         if y is None:
             raise ValueError("y must be provided for screening")
 
-        import hashlib
+        import logging
 
         from ced_ml.features.screening import screen_proteins
+
+        logger = logging.getLogger(__name__)
 
         # Store all column names for reconstruction in transform()
         if isinstance(X, pd.DataFrame):
             self.all_feature_names_ = X.columns.tolist()
         else:
-            # X is numpy array from ColumnTransformer - we need actual feature names
-            # ScreeningTransformer should only be applied to protein columns
-            # For now, raise clear error if X is array (ScreeningTransformer expects DataFrame)
             raise TypeError(
                 "ScreeningTransformer expects DataFrame input. "
                 "It should be placed before ColumnTransformer in the pipeline, "
-                "not after. Current pipeline has ColumnTransformer → ScreeningTransformer "
+                "not after. Current pipeline has ColumnTransformer -> ScreeningTransformer "
                 "which is incompatible."
             )
 
         # Determine protein columns if not set
         if not self.protein_cols:
-            # Default: all numeric columns except likely metadata
             numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
             self.protein_cols = numeric_cols
 
-        # Check cache if enabled
-        cache_key = None
-        if self.enable_cache:
-            # Create cache key from data fingerprint + screening params
-            # Use sample IDs (index) + label distribution as fast hash
-            sample_hash = hashlib.md5(
-                str(X.index.tolist()).encode() + str(y.tolist()).encode()
-            ).hexdigest()
-            cache_key = (sample_hash, self.method, self.top_n)
-
-            if cache_key in ScreeningTransformer._screening_cache:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.debug(
-                    f"[CACHE HIT] Reusing screening results (method={self.method}, top_n={self.top_n})"
-                )
-                selected_prots, stats = ScreeningTransformer._screening_cache[cache_key]
-                self.selected_features_ = selected_prots
-                self.selected_proteins_ = selected_prots
-                self.screening_stats_ = stats
-                return self
-
-        # Screen proteins only (not metadata)
-        selected_prots, stats = screen_proteins(
+        selected_prots, stats, was_cached = screen_proteins(
             X_train=X,
             y_train=y,
             protein_cols=self.protein_cols,
@@ -482,13 +448,17 @@ class ScreeningTransformer:
             top_n=self.top_n,
         )
 
-        self.selected_features_ = selected_prots
-        self.selected_proteins_ = selected_prots  # Alias for backward compatibility
-        self.screening_stats_ = stats
+        # Use DEBUG logging for cached results to reduce noise in repeated CV folds
+        log_fn = logger.debug if was_cached else logger.info
+        log_fn(
+            f"Screening: {self.method} on {len(self.protein_cols)} proteins "
+            f"(N={len(X)}, top_n={self.top_n}) -> {len(selected_prots)} selected"
+            + (" [CACHED]" if was_cached else "")
+        )
 
-        # Cache results if enabled
-        if self.enable_cache and cache_key is not None:
-            ScreeningTransformer._screening_cache[cache_key] = (selected_prots, stats)
+        self.selected_features_ = selected_prots
+        self.selected_proteins_ = selected_prots
+        self.screening_stats_ = stats
 
         return self
 
@@ -516,14 +486,6 @@ class ScreeningTransformer:
         cols_to_keep = selected_proteins + non_protein_cols
 
         return X[cols_to_keep]
-
-    @classmethod
-    def clear_cache(cls):
-        """Clear the screening cache.
-
-        Useful for memory management in long-running processes.
-        """
-        cls._screening_cache.clear()
 
     def fit_transform(self, X: pd.DataFrame, y: np.ndarray = None) -> pd.DataFrame:
         """Fit and transform in one step."""

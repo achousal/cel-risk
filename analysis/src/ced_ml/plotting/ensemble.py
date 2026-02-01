@@ -117,9 +117,11 @@ def plot_meta_learner_weights(
     if meta_lines:
         from ced_ml.plotting.dca import apply_plot_metadata
 
-        apply_plot_metadata(fig, meta_lines)
+        bottom_margin = apply_plot_metadata(fig, meta_lines)
+        plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
+    else:
+        plt.tight_layout()
 
-    plt.tight_layout()
     fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Meta-learner weights plot saved: {out_path}")
@@ -263,9 +265,11 @@ def plot_model_comparison(
     if all_meta_lines:
         from ced_ml.plotting.dca import apply_plot_metadata
 
-        apply_plot_metadata(fig, all_meta_lines)
+        bottom_margin = apply_plot_metadata(fig, all_meta_lines)
+        plt.subplots_adjust(left=0.15, right=0.9, top=0.88, bottom=bottom_margin)
+    else:
+        plt.tight_layout()
 
-    plt.tight_layout()
     fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Model comparison plot saved: {out_path}")
@@ -369,8 +373,8 @@ def plot_aggregated_weights(
     # Apply metadata lines
     from ced_ml.plotting.dca import apply_plot_metadata
 
-    apply_plot_metadata(fig, all_meta_lines)
-    plt.tight_layout()
+    bottom_margin = apply_plot_metadata(fig, all_meta_lines)
+    plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
     fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
     logger.info(f"Aggregated weights plot saved: {out_path}")

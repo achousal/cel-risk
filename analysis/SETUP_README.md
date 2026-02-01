@@ -31,6 +31,8 @@ cd CeliacRisks/
 # 2. Install the package in your conda environment
 pip install -e analysis/
 
+conda activate ced_ml
+
 # 3. Verify installation
 ced --help
 
@@ -50,6 +52,8 @@ For HPC job submission with LSF (`bsub`):
 # 1. Run automated setup (creates venv, installs package)
 cd CeliacRisks/
 bash analysis/scripts/hpc_setup.sh
+
+source venv/bin/activate  # Required if using venv
 
 # 2. Edit HPC config with your HPC project allocation
 nano analysis/configs/pipeline_hpc.yaml

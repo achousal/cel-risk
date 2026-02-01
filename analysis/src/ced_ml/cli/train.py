@@ -1221,9 +1221,15 @@ def run_train(
 
                         xgb_spw = None
                         if config.model == ModelName.XGBoost:
-                            from ced_ml.models.training import _compute_xgb_scale_pos_weight
+                            from ced_ml.models.registry import compute_scale_pos_weight_from_y
 
-                            xgb_spw = _compute_xgb_scale_pos_weight(y_train, config)
+                            # Check if user specified explicit value via scale_pos_weight_grid
+                            spw_grid = getattr(config.xgboost, "scale_pos_weight_grid", None)
+                            if spw_grid and len(spw_grid) == 1 and spw_grid[0] > 0:
+                                xgb_spw = float(spw_grid[0])
+                            else:
+                                # Auto: compute from class distribution
+                                xgb_spw = compute_scale_pos_weight_from_y(y_train)
 
                         optuna_search = _build_hyperparameter_search(
                             optuna_pipeline, config.model, config, seed, xgb_spw, grid_rng=None
@@ -1962,7 +1968,7 @@ def run_train(
         screen_method = getattr(config.features, "screen_method", "none")
         if screen_method and screen_method != "none":
             # Compute screening stats once (will be reused for feature report below)
-            _, screening_stats = screen_proteins(
+            _, screening_stats, _ = screen_proteins(
                 X_train=X_train,
                 y_train=y_train,
                 protein_cols=protein_cols,

@@ -3,12 +3,12 @@
 _base: training_config.yaml
 
 cv:
-  folds: 3
+  folds: 2
   repeats: 2
   n_jobs: 1
 
 optuna:
-  n_trials: 10
+  n_trials: 2
   sampler: random
   pruner: hyperband
   pruner_n_startup_trials: 5

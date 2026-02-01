@@ -42,7 +42,7 @@ def test_screening_cache_basic(sample_data, fresh_cache):
     X, y, protein_cols = sample_data
 
     # First call - should be a miss
-    selected1, stats1 = screen_proteins(
+    selected1, stats1, _ = screen_proteins(
         X_train=X,
         y_train=y,
         protein_cols=protein_cols,
@@ -57,7 +57,7 @@ def test_screening_cache_basic(sample_data, fresh_cache):
     assert cache_stats["size"] == 1
 
     # Second call with same parameters - should be a hit
-    selected2, stats2 = screen_proteins(
+    selected2, stats2, _ = screen_proteins(
         X_train=X,
         y_train=y,
         protein_cols=protein_cols,
@@ -123,7 +123,7 @@ def test_screening_cache_disabled(sample_data, fresh_cache):
     X, y, protein_cols = sample_data
 
     # First call with cache disabled
-    selected1, stats1 = screen_proteins(
+    selected1, stats1, _ = screen_proteins(
         X, y, protein_cols, method="mannwhitney", top_n=20, use_cache=False
     )
 
@@ -133,7 +133,7 @@ def test_screening_cache_disabled(sample_data, fresh_cache):
     assert cache_stats["size"] == 0
 
     # Second call with cache disabled
-    selected2, stats2 = screen_proteins(
+    selected2, stats2, _ = screen_proteins(
         X, y, protein_cols, method="mannwhitney", top_n=20, use_cache=False
     )
 
@@ -191,7 +191,7 @@ def test_screening_cache_sequential_calls(sample_data, fresh_cache):
     # Make 5 sequential calls
     results = []
     for _ in range(5):
-        selected, stats = screen_proteins(
+        selected, stats, _ = screen_proteins(
             X, y, protein_cols, method="mannwhitney", top_n=20, use_cache=True
         )
         results.append((selected, stats))
@@ -215,7 +215,7 @@ def test_screening_cache_empty_data(fresh_cache):
     y = np.array([0, 1])
     protein_cols = []
 
-    selected, stats = screen_proteins(
+    selected, stats, _ = screen_proteins(
         X, y, protein_cols, method="mannwhitney", top_n=20, use_cache=True
     )
 
@@ -232,12 +232,12 @@ def test_screening_cache_top_n_zero(sample_data, fresh_cache):
     X, y, protein_cols = sample_data
 
     # First call with top_n=0
-    selected1, stats1 = screen_proteins(
+    selected1, stats1, _ = screen_proteins(
         X, y, protein_cols, method="mannwhitney", top_n=0, use_cache=True
     )
 
     # Second call should hit cache
-    selected2, stats2 = screen_proteins(
+    selected2, stats2, _ = screen_proteins(
         X, y, protein_cols, method="mannwhitney", top_n=0, use_cache=True
     )
 

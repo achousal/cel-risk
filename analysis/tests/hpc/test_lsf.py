@@ -162,3 +162,38 @@ def test_build_job_script_log_paths():
     assert "EXIT_CODE=$?" in script
     assert "rm -f" in script
     assert "[ ! -s" in script  # Check for empty file test
+
+
+def test_build_job_script_set_u_safe():
+    """Test that job script is safe with set -u (unbound variable checking).
+
+    Regression test for LSB_JOBID usage in cleanup section - must be properly
+    quoted to avoid "unbound variable" errors when set -u is enabled.
+    """
+    script = build_job_script(
+        job_name="test_job",
+        command="echo 'test'",
+        project="test_proj",
+        queue="test_queue",
+        cores=1,
+        mem_per_core=1000,
+        walltime="1:00",
+        env_activation="source /path/to/venv/bin/activate",
+        log_dir=Path("/tmp/logs"),
+    )
+
+    # Verify set -u is enabled
+    assert "set -euo pipefail" in script
+
+    # Verify LSB_JOBID is properly quoted with ${...} syntax in cleanup section
+    # This prevents "unbound variable" errors when LSB_JOBID is not set
+    assert '[ -n "${LSB_JOBID:-}"' in script
+    assert "${LSB_JOBID}.err" in script
+
+    # Ensure no raw $LSB_JOBID or $LSF_JOBID that could trigger set -u errors
+    lines = script.split("\n")
+    for i, line in enumerate(lines, 1):
+        # After "set -euo pipefail", all variable references must use ${...}
+        if i > 10 and ("LSB_JOBID" in line or "LSF_JOBID" in line):
+            # Must use ${VAR:-} or ${VAR} syntax, not $VAR
+            assert "${" in line, f"Line {i} has unquoted LSB_JOBID: {line}"

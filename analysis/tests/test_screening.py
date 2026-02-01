@@ -173,12 +173,12 @@ def test_screen_proteins_wrapper(sample_data):
     X, y, protein_cols = sample_data
 
     # Test Mann-Whitney
-    selected_mw, stats_mw = screen_proteins(X, y, protein_cols, method="mannwhitney", top_n=10)
+    selected_mw, stats_mw, _ = screen_proteins(X, y, protein_cols, method="mannwhitney", top_n=10)
     assert len(selected_mw) == 10
     assert "p_value" in stats_mw.columns
 
     # Test F-statistic
-    selected_f, stats_f = screen_proteins(X, y, protein_cols, method="f_classif", top_n=10)
+    selected_f, stats_f, _ = screen_proteins(X, y, protein_cols, method="f_classif", top_n=10)
     assert len(selected_f) == 10
     assert "F_score" in stats_f.columns
 
@@ -187,7 +187,7 @@ def test_screen_proteins_no_screening(sample_data):
     """Test screen_proteins with top_n=0 (returns all proteins with statistics)."""
     X, y, protein_cols = sample_data
 
-    selected, stats = screen_proteins(X, y, protein_cols, method="mannwhitney", top_n=0)
+    selected, stats, _ = screen_proteins(X, y, protein_cols, method="mannwhitney", top_n=0)
 
     # Should return all proteins (though may be reordered by p-value)
     assert set(selected) == set(protein_cols)
@@ -338,7 +338,7 @@ def test_screen_proteins_default_parameters():
     protein_cols = [col for col in X.columns if col.endswith("_resid")]
 
     # Default: mannwhitney, top_n=1000, min_n_per_group=10
-    selected, stats = screen_proteins(X, y, protein_cols)
+    selected, stats, _ = screen_proteins(X, y, protein_cols)
 
     assert len(selected) <= 2  # At most 2 proteins available
     assert "p_value" in stats.columns  # Mann-Whitney default

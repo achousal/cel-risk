@@ -167,9 +167,11 @@ export FORCE_COLOR=1
 
 # Clean up empty .err log if job succeeded
 EXIT_CODE=$?
-ERR_LOG="{log_dir}/{job_name}.$LSF_JOBID.err"
-if [ $EXIT_CODE -eq 0 ] && [ -f "$ERR_LOG" ] && [ ! -s "$ERR_LOG" ]; then
-    rm -f "$ERR_LOG"
+if [ $EXIT_CODE -eq 0 ] && [ -n "${{LSB_JOBID:-}}" ]; then
+    ERR_LOG="{log_dir}/{job_name}.${{LSB_JOBID}}.err"
+    if [ -f "$ERR_LOG" ] && [ ! -s "$ERR_LOG" ]; then
+        rm -f "$ERR_LOG"
+    fi
 fi
 
 exit $EXIT_CODE

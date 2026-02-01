@@ -25,10 +25,42 @@ class TestPlotParetoCurve:
     def test_basic_plot(self):
         """Basic Pareto curve plot generation."""
         curve = [
-            {"size": 100, "auroc_val": 0.89, "auroc_cv": 0.88, "auroc_cv_std": 0.02},
-            {"size": 50, "auroc_val": 0.87, "auroc_cv": 0.86, "auroc_cv_std": 0.03},
-            {"size": 25, "auroc_val": 0.82, "auroc_cv": 0.81, "auroc_cv_std": 0.04},
-            {"size": 10, "auroc_val": 0.75, "auroc_cv": 0.74, "auroc_cv_std": 0.05},
+            {
+                "size": 100,
+                "auroc_val": 0.89,
+                "auroc_cv": 0.88,
+                "auroc_cv_std": 0.02,
+                "auroc_val_std": 0.025,
+                "auroc_val_ci_low": 0.841,
+                "auroc_val_ci_high": 0.939,
+            },
+            {
+                "size": 50,
+                "auroc_val": 0.87,
+                "auroc_cv": 0.86,
+                "auroc_cv_std": 0.03,
+                "auroc_val_std": 0.035,
+                "auroc_val_ci_low": 0.801,
+                "auroc_val_ci_high": 0.939,
+            },
+            {
+                "size": 25,
+                "auroc_val": 0.82,
+                "auroc_cv": 0.81,
+                "auroc_cv_std": 0.04,
+                "auroc_val_std": 0.045,
+                "auroc_val_ci_low": 0.732,
+                "auroc_val_ci_high": 0.908,
+            },
+            {
+                "size": 10,
+                "auroc_val": 0.75,
+                "auroc_cv": 0.74,
+                "auroc_cv_std": 0.05,
+                "auroc_val_std": 0.055,
+                "auroc_val_ci_low": 0.642,
+                "auroc_val_ci_high": 0.858,
+            },
         ]
         recommended = {
             "min_size_95pct": 50,
@@ -65,7 +97,13 @@ class TestPlotParetoCurve:
         """Custom threshold annotations work."""
         curve = [
             {"size": 50, "auroc_val": 0.90, "auroc_cv": 0.89, "auroc_cv_std": 0.01},
-            {"size": 25, "auroc_val": 0.85, "auroc_cv": 0.84, "auroc_cv_std": 0.02},
+            {
+                "size": 25,
+                "auroc_val": 0.85,
+                "auroc_cv": 0.84,
+                "auroc_cv_std": 0.02,
+                "auroc_val_std": 0.025,
+            },
         ]
         recommended = {"min_size_95pct": 50, "min_size_85pct": 25}
 
@@ -105,8 +143,20 @@ class TestPlotParetoCurve:
     def test_confidence_intervals_hidden(self):
         """Confidence intervals can be disabled with show_ci=False."""
         curve = [
-            {"size": 50, "auroc_val": 0.90, "auroc_cv": 0.89, "auroc_cv_std": 0.02},
-            {"size": 25, "auroc_val": 0.85, "auroc_cv": 0.84, "auroc_cv_std": 0.03},
+            {
+                "size": 50,
+                "auroc_val": 0.90,
+                "auroc_cv": 0.89,
+                "auroc_cv_std": 0.02,
+                "auroc_val_std": 0.025,
+            },
+            {
+                "size": 25,
+                "auroc_val": 0.85,
+                "auroc_cv": 0.84,
+                "auroc_cv_std": 0.03,
+                "auroc_val_std": 0.035,
+            },
         ]
         recommended = {"min_size_95pct": 50}
 
@@ -323,8 +373,20 @@ class TestPlottingIntegration:
     def test_all_plots_together(self):
         """Generate all plot types in one test."""
         curve = [
-            {"size": 20, "auroc_val": 0.88, "auroc_cv": 0.87, "auroc_cv_std": 0.02},
-            {"size": 10, "auroc_val": 0.82, "auroc_cv": 0.81, "auroc_cv_std": 0.03},
+            {
+                "size": 20,
+                "auroc_val": 0.88,
+                "auroc_cv": 0.87,
+                "auroc_cv_std": 0.02,
+                "auroc_val_std": 0.025,
+            },
+            {
+                "size": 10,
+                "auroc_val": 0.82,
+                "auroc_cv": 0.81,
+                "auroc_cv_std": 0.03,
+                "auroc_val_std": 0.035,
+            },
         ]
         recommended = {"min_size_95pct": 20, "knee_point": 15}
         feature_ranking = {f"PROT_{i}": i for i in range(20)}

@@ -14,7 +14,7 @@
 stability_threshold: 0.5    # Minimum selection fraction for stable proteins (default: 0.75)
 min_size: 5                  # Minimum panel size to evaluate (default: 5)
 min_auroc_frac: 0.5         # Early stop if AUROC < this fraction of max (default: 0.90)
-cv_folds: 5                  # CV folds for OOF AUROC estimation (default: 5)
+cv_folds: 0                  # CV folds for OOF AUROC (default: 0 = skip, validation-only)
 step_strategy: fine          # Feature elimination: geometric, linear, fine (default: geometric)
 
 # ==============================================================================
