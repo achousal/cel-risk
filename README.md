@@ -55,14 +55,13 @@ bjobs -w | grep CeD_
 ---
 
 ### 1. Run the Full Pipeline (Local)
-Run the complete pipeline on your machine with a single command:
 
 ```bash
 cd CeliacRiskML/
 ced run-pipeline
 ```
 
-**What happens:** Auto-discovers data, trains 4 models (LR_EN, RF, LinSVM_cal, XGBoost) across splits with nested CV, hyperparameter tuning, calibration, ensemble, and panel optimization. Results in `results/`.
+**What happens:** Trains 4 models (LR_EN, RF, LinSVM_cal, XGBoost) across splits with nested CV, hyperparameter tuning, calibration, ensemble, and panel optimization. Results in `results/`.
 
 ### 2. Run the Full Pipeline (HPC)
 Submit batch jobs with automated resource management and dependency chains:

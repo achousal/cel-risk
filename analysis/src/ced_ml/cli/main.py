@@ -954,8 +954,8 @@ def optimize_panel(ctx, config, **kwargs):
             click.echo(f"Optimizing panel for: {model_name}")
             click.echo(f"{'='*70}\n")
 
-            # Default n_jobs: -1 on HPC (via config), 1 locally
-            n_jobs = kwargs.get("n_jobs") or config_params.get("n_jobs_hpc", 1)
+            # Default n_jobs: -1 on HPC (via config), -1 locally (all CPUs)
+            n_jobs = kwargs.get("n_jobs") or config_params.get("n_jobs_hpc", -1)
 
             run_optimize_panel_aggregated(
                 results_dir=results_dir,

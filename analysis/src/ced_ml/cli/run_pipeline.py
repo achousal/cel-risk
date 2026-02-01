@@ -752,6 +752,7 @@ def run_pipeline(
                 step_strategy="geometric",
                 outdir=None,
                 log_level=log_level,
+                n_jobs=-1,
             )
 
     # Step 7: Generate consensus panel (if enabled)
