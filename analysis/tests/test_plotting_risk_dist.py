@@ -195,7 +195,7 @@ class TestPlotRiskDistribution:
             out_path=out_path,
             title="Thresholds",
             dca_threshold=0.15,
-            spec95_threshold=0.25,
+            spec_target_threshold=0.25,
             youden_threshold=0.35,
         )
 
@@ -220,7 +220,7 @@ class TestPlotRiskDistribution:
             out_path=out_path,
             title="Threshold Metrics",
             dca_threshold=0.15,
-            spec95_threshold=0.25,
+            spec_target_threshold=0.25,
             youden_threshold=0.35,
             metrics_at_thresholds=metrics_at_thresholds,
         )
@@ -309,7 +309,7 @@ class TestPlotRiskDistribution:
             scores=scores,
             out_path=out_path,
             title="Custom Target Spec",
-            spec95_threshold=0.25,
+            spec_target_threshold=0.25,
             target_spec=0.99,
         )
 
@@ -358,7 +358,7 @@ class TestPlotRiskDistribution:
             out_path=out_path,
             title="Invalid Thresholds",
             dca_threshold=1.5,  # Invalid
-            spec95_threshold=-0.1,  # Invalid
+            spec_target_threshold=-0.1,  # Invalid
             youden_threshold=0.35,  # Valid
         )
 

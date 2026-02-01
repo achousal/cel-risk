@@ -65,7 +65,7 @@ def simple_pipeline():
         remainder="drop",
     )
 
-    clf = LogisticRegression(penalty="elasticnet", solver="saga", random_state=42, max_iter=100)
+    clf = LogisticRegression(l1_ratio=0.5, solver="saga", random_state=42, max_iter=100)
 
     return Pipeline([("pre", preprocessor), ("clf", clf)])
 

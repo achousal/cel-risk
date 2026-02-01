@@ -54,17 +54,17 @@ COLOR_FILL_ALPHA = 0.2
 ALPHA_CI = 0.15
 ALPHA_SD = 0.30
 
-# -- Ensemble / bar chart palette  --
-COLOR_BAR_POSITIVE = "lightseagreen"
-COLOR_BAR_NEGATIVE = "tomato"
-COLOR_BAR_PALETTE = ["darkslategray", "lightseagreen", "burlywood", "sandybrown", "tomato"]
+# -- Ensemble / bar chart palette --
+COLOR_BAR_POSITIVE = "#2a9d8f"
+COLOR_BAR_NEGATIVE = "#e76f51"
+COLOR_BAR_PALETTE = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"]
 
 # -- Panel curve / Pareto plot colors --
-COLOR_PARETO_MAIN = "royalblue"
-COLOR_PARETO_CV = "slategray"
-COLOR_THRESHOLD_GREEN = "mediumseagreen"
-COLOR_THRESHOLD_AMBER = "orange"
-COLOR_THRESHOLD_RED = "tomato"
+COLOR_PARETO_MAIN = "#2563eb"
+COLOR_PARETO_CV = "#64748b"
+COLOR_THRESHOLD_GREEN = "#10b981"
+COLOR_THRESHOLD_AMBER = "#f59e0b"
+COLOR_THRESHOLD_RED = "#ef4444"
 
 # -- Line width (secondary) --
 LW_SECONDARY = 1.5

@@ -126,33 +126,49 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
         self._feature_names: list[str] = []
 
     def _build_meta_estimator(self) -> LogisticRegression:
-        """Build the LogisticRegression meta-learner with valid sklearn settings."""
+        """Build the LogisticRegression meta-learner with valid sklearn settings.
+
+        sklearn >= 1.8 deprecates the ``penalty`` parameter. We use
+        ``l1_ratio`` and ``C`` instead:
+          l1_ratio=0 -> L2, l1_ratio=1 -> L1, l1_ratio=0.5 -> elasticnet,
+          C=np.inf -> no penalty.
+        """
         penalty = None if self.meta_penalty in (None, "none") else self.meta_penalty
         if penalty not in {"l1", "l2", "elasticnet", None}:
             penalty = "l2"
 
+        # Map penalty string to l1_ratio / C for sklearn >= 1.8
+        if penalty is None:
+            l1_ratio = 0.0
+            C = np.inf
+        elif penalty == "l1":
+            l1_ratio = 1.0
+            C = self.meta_C
+        elif penalty == "elasticnet":
+            l1_ratio = 0.5
+            C = self.meta_C
+        else:  # l2
+            l1_ratio = 0.0
+            C = self.meta_C
+
         solver = self.meta_solver
-        if penalty == "l1":
+        if l1_ratio == 1.0:
             if solver not in {"saga", "liblinear"}:
                 solver = "saga"
-        elif penalty == "elasticnet":
+        elif l1_ratio == 0.5:
             solver = "saga"
-        elif penalty is None:
+        elif C == np.inf:
             if solver == "liblinear":
                 solver = "lbfgs"
 
-        kwargs: dict[str, Any] = {
-            "penalty": penalty,
-            "C": self.meta_C if penalty is not None else 1.0,
-            "max_iter": self.meta_max_iter,
-            "solver": solver,
-            "random_state": self.random_state,
-            "class_weight": "balanced",
-        }
-        if penalty == "elasticnet":
-            kwargs["l1_ratio"] = 0.5
-
-        return LogisticRegression(**kwargs)
+        return LogisticRegression(
+            l1_ratio=l1_ratio,
+            C=C,
+            max_iter=self.meta_max_iter,
+            solver=solver,
+            random_state=self.random_state,
+            class_weight="balanced",
+        )
 
     def _build_meta_features(
         self,

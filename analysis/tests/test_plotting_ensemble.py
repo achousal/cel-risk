@@ -101,9 +101,9 @@ class TestPlotModelComparison:
     def test_basic_comparison(self, tmp_path):
         """Grouped bar chart with multiple models."""
         metrics = {
-            "LR_EN": {"AUROC": 0.89, "PR_AUC": 0.30, "Brier": 0.012},
-            "RF": {"AUROC": 0.87, "PR_AUC": 0.28, "Brier": 0.013},
-            "ENSEMBLE": {"AUROC": 0.91, "PR_AUC": 0.33, "Brier": 0.011},
+            "LR_EN": {"auroc": 0.89, "prauc": 0.30, "brier": 0.012},
+            "RF": {"auroc": 0.87, "prauc": 0.28, "brier": 0.013},
+            "ENSEMBLE": {"auroc": 0.91, "prauc": 0.33, "brier": 0.011},
         }
         out_path = tmp_path / "comparison.png"
 
@@ -115,8 +115,8 @@ class TestPlotModelComparison:
     def test_highlight_ensemble(self, tmp_path):
         """ENSEMBLE bar has distinct visual treatment."""
         metrics = {
-            "LR_EN": {"AUROC": 0.85, "PR_AUC": 0.25, "Brier": 0.015},
-            "ENSEMBLE": {"AUROC": 0.88, "PR_AUC": 0.28, "Brier": 0.013},
+            "LR_EN": {"auroc": 0.85, "prauc": 0.25, "brier": 0.015},
+            "ENSEMBLE": {"auroc": 0.88, "prauc": 0.28, "brier": 0.013},
         }
         out_path = tmp_path / "comparison_highlight.png"
 
@@ -127,18 +127,18 @@ class TestPlotModelComparison:
     def test_custom_metric_names(self, tmp_path):
         """Can specify a subset of metrics to display."""
         metrics = {
-            "LR_EN": {"AUROC": 0.89, "PR_AUC": 0.30, "Brier": 0.012},
-            "ENSEMBLE": {"AUROC": 0.91, "PR_AUC": 0.33, "Brier": 0.011},
+            "LR_EN": {"auroc": 0.89, "prauc": 0.30, "brier": 0.012},
+            "ENSEMBLE": {"auroc": 0.91, "prauc": 0.33, "brier": 0.011},
         }
         out_path = tmp_path / "comparison_custom.png"
 
-        plot_model_comparison(metrics, out_path, metric_names=["AUROC", "Brier"])
+        plot_model_comparison(metrics, out_path, metric_names=["auroc", "brier"])
 
         assert out_path.exists()
 
     def test_single_model_skips(self, tmp_path):
         """Does not create a plot with fewer than 2 models."""
-        metrics = {"LR_EN": {"AUROC": 0.89}}
+        metrics = {"LR_EN": {"auroc": 0.89}}
         out_path = tmp_path / "comparison_single.png"
 
         plot_model_comparison(metrics, out_path)
@@ -156,8 +156,8 @@ class TestPlotModelComparison:
     def test_partial_metrics(self, tmp_path):
         """Handles models with missing metric keys."""
         metrics = {
-            "LR_EN": {"AUROC": 0.89, "PR_AUC": 0.30},
-            "ENSEMBLE": {"AUROC": 0.91, "Brier": 0.011},
+            "LR_EN": {"auroc": 0.89, "prauc": 0.30},
+            "ENSEMBLE": {"auroc": 0.91, "brier": 0.011},
         }
         out_path = tmp_path / "comparison_partial.png"
 
@@ -168,8 +168,8 @@ class TestPlotModelComparison:
     def test_with_meta_lines(self, tmp_path):
         """Metadata lines are applied without error."""
         metrics = {
-            "LR_EN": {"AUROC": 0.89, "PR_AUC": 0.30, "Brier": 0.012},
-            "RF": {"AUROC": 0.87, "PR_AUC": 0.28, "Brier": 0.013},
+            "LR_EN": {"auroc": 0.89, "prauc": 0.30, "brier": 0.012},
+            "RF": {"auroc": 0.87, "prauc": 0.28, "brier": 0.013},
         }
         out_path = tmp_path / "comparison_meta.png"
 
@@ -181,9 +181,9 @@ class TestPlotModelComparison:
         """Handles many models without layout issues."""
         metrics = {
             f"Model_{i}": {
-                "AUROC": 0.80 + i * 0.01,
-                "PR_AUC": 0.20 + i * 0.01,
-                "Brier": 0.015 - i * 0.001,
+                "auroc": 0.80 + i * 0.01,
+                "prauc": 0.20 + i * 0.01,
+                "brier": 0.015 - i * 0.001,
             }
             for i in range(6)
         }

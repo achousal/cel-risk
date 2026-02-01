@@ -26,9 +26,9 @@ def _make_lr_selector(random_state: int = 42):
     from sklearn.linear_model import LogisticRegression
 
     return LogisticRegression(
-        penalty="l1",
         solver="saga",
         C=1.0,
+        l1_ratio=1.0,
         max_iter=2000,  # Higher than registry default (1000) for feature selection stability
         class_weight="balanced",
         random_state=random_state,

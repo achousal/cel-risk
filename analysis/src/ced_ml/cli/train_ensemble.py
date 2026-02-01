@@ -943,9 +943,11 @@ def run_train_ensemble(
                     (
                         "meta_learner",
                         LogisticRegression(
-                            penalty=meta_penalty,
-                            C=meta_c,
-                            solver="lbfgs",
+                            l1_ratio={"l1": 1.0, "l2": 0.0, "elasticnet": 0.5, None: 0.0}.get(
+                                meta_penalty, 0.0
+                            ),
+                            C=np.inf if meta_penalty is None else meta_c,
+                            solver="saga" if meta_penalty in ("l1", "elasticnet") else "lbfgs",
                             max_iter=1000,
                             random_state=random_state,
                             class_weight="balanced" if y_meta.mean() < 0.1 else None,
