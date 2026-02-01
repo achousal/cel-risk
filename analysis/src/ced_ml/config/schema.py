@@ -585,6 +585,9 @@ class OutputConfig(BaseModel):
     plot_learning_curve: bool = True
     plot_oof_combined: bool = True
     plot_optuna: bool = True
+    optuna_plot_format: str = (
+        "html"  # Optuna plot format: "html" (default, HPC-safe) or "png"/"pdf" (requires Kaleido/Chrome)
+    )
 
 
 # ============================================================================

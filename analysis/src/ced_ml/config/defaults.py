@@ -105,6 +105,7 @@ DEFAULT_OUTPUT_CONFIG: dict[str, Any] = {
     "save_plots": True,
     "plot_format": "png",
     "plot_dpi": 300,
+    "optuna_plot_format": "html",
 }
 
 # Default strictness configuration

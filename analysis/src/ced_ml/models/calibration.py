@@ -102,7 +102,7 @@ def calibration_intercept_slope(y_true: np.ndarray, p: np.ndarray) -> Calibratio
     if len(np.unique(y)) < 2:
         return CalibrationMetrics(intercept=np.nan, slope=np.nan)
 
-    # Fit logistic regression on log-odds
+    # Fit logistic regression on log-odds (no regularization)
     lr = LogisticRegression(C=np.inf, solver="lbfgs", max_iter=1000)
     lr.fit(log_odds.reshape(-1, 1), y)
     return CalibrationMetrics(
@@ -326,7 +326,7 @@ class OOFCalibrator:
             n_bins = len(np.unique(self.calibrator_.f_))
             logger.info(f"OOF calibration ({self.method}, {n_bins} bins)")
         else:
-            # Sigmoid (Platt scaling) via logistic regression on log-odds
+            # Sigmoid (Platt scaling) via logistic regression on log-odds (no regularization)
             log_odds = logit(oof_clean)
             self.calibrator_ = LogisticRegression(C=np.inf, solver="lbfgs", max_iter=1000)
             self.calibrator_.fit(log_odds.reshape(-1, 1), y_clean)

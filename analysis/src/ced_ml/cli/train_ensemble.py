@@ -938,20 +938,30 @@ def run_train_ensemble(
             from sklearn.linear_model import LogisticRegression
             from sklearn.pipeline import Pipeline
 
+            # Build meta-learner parameters (sklearn 1.8+ compatible)
+            meta_lr_params = {
+                "solver": "saga" if meta_penalty in ("l1", "elasticnet") else "lbfgs",
+                "max_iter": 1000,
+                "random_state": random_state,
+                "class_weight": "balanced" if y_meta.mean() < 0.1 else None,
+            }
+
+            # Handle penalty and regularization
+            if meta_penalty is None:
+                # No regularization: just set C very large, don't set l1_ratio
+                meta_lr_params["C"] = np.inf
+            else:
+                # With regularization: set C and l1_ratio
+                meta_lr_params["C"] = meta_c
+                meta_lr_params["l1_ratio"] = {"l1": 1.0, "l2": 0.0, "elasticnet": 0.5}.get(
+                    meta_penalty, 0.0
+                )
+
             meta_pipeline = Pipeline(
                 [
                     (
                         "meta_learner",
-                        LogisticRegression(
-                            l1_ratio={"l1": 1.0, "l2": 0.0, "elasticnet": 0.5, None: 0.0}.get(
-                                meta_penalty, 0.0
-                            ),
-                            C=np.inf if meta_penalty is None else meta_c,
-                            solver="saga" if meta_penalty in ("l1", "elasticnet") else "lbfgs",
-                            max_iter=1000,
-                            random_state=random_state,
-                            class_weight="balanced" if y_meta.mean() < 0.1 else None,
-                        ),
+                        LogisticRegression(**meta_lr_params),
                     )
                 ]
             )

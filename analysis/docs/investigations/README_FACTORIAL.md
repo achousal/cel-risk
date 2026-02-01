@@ -36,42 +36,73 @@ For each seed, the same shuffled pools are used. Cells take **prefixes** from th
 
 ## Usage
 
-### Step 1: Tune baseline hyperparams
+### Option 1: Complete workflow (RECOMMENDED)
+
+Run all three steps (tune, experiment, analyze) with a single command:
+
+```bash
+python run_factorial_complete.py \
+    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path ../../../data/fixed_panel.csv \
+    --output-dir ../../../results/factorial_2x2x2 \
+    --n-seeds 10
+```
+
+This will:
+1. Tune baseline hyperparameters via Optuna (if `frozen_hyperparams.yaml` doesn't exist)
+2. Run the full factorial experiment (160 runs with default settings)
+3. Analyze results and generate all visualizations
+
+Optional flags:
+- `--models LR_EN XGBoost` -- models to run (default: both)
+- `--skip-tuning` -- skip tuning if hyperparams already exist (requires `--hyperparams-path`)
+- `--hyperparams-path PATH` -- use existing hyperparameters
+- `--top-k K` -- number of top features for Jaccard overlap analysis (default: 15)
+
+### Option 2: Individual steps (for debugging or customization)
+
+#### Step 1: Tune baseline hyperparams
 
 ```bash
 python run_factorial_2x2x2.py \
-    --data-path ../../data/Celiac_dataset_proteomics_w_demo.parquet \
-    --panel-path ../../data/fixed_panel.csv \
-    --output-dir ../../results/factorial_2x2x2 \
+    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path ../../../data/fixed_panel.csv \
+    --output-dir ../../../results/factorial_2x2x2 \
     --tune-baseline
 ```
 
 Saves `frozen_hyperparams.yaml` via Optuna (50 trials per model).
 
-### Step 2: Run experiment
+#### Step 2: Run experiment
 
 ```bash
 python run_factorial_2x2x2.py \
-    --data-path ../../data/Celiac_dataset_proteomics_w_demo.parquet \
-    --panel-path ../../data/fixed_panel.csv \
-    --output-dir ../../results/factorial_2x2x2 \
-    --hyperparams-path ../../results/factorial_2x2x2/frozen_hyperparams.yaml \
+    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path ../../../data/fixed_panel.csv \
+    --output-dir ../../../results/factorial_2x2x2 \
+    --hyperparams-path ../../../results/factorial_2x2x2/frozen_hyperparams.yaml \
     --n-seeds 10
 ```
 
 Outputs `factorial_results.csv` (one row per seed x cell x model) and `feature_importances.csv` (one row per seed x cell x model x feature).
 
-### Step 3: Analyze
+#### Step 3: Analyze and visualize
 
 ```bash
 python analyze_factorial_2x2x2.py \
-    --results ../../results/factorial_2x2x2/factorial_results.csv \
+    --results ../../../results/factorial_2x2x2/factorial_results.csv \
     --top-k 15
 ```
+
+Generates:
+- CSV summaries: `main_effects.csv`, `interactions.csv`, `feature_jaccard.csv`
+- Visualizations: `main_effects_{model}.png`, `interactions_{model}.png`, `score_distributions_{model}.png`, `cell_means_{model}.png`, `jaccard_heatmap_{model}.png`
+- Markdown reports: `summary_{model}.md`, `feature_overlap.md`
 
 Optional flags:
 - `--feature-importances PATH` -- override path to `feature_importances.csv` (default: sibling of results file)
 - `--top-k K` -- number of top features for Jaccard overlap analysis (default: 15)
+- `--output-dir DIR` -- override output directory (default: `analysis/` subdirectory)
 
 ## Sampling Procedure
 

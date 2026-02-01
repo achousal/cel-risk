@@ -23,6 +23,7 @@ from .style import (
     FONT_LABEL,
     FONT_LEGEND,
     FONT_TITLE,
+    PAD_INCHES,
     configure_backend,
 )
 
@@ -374,8 +375,10 @@ def plot_aggregated_weights(
     from ced_ml.plotting.dca import apply_plot_metadata
 
     bottom_margin = apply_plot_metadata(fig, all_meta_lines)
+    # Add extra breathing room for x-axis labels/ticks to avoid metadata overlap.
+    bottom_margin = min(bottom_margin + 0.04, 0.35)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
+    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close(fig)
     logger.info(f"Aggregated weights plot saved: {out_path}")
 

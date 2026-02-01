@@ -1249,11 +1249,16 @@ def run_train(
 
                     # Generate plots if we have a study
                     if study is not None:
+                        # Use optuna_plot_format if available, otherwise fall back to plot_format
+                        optuna_fmt = getattr(
+                            config.output, "optuna_plot_format", config.output.plot_format
+                        )
                         save_optuna_plots(
                             study=study,
                             out_dir=cv_dir,
                             prefix=f"{config.model}__",
-                            plot_format=config.output.plot_format,
+                            plot_format=optuna_fmt,
+                            fallback_to_html=True,
                         )
                         logger.info(f"Optuna plots saved to: {cv_dir}")
 

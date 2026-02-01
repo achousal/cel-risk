@@ -105,9 +105,9 @@ class TestMakeStrata:
             }
         )
         strata = make_strata(df, "outcome+sex")
-        # astype(str) converts None to "None" before fillna can replace it
-        assert strata[0] == "None_Male"
-        assert strata[1] == "Incident_None"
+        # Missing outcomes become "UnknownOutcome", missing sex becomes "UnknownSex"
+        assert strata[0] == "UnknownOutcome_Male"
+        assert strata[1] == "Incident_UnknownSex"
 
     def test_invalid_scheme_raises(self):
         """Should raise for unknown scheme."""

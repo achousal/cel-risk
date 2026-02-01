@@ -219,7 +219,6 @@ def _default_hyperparams() -> dict:
             "min_child_weight": 1,
             "reg_alpha": 0.0,
             "reg_lambda": 1.0,
-            "use_label_encoder": False,
             "eval_metric": "logloss",
         },
     }
@@ -305,7 +304,6 @@ def tune_baseline(
             "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
             "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-            "use_label_encoder": False,
             "eval_metric": "logloss",
         }
         pipe = Pipeline([
@@ -318,7 +316,7 @@ def tune_baseline(
     study_xgb = optuna.create_study(direction="maximize")
     study_xgb.optimize(xgb_objective, n_trials=50, show_progress_bar=True)
     best_xgb = study_xgb.best_params
-    best_xgb.update({"use_label_encoder": False, "eval_metric": "logloss"})
+    best_xgb.update({"eval_metric": "logloss"})
     tuned["XGBoost"] = best_xgb
     logger.info("XGBoost best AUROC=%.4f, params=%s", study_xgb.best_value, best_xgb)
 

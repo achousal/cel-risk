@@ -889,7 +889,10 @@ def _plot_logit_calibration_panel(
 
 def _apply_plot_metadata(fig, meta_lines: Sequence[str] | None = None) -> float:
     """
-    Apply metadata text to bottom of figure, return required bottom margin.
+    Calculate bottom margin for metadata text.
+
+    This function calculates the required bottom margin based on the number of metadata
+    lines. Must be called BEFORE plt.subplots_adjust().
 
     Args:
         fig: matplotlib figure object
@@ -902,13 +905,41 @@ def _apply_plot_metadata(fig, meta_lines: Sequence[str] | None = None) -> float:
     if not lines:
         return 0.12  # Default minimum bottom margin
 
-    # Position metadata at very bottom with fixed offset from edge
-    fig.text(0.5, 0.005, "\n".join(lines), ha="center", va="bottom", fontsize=8, wrap=True)
-
     # Calculate required bottom margin: base + space per line
     # Increased spacing for better separation between metadata and figures
     required_bottom = 0.12 + (0.022 * len(lines))
     return min(required_bottom, 0.30)  # Cap at 30% to avoid excessive margin
+
+
+def _add_metadata_text(fig, meta_lines: Sequence[str] | None, bottom_margin: float) -> None:
+    """
+    Add metadata text to figure in the bottom margin.
+
+    MUST be called AFTER plt.subplots_adjust() to position text correctly.
+
+    Args:
+        fig: matplotlib figure object
+        meta_lines: sequence of metadata strings to display
+        bottom_margin: the bottom margin value used in subplots_adjust()
+    """
+    if not meta_lines:
+        return
+
+    lines = [str(line) for line in meta_lines if line]
+    if not lines:
+        return
+
+    # Position text in center of bottom margin (halfway between 0 and bottom_margin)
+    y_pos = bottom_margin / 2
+    fig.text(
+        0.5,
+        y_pos,
+        "\n".join(lines),
+        ha="center",
+        va="center",
+        fontsize=8,
+        transform=fig.transFigure,
+    )
 
 
 def plot_calibration_curve(
@@ -1094,6 +1125,7 @@ def plot_calibration_curve(
     bottom_margin = _apply_plot_metadata(fig, meta_lines)
     # Increase right margin to accommodate size legend in uniform binning panels
     plt.subplots_adjust(left=0.10, right=0.88, top=0.92, bottom=bottom_margin)
+    _add_metadata_text(fig, meta_lines, bottom_margin)
 
     # Save figure
     out_path = Path(out_path)

@@ -82,15 +82,15 @@ def make_strata(
         KeyError: If required columns are missing for the scheme
         ValueError: If scheme is unknown
     """
-    outcome = df[TARGET_COL].astype(str).fillna("UnknownOutcome")
+    outcome = df[TARGET_COL].fillna("UnknownOutcome").astype(str)
 
     if scheme == "outcome+sex+age3":
-        sex = df[sex_col].astype(str).fillna("UnknownSex")
+        sex = df[sex_col].fillna("UnknownSex").astype(str)
         ageb = age_bins(df[age_col], "age3")
         return (outcome + "_" + sex + "_" + ageb).astype(str)
 
     if scheme == "outcome+sex+age2":
-        sex = df[sex_col].astype(str).fillna("UnknownSex")
+        sex = df[sex_col].fillna("UnknownSex").astype(str)
         ageb = age_bins(df[age_col], "age2")
         return (outcome + "_" + sex + "_" + ageb).astype(str)
 
@@ -99,7 +99,7 @@ def make_strata(
         return (outcome + "_" + ageb).astype(str)
 
     if scheme == "outcome+sex":
-        sex = df[sex_col].astype(str).fillna("UnknownSex")
+        sex = df[sex_col].fillna("UnknownSex").astype(str)
         return (outcome + "_" + sex).astype(str)
 
     if scheme == "outcome":
@@ -125,7 +125,7 @@ def collapse_rare_strata(df: pd.DataFrame, strata: pd.Series, min_count: int) ->
     if not rare:
         return strata
 
-    outcome = df[TARGET_COL].astype(str).fillna("UnknownOutcome")
+    outcome = df[TARGET_COL].fillna("UnknownOutcome").astype(str)
     collapsed = strata.copy()
     mask_rare = collapsed.isin(rare)
     collapsed.loc[mask_rare] = outcome.loc[mask_rare] + "_RARE"

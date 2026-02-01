@@ -349,6 +349,16 @@ def oof_predictions_with_nested_cv(
 
                 # Clone the pipeline and retrain on RFECV features
                 pipeline_rfecv = clone(search.best_estimator_)
+
+                # Update screener's protein_cols to match RFECV-selected proteins
+                # (the original screener expects all protein_cols, but X_train_rfecv
+                # only contains the RFECV-selected subset)
+                if (
+                    hasattr(pipeline_rfecv, "named_steps")
+                    and "screen" in pipeline_rfecv.named_steps
+                ):
+                    pipeline_rfecv.named_steps["screen"].protein_cols = selected_proteins
+
                 pipeline_rfecv.fit(X_train_rfecv, y_train_rfecv)
 
                 # Apply calibration if needed
