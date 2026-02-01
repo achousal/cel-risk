@@ -41,7 +41,7 @@ ced run-pipeline
 cd CeliacRiskML/
 bash analysis/scripts/hpc_setup.sh
 
-source venv/bin/activate  # Required if using venv
+source analysis/venv/bin/activate  # Required if using venv
 
 # Submit pipeline with LSF job dependency chains
 ced run-pipeline --hpc

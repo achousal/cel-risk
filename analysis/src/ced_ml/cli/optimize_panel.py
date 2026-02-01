@@ -184,49 +184,20 @@ def run_optimize_panel(
         FileNotFoundError: If model or data files not found.
         ValueError: If required data is missing from model bundle.
     """
-    # Setup logging to file and console
+    # Setup logging via centralized utility
     if log_level is None:
         log_level = logging.INFO
 
-    # Use unique logger per model to avoid handler accumulation in batch mode
-    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    logger_name = f"{__name__}.{model_path.replace('/', '_')}_{timestamp}"
-    logger = logging.getLogger(logger_name)
-    logger.setLevel(log_level)
-    logger.propagate = False  # Prevent propagation to root logger
+    from ced_ml.utils.logging import auto_log_path, setup_logger
 
-    # Create logs/features directory at root level (parallel to results/)
-    from ced_ml.utils.paths import get_project_root
+    # Derive run_id from model_path (pattern: .../run_{ID}/...)
+    _run_id = None
+    for parent in Path(model_path).resolve().parents:
+        if parent.name.startswith("run_"):
+            _run_id = parent.name[4:]
+            break
 
-    log_dir = get_project_root() / "logs" / "features"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Timestamped log file
-    log_file = log_dir / f"optimize_panel_{timestamp}.log"
-
-    # File handler
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(log_level)
-    file_formatter = logging.Formatter(
-        "[%(asctime)s] %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(log_level)
-    console_formatter = logging.Formatter("%(levelname)s - %(message)s")
-    console_handler.setFormatter(console_formatter)
-
-    # Always add handlers (unique logger per invocation)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    logger.info(f"Panel optimization started at {log_file}")
-    logger.info(f"Loading model from {model_path}")
-
-    # Load model bundle
+    # Load model bundle early (needed for logger naming and avoids double-load)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model not found: {model_path}")
 
@@ -236,6 +207,23 @@ def run_optimize_panel(
         raise ValueError("Model bundle must be a dictionary (not bare model)")
 
     model_name = bundle.get("model_name", "unknown")
+
+    log_file = auto_log_path(
+        command="optimize-panel",
+        outdir=Path(model_path).resolve().parent,
+        run_id=_run_id,
+        model=model_name,
+        split_seed=split_seed,
+    )
+    logger = setup_logger(
+        f"ced_ml.optimize_panel.{model_name}_{split_seed}",
+        level=log_level,
+        log_file=log_file,
+    )
+
+    logger.info(f"Panel optimization started at {log_file}")
+    logger.info(f"Loading model from {model_path}")
+
     pipeline = bundle.get("model")
     resolved_cols = bundle.get("resolved_columns", {})
 

@@ -6,6 +6,8 @@ training through panel optimization and consensus generation.
 """
 
 import logging
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -456,6 +458,65 @@ def _run_hpc_mode(
     hpc_logger.info("=" * 70)
 
 
+def _log_aggregated_metrics_summary(
+    logger: logging.Logger,
+    outdir: Path,
+    run_id: str,
+    models: list[str],
+) -> None:
+    """Log a compact metrics summary table after aggregation.
+
+    Reads test_metrics_summary.csv from each model's aggregated/ dir
+    and logs key metrics (AUROC, PR-AUC, n_features) in a table.
+    Failures are logged as warnings and do not raise.
+    """
+    import csv
+
+    rows: list[dict[str, str]] = []
+    for model_name in models:
+        summary_path = (
+            outdir
+            / f"run_{run_id}"
+            / model_name
+            / "aggregated"
+            / "metrics"
+            / "test_metrics_summary.csv"
+        )
+        if not summary_path.exists():
+            continue
+        try:
+            with open(summary_path) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("statistic") == "mean":
+                        rows.append({"model": model_name, **row})
+                        break
+        except Exception as exc:
+            logger.warning(f"Could not read metrics summary for {model_name}: {exc}")
+
+    if not rows:
+        return
+
+    logger.info("")
+    logger.info("Aggregated test metrics (mean across splits):")
+    header = f"  {'Model':<15s} {'AUROC':>8s} {'PR-AUC':>8s}"
+    logger.info(header)
+    logger.info("  " + "-" * len(header.strip()))
+    for row in rows:
+        auroc = row.get("AUROC", row.get("auroc", "N/A"))
+        prauc = row.get("PR_AUC", row.get("pr_auc", "N/A"))
+        try:
+            auroc = f"{float(auroc):.4f}"
+        except (ValueError, TypeError):
+            pass
+        try:
+            prauc = f"{float(prauc):.4f}"
+        except (ValueError, TypeError):
+            pass
+        logger.info(f"  {row['model']:<15s} {auroc:>8s} {prauc:>8s}")
+    logger.info("")
+
+
 def _detect_fixed_panel_strategy(config_file: Path | None, logger: logging.Logger) -> bool:
     """
     Detect if training config uses fixed_panel feature selection strategy.
@@ -560,6 +621,10 @@ def run_pipeline(
         )
         return
 
+    # Eager run_id: generate before logger so log file is named correctly
+    if run_id is None:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # Auto-file-logging: use explicit log_file if provided, otherwise auto-generate
     if log_file is None:
         log_file = auto_log_path(
@@ -569,6 +634,9 @@ def run_pipeline(
         )
     logger = setup_logger("ced_ml.pipeline", level=log_level, log_file=log_file)
     logger.info(f"Logging to file: {log_file}")
+
+    pipeline_t0 = time.monotonic()
+    step_timings: list[tuple[str, float]] = []
 
     # Auto-discover input file if not provided
     if infile is None:
@@ -592,14 +660,21 @@ def run_pipeline(
     logger.info("=" * 70)
     logger.info("CeD-ML Full Pipeline")
     logger.info("=" * 70)
+    logger.info(f"Run ID: {run_id}")
     logger.info(f"Models: {', '.join(models)}")
     logger.info(f"Split seeds: {split_seeds}")
-    logger.info(f"Run ID: {run_id or 'auto-generated'}")
+    logger.info(f"Input file: {infile}")
+    logger.info(f"Output dir: {outdir}")
+    logger.info(f"Config file: {config_file or 'default'}")
     logger.info(f"Ensemble: {'enabled' if enable_ensemble else 'disabled'}")
     logger.info(f"Consensus panel: {'enabled' if enable_consensus else 'disabled'}")
     logger.info(f"Panel optimization: {'enabled' if enable_optimize_panel else 'disabled'}")
     if using_fixed_panel:
         logger.info("Feature selection: fixed_panel (optimization/consensus N/A)")
+    logger.info(
+        f"Total training jobs: {len(models)} models x {len(split_seeds)} seeds "
+        f"= {len(models) * len(split_seeds)}"
+    )
     logger.info("=" * 70)
 
     # Step 1: Generate splits (if needed)
@@ -610,6 +685,7 @@ def run_pipeline(
     logger.info("Step 1: Generate Splits")
     logger.info("=" * 70)
 
+    t0 = time.monotonic()
     _ensure_splits_exist(
         split_dir=split_dir,
         infile=infile,
@@ -618,14 +694,16 @@ def run_pipeline(
         log_level=log_level,
         logger=logger,
     )
+    step_timings.append(("Splits", time.monotonic() - t0))
 
     # Step 2: Train base models
     logger.info("\n" + "=" * 70)
     logger.info("Step 2: Train Base Models")
     logger.info("=" * 70)
 
-    shared_run_id = run_id  # Preserve for all models
+    shared_run_id = run_id
 
+    t0 = time.monotonic()
     for model_name in models:
         for split_seed in split_seeds:
             logger.info(f"\nTraining {model_name} with split_seed={split_seed}")
@@ -646,32 +724,16 @@ def run_pipeline(
                 overrides=overrides,
                 log_level=log_level,
             )
+            logger.info(f"Completed {model_name} seed={split_seed}")
 
-            # Extract run_id from first training run (if auto-generated)
-            if shared_run_id is None:
-                # Read run_metadata.json to get the auto-generated run_id
-                import json
-
-                # Sort by modification time (most recent first) to get the just-created run
-                metadata_files = sorted(
-                    outdir.glob("run_*/run_metadata.json"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if metadata_files:
-                    with open(metadata_files[0]) as f:
-                        metadata = json.load(f)
-                        shared_run_id = metadata.get("run_id")
-                        logger.info(f"Using auto-generated run_id: {shared_run_id}")
-
-    if shared_run_id is None:
-        raise RuntimeError("Failed to determine run_id after training")
+    step_timings.append(("Training", time.monotonic() - t0))
 
     # Step 3: Aggregate base models
     logger.info("\n" + "=" * 70)
     logger.info("Step 3: Aggregate Base Model Results")
     logger.info("=" * 70)
 
+    t0 = time.monotonic()
     for model_name in models:
         logger.info(f"\nAggregating {model_name}")
 
@@ -685,6 +747,15 @@ def run_pipeline(
             n_boot=500,
             log_level=log_level,
         )
+    step_timings.append(("Aggregation", time.monotonic() - t0))
+
+    # Log aggregated metrics summary
+    _log_aggregated_metrics_summary(
+        logger=logger,
+        outdir=outdir,
+        run_id=shared_run_id,
+        models=models,
+    )
 
     # Step 4: Train ensemble (if enabled)
     if enable_ensemble:
@@ -692,6 +763,7 @@ def run_pipeline(
         logger.info("Step 4: Train Ensemble Meta-Learner")
         logger.info("=" * 70)
 
+        t0 = time.monotonic()
         for split_seed in split_seeds:
             logger.info(f"\nTraining ensemble with split_seed={split_seed}")
 
@@ -722,6 +794,15 @@ def run_pipeline(
             n_boot=500,
             log_level=log_level,
         )
+        step_timings.append(("Ensemble", time.monotonic() - t0))
+
+        # Log ensemble metrics
+        _log_aggregated_metrics_summary(
+            logger=logger,
+            outdir=outdir,
+            run_id=shared_run_id,
+            models=["ENSEMBLE"],
+        )
 
     # Step 6: Optimize panel (if enabled)
     if enable_optimize_panel:
@@ -729,6 +810,7 @@ def run_pipeline(
         logger.info("Step 6: Optimize Panel Sizes")
         logger.info("=" * 70)
 
+        t0 = time.monotonic()
         # Auto-discover models with aggregated results
         results_root = outdir
         model_dirs = discover_models_by_run_id(
@@ -754,6 +836,7 @@ def run_pipeline(
                 log_level=log_level,
                 n_jobs=-1,
             )
+        step_timings.append(("Panel optimization", time.monotonic() - t0))
 
     # Step 7: Generate consensus panel (if enabled)
     if enable_consensus:
@@ -761,6 +844,7 @@ def run_pipeline(
         logger.info("Step 7: Generate Consensus Panel")
         logger.info("=" * 70)
 
+        t0 = time.monotonic()
         # Load consensus config for parameters (corr_threshold, stability_threshold, etc.)
         from ced_ml.config.loader import load_yaml
 
@@ -783,11 +867,23 @@ def run_pipeline(
             outdir=None,
             log_level=log_level,
         )
+        step_timings.append(("Consensus panel", time.monotonic() - t0))
 
     # Final summary
+    total_elapsed = time.monotonic() - pipeline_t0
     logger.info("\n" + "=" * 70)
     logger.info("Pipeline Complete")
     logger.info("=" * 70)
     logger.info(f"Run ID: {shared_run_id}")
     logger.info(f"Results: {outdir / f'run_{shared_run_id}'}")
+    logger.info(f"Log file: {log_file}")
+    logger.info("")
+    logger.info("Step timings:")
+    for step_name, elapsed in step_timings:
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        logger.info(f"  {step_name:<25s} {h:02d}:{m:02d}:{s:02d}")
+    m, s = divmod(int(total_elapsed), 60)
+    h, m = divmod(m, 60)
+    logger.info(f"  {'TOTAL':<25s} {h:02d}:{m:02d}:{s:02d}")
     logger.info("=" * 70)

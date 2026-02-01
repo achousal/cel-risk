@@ -13,22 +13,24 @@ Design:
     Guardrails:
         1. Fixed TEST set (seed=42, stratified, never changes)
         2. Paired seeds -- same shuffled pools; cells take prefixes (nesting)
-        3. Frozen features (25-protein panel) + frozen hyperparams
+        3. Frozen features (25-protein panel)
+        4. Cell-specific hyperparameter tuning (each cell gets optimal hyperparams)
 
 Usage:
-    # Step 1: tune hyperparams on baseline cell
+    # Step 1: tune hyperparams for ALL factorial cells (cell-specific tuning)
     python run_factorial_2x2x2.py \\
         --data-path data/Celiac_dataset_proteomics_w_demo.parquet \\
         --panel-path data/fixed_panel.csv \\
         --output-dir results/factorial_2x2x2 \\
-        --tune-baseline
+        --tune-cells \\
+        --n-trials 50
 
-    # Step 2: run full experiment with frozen hyperparams
+    # Step 2: run full experiment with cell-specific frozen hyperparams
     python run_factorial_2x2x2.py \\
         --data-path data/Celiac_dataset_proteomics_w_demo.parquet \\
         --panel-path data/fixed_panel.csv \\
         --output-dir results/factorial_2x2x2 \\
-        --hyperparams-path results/factorial_2x2x2/frozen_hyperparams.yaml \\
+        --hyperparams-path results/factorial_2x2x2/cell_hyperparams.yaml \\
         --n-seeds 10
 """
 
@@ -36,8 +38,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing as mp
+import os
 import sys
 import time
+from functools import partial
 from itertools import product
 from pathlib import Path
 
@@ -84,10 +89,10 @@ N_CASES_LEVELS = [50, 149]
 RATIO_LEVELS = [1, 5]
 PREV_FRAC_LEVELS = [0.5, 1.0]
 
-BASELINE_CELL = {"n_cases": 149, "ratio": 5, "prevalent_frac": 0.5}
-
 TEST_SEED = 42
 TEST_SIZE = 0.25  # fraction of incident cases held out for test
+TUNING_SEED = 0  # fixed seed for reproducible tuning splits
+VAL_FRAC = 0.2  # fraction of cell used for validation during tuning
 
 
 # ---------------------------------------------------------------------------
@@ -244,107 +249,219 @@ def build_model(model_name: str, hyperparams: dict) -> Pipeline:
 
 
 # ---------------------------------------------------------------------------
-# Baseline tuning (Guardrail 3)
+# Cell-specific hyperparameter tuning (Guardrail 4)
 # ---------------------------------------------------------------------------
 
 
-def tune_baseline(
+def tune_cell(
     df: pd.DataFrame,
     panel: list[str],
-    train_pool_idx: np.ndarray,
+    I_pool: np.ndarray,
+    P_pool: np.ndarray,
+    C_pool: np.ndarray,
+    n_cases: int,
+    ratio: int,
+    prevalent_frac: float,
     test_idx: np.ndarray,
-    output_dir: Path,
+    models: list[str],
+    n_trials: int = 50,
 ) -> dict:
-    """Tune hyperparams on baseline cell via Optuna, save to YAML."""
+    """Tune hyperparams for a specific factorial cell via train/val split.
+
+    Args:
+        df: Full dataframe
+        panel: List of feature column names
+        I_pool, P_pool, C_pool: Index pools for incident/prevalent/control
+        n_cases, ratio, prevalent_frac: Cell configuration
+        test_idx: Held-out test indices (never used for tuning)
+        models: List of model names to tune
+        n_trials: Number of Optuna trials per model
+
+    Returns:
+        Dict mapping model name to best hyperparams for this cell
+    """
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    I_pool, P_pool, C_pool = build_pools(df, train_pool_idx)
-    train_idx = sample_cell(
+    # Sample this cell using tuning seed
+    cell_idx = sample_cell(
         I_pool,
         P_pool,
         C_pool,
-        n_cases=BASELINE_CELL["n_cases"],
-        ratio=BASELINE_CELL["ratio"],
-        prevalent_frac=BASELINE_CELL["prevalent_frac"],
-        seed=0,
+        n_cases=n_cases,
+        ratio=ratio,
+        prevalent_frac=prevalent_frac,
+        seed=TUNING_SEED,
+    )
+
+    # Split cell into train/val (80/20)
+    y_cell = (df.iloc[cell_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
+    train_idx, val_idx = train_test_split(
+        cell_idx,
+        test_size=VAL_FRAC,
+        stratify=y_cell,
+        random_state=999,
     )
 
     X_train = df.iloc[train_idx][panel].values
     y_train = (df.iloc[train_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
+    X_val = df.iloc[val_idx][panel].values
+    y_val = (df.iloc[val_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
+
+    # Test set (only for logging, never used in optimization)
     X_test = df.iloc[test_idx][panel].values
     y_test = (df.iloc[test_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
 
+    logger.info(
+        "Tuning cell (n_cases=%d, ratio=%d, prev_frac=%.1f): train=%d, val=%d",
+        n_cases,
+        ratio,
+        prevalent_frac,
+        len(train_idx),
+        len(val_idx),
+    )
+
     tuned = {}
 
-    # -- LR_EN --
-    def lr_objective(trial):
-        C = trial.suggest_float("C", 1e-4, 100, log=True)
-        l1 = trial.suggest_float("l1_ratio", 0.0, 1.0)
-        pipe = Pipeline(
-            [
-                ("scaler", StandardScaler()),
-                (
-                    "clf",
-                    LogisticRegression(
-                        C=C,
-                        l1_ratio=l1,
-                        penalty="elasticnet",
-                        solver="saga",
-                        max_iter=2000,
-                    ),
-                ),
-            ]
+    # Tune each model
+    for model_name in models:
+        if model_name == "LR_EN":
+
+            def lr_objective(trial):
+                C = trial.suggest_float("C", 1e-4, 100, log=True)
+                l1 = trial.suggest_float("l1_ratio", 0.0, 1.0)
+                pipe = Pipeline(
+                    [
+                        ("scaler", StandardScaler()),
+                        (
+                            "clf",
+                            LogisticRegression(
+                                C=C,
+                                l1_ratio=l1,
+                                penalty="elasticnet",
+                                solver="saga",
+                                max_iter=2000,
+                            ),
+                        ),
+                    ]
+                )
+                pipe.fit(X_train, y_train)
+                return roc_auc_score(y_val, pipe.predict_proba(X_val)[:, 1])
+
+            study = optuna.create_study(direction="maximize")
+            study.optimize(lr_objective, n_trials=n_trials, show_progress_bar=False)
+            best = study.best_params
+            best.update({"penalty": "elasticnet", "solver": "saga", "max_iter": 2000})
+            tuned[model_name] = best
+
+            # Log val and test AUROC
+            final_pipe = build_model(model_name, {model_name: best})
+            final_pipe.fit(X_train, y_train)
+            val_auroc = study.best_value
+            test_auroc = roc_auc_score(y_test, final_pipe.predict_proba(X_test)[:, 1])
+            logger.info(
+                "  LR_EN: val=%.4f, test=%.4f (held out)",
+                val_auroc,
+                test_auroc,
+            )
+
+        elif model_name == "XGBoost":
+            from xgboost import XGBClassifier
+
+            def xgb_objective(trial):
+                params = {
+                    "n_estimators": trial.suggest_int("n_estimators", 100, 500),
+                    "max_depth": trial.suggest_int("max_depth", 3, 10),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+                    "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                    "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
+                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+                    "eval_metric": "logloss",
+                }
+                pipe = Pipeline(
+                    [
+                        ("scaler", StandardScaler()),
+                        ("clf", XGBClassifier(**params)),
+                    ]
+                )
+                pipe.fit(X_train, y_train)
+                return roc_auc_score(y_val, pipe.predict_proba(X_val)[:, 1])
+
+            study = optuna.create_study(direction="maximize")
+            study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=False)
+            best = study.best_params
+            best.update({"eval_metric": "logloss"})
+            tuned[model_name] = best
+
+            # Log val and test AUROC
+            final_pipe = build_model(model_name, {model_name: best})
+            final_pipe.fit(X_train, y_train)
+            val_auroc = study.best_value
+            test_auroc = roc_auc_score(y_test, final_pipe.predict_proba(X_test)[:, 1])
+            logger.info(
+                "  XGBoost: val=%.4f, test=%.4f (held out)",
+                val_auroc,
+                test_auroc,
+            )
+
+    return tuned
+
+
+def tune_all_cells(
+    df: pd.DataFrame,
+    panel: list[str],
+    train_pool_idx: np.ndarray,
+    test_idx: np.ndarray,
+    models: list[str],
+    n_trials: int,
+    output_dir: Path,
+) -> dict:
+    """Tune hyperparams for all factorial cells.
+
+    Returns nested dict: {(n_cases, ratio, prev_frac): {model: params}}
+    """
+    I_pool, P_pool, C_pool = build_pools(df, train_pool_idx)
+    cells = list(product(N_CASES_LEVELS, RATIO_LEVELS, PREV_FRAC_LEVELS))
+
+    logger.info(
+        "Tuning %d cells × %d models × %d trials = %d total Optuna runs",
+        len(cells),
+        len(models),
+        n_trials,
+        len(cells) * len(models) * n_trials,
+    )
+
+    all_hyperparams = {}
+    for i, (n_cases, ratio, prev_frac) in enumerate(cells, 1):
+        logger.info("Cell %d/%d: n_cases=%d, ratio=%d, prev_frac=%.1f", i, len(cells), n_cases, ratio, prev_frac)
+        cell_key = f"n{n_cases}_r{ratio}_p{prev_frac}"
+
+        hyperparams = tune_cell(
+            df,
+            panel,
+            I_pool,
+            P_pool,
+            C_pool,
+            n_cases=n_cases,
+            ratio=ratio,
+            prevalent_frac=prev_frac,
+            test_idx=test_idx,
+            models=models,
+            n_trials=n_trials,
         )
-        pipe.fit(X_train, y_train)
-        return roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1])
+        all_hyperparams[cell_key] = hyperparams
 
-    study_lr = optuna.create_study(direction="maximize")
-    study_lr.optimize(lr_objective, n_trials=50, show_progress_bar=True)
-    best_lr = study_lr.best_params
-    best_lr.update({"penalty": "elasticnet", "solver": "saga", "max_iter": 2000})
-    tuned["LR_EN"] = best_lr
-    logger.info("LR_EN best AUROC=%.4f, params=%s", study_lr.best_value, best_lr)
-
-    # -- XGBoost --
-    from xgboost import XGBClassifier
-
-    def xgb_objective(trial):
-        params = {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 500),
-            "max_depth": trial.suggest_int("max_depth", 3, 10),
-            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
-            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-            "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-            "eval_metric": "logloss",
-        }
-        pipe = Pipeline(
-            [
-                ("scaler", StandardScaler()),
-                ("clf", XGBClassifier(**params)),
-            ]
-        )
-        pipe.fit(X_train, y_train)
-        return roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1])
-
-    study_xgb = optuna.create_study(direction="maximize")
-    study_xgb.optimize(xgb_objective, n_trials=50, show_progress_bar=True)
-    best_xgb = study_xgb.best_params
-    best_xgb.update({"eval_metric": "logloss"})
-    tuned["XGBoost"] = best_xgb
-    logger.info("XGBoost best AUROC=%.4f, params=%s", study_xgb.best_value, best_xgb)
-
-    # Save
-    out_path = output_dir / "frozen_hyperparams.yaml"
+    # Save to YAML
+    out_path = output_dir / "cell_hyperparams.yaml"
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
-        yaml.dump(tuned, f, default_flow_style=False, sort_keys=False)
-    logger.info("Saved frozen hyperparams to %s", out_path)
-    return tuned
+        yaml.dump(all_hyperparams, f, default_flow_style=False, sort_keys=False)
+    logger.info("Saved cell-specific hyperparams to %s", out_path)
+
+    return all_hyperparams
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +569,102 @@ def extract_feature_importances(
     return dict(zip(panel, importances.tolist(), strict=False))
 
 
+
+# ---------------------------------------------------------------------------
+# Parallelized experiment helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_single_job(
+    job_spec: dict,
+    df: pd.DataFrame,
+    panel: list[str],
+    I_pool: np.ndarray,
+    P_pool: np.ndarray,
+    C_pool: np.ndarray,
+    test_idx: np.ndarray,
+    hyperparams: dict,
+) -> tuple[dict, list[dict]]:
+    """Run a single (seed, cell, model) combination.
+
+    Returns:
+        (result_row, feature_importance_rows)
+    """
+    seed = job_spec["seed"]
+    n_cases = job_spec["n_cases"]
+    ratio = job_spec["ratio"]
+    prev_frac = job_spec["prevalent_frac"]
+    model_name = job_spec["model"]
+    cell_key = f"n{n_cases}_r{ratio}_p{prev_frac}"
+
+    # Sample cell
+    cell_train_idx = sample_cell(
+        I_pool,
+        P_pool,
+        C_pool,
+        n_cases=n_cases,
+        ratio=ratio,
+        prevalent_frac=prev_frac,
+        seed=seed,
+    )
+    X_train = df.iloc[cell_train_idx][panel].values
+    y_train = (df.iloc[cell_train_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
+
+    X_test = df.iloc[test_idx][panel].values
+    y_test = (df.iloc[test_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
+
+    # Get cell-specific hyperparams
+    if cell_key in hyperparams:
+        model_hyperparams = hyperparams[cell_key]
+    else:
+        model_hyperparams = hyperparams
+
+    # Train and evaluate
+    t0 = time.perf_counter()
+    pipe = build_model(model_name, model_hyperparams)
+    pipe.fit(X_train, y_train)
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    runtime = time.perf_counter() - t0
+
+    metrics = compute_metrics(y_test, y_prob)
+    score_dist = compute_score_distributions(
+        pipe,
+        df,
+        panel,
+        cell_train_idx,
+        test_idx,
+    )
+
+    result_row = {
+        "seed": seed,
+        "n_cases": n_cases,
+        "ratio": ratio,
+        "prevalent_frac": prev_frac,
+        "train_N": len(cell_train_idx),
+        "model": model_name,
+        **metrics,
+        **score_dist,
+        "runtime_s": round(runtime, 2),
+    }
+
+    # Feature importances
+    fi = extract_feature_importances(pipe, panel, model_name)
+    fi_rows = [
+        {
+            "seed": seed,
+            "n_cases": n_cases,
+            "ratio": ratio,
+            "prevalent_frac": prev_frac,
+            "model": model_name,
+            "feature": feat,
+            "importance": imp,
+        }
+        for feat, imp in fi.items()
+    ]
+
+    return result_row, fi_rows
+
+
 # ---------------------------------------------------------------------------
 # Main experiment loop
 # ---------------------------------------------------------------------------
@@ -467,6 +680,10 @@ def run_experiment(
     models: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run all factorial cells across seeds and models.
+
+    Args:
+        hyperparams: Nested dict {cell_key: {model: params}} for cell-specific tuning,
+                     or flat dict {model: params} for shared hyperparams (legacy)
 
     Returns:
         (results_df, feature_importances_df)
@@ -491,6 +708,8 @@ def run_experiment(
     done = 0
     for seed in range(n_seeds):
         for n_cases, ratio, prev_frac in cells:
+            cell_key = f"n{n_cases}_r{ratio}_p{prev_frac}"
+
             cell_train_idx = sample_cell(
                 I_pool,
                 P_pool,
@@ -505,7 +724,14 @@ def run_experiment(
 
             for model_name in models:
                 t0 = time.perf_counter()
-                pipe = build_model(model_name, hyperparams)
+
+                # Get cell-specific hyperparams if available, else use shared
+                if cell_key in hyperparams:
+                    model_hyperparams = hyperparams[cell_key]
+                else:
+                    model_hyperparams = hyperparams
+
+                pipe = build_model(model_name, model_hyperparams)
                 pipe.fit(X_train, y_train)
                 y_prob = pipe.predict_proba(X_test)[:, 1]
                 runtime = time.perf_counter() - t0
@@ -553,6 +779,90 @@ def run_experiment(
     return pd.DataFrame(rows), pd.DataFrame(fi_rows)
 
 
+
+def run_experiment_parallel(
+    df: pd.DataFrame,
+    panel: list[str],
+    train_pool_idx: np.ndarray,
+    test_idx: np.ndarray,
+    hyperparams: dict,
+    n_seeds: int,
+    models: list[str],
+    n_jobs: int = -1,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run all factorial cells in parallel across seeds and models.
+
+    Args:
+        n_jobs: Number of parallel jobs (-1 = all CPUs, 1 = sequential)
+
+    Returns:
+        (results_df, feature_importances_df)
+    """
+    I_pool, P_pool, C_pool = build_pools(df, train_pool_idx)
+    cells = list(product(N_CASES_LEVELS, RATIO_LEVELS, PREV_FRAC_LEVELS))
+
+    # Build all job specs (seed, cell, model combinations)
+    job_specs = []
+    for seed in range(n_seeds):
+        for n_cases, ratio, prev_frac in cells:
+            for model_name in models:
+                job_specs.append({
+                    "seed": seed,
+                    "n_cases": n_cases,
+                    "ratio": ratio,
+                    "prevalent_frac": prev_frac,
+                    "model": model_name,
+                })
+
+    total = len(job_specs)
+    logger.info(
+        "Running %d seeds × %d cells × %d models = %d total jobs",
+        n_seeds,
+        len(cells),
+        len(models),
+        total,
+    )
+
+    # Determine number of workers
+    if n_jobs == -1:
+        n_workers = mp.cpu_count()
+    elif n_jobs == 1:
+        n_workers = 1
+    else:
+        n_workers = min(n_jobs, mp.cpu_count())
+
+    logger.info("Using %d parallel workers", n_workers)
+
+    # Prepare worker function with fixed args
+    worker_fn = partial(
+        _run_single_job,
+        df=df,
+        panel=panel,
+        I_pool=I_pool,
+        P_pool=P_pool,
+        C_pool=C_pool,
+        test_idx=test_idx,
+        hyperparams=hyperparams,
+    )
+
+    # Run jobs in parallel
+    if n_workers == 1:
+        # Sequential fallback
+        results = [worker_fn(job) for job in job_specs]
+    else:
+        # Parallel execution
+        with mp.Pool(processes=n_workers) as pool:
+            results = pool.map(worker_fn, job_specs)
+
+    # Unpack results
+    rows = [r[0] for r in results]
+    fi_rows = [fi for r in results for fi in r[1]]
+
+    logger.info("Completed %d jobs", total)
+
+    return pd.DataFrame(rows), pd.DataFrame(fi_rows)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -595,15 +905,32 @@ def main():
         help="Models to run (default: LR_EN XGBoost)",
     )
     parser.add_argument(
-        "--tune-baseline",
+        "--tune-cells",
         action="store_true",
-        help="Tune hyperparams on baseline cell via Optuna, then exit",
+        help="Tune hyperparams for ALL factorial cells (cell-specific), then exit",
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=50,
+        help="Number of Optuna trials per model (default: 50)",
     )
     parser.add_argument(
         "--hyperparams-path",
         type=Path,
         default=None,
-        help="Path to frozen_hyperparams.yaml (required unless --tune-baseline)",
+        help="Path to cell_hyperparams.yaml (required unless --tune-cells)",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="Number of parallel jobs (-1=all CPUs, 1=sequential, default: 1)",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel execution (sets --n-jobs=-1 unless specified)",
     )
     args = parser.parse_args()
 
@@ -629,9 +956,19 @@ def main():
         header="positional index into filtered dataframe",
     )
 
-    if args.tune_baseline:
-        tune_baseline(df, panel, train_pool_idx, test_idx, args.output_dir)
-        logger.info("Baseline tuning complete. Re-run with --hyperparams-path to run experiment.")
+    if args.tune_cells:
+        tune_all_cells(
+            df,
+            panel,
+            train_pool_idx,
+            test_idx,
+            models=args.models,
+            n_trials=args.n_trials,
+            output_dir=args.output_dir,
+        )
+        logger.info(
+            "Cell-specific tuning complete. Re-run with --hyperparams-path cell_hyperparams.yaml"
+        )
         return
 
     # Load frozen hyperparams
@@ -641,18 +978,38 @@ def main():
     else:
         with open(args.hyperparams_path) as f:
             hyperparams = yaml.safe_load(f)
-        logger.info("Loaded frozen hyperparams from %s", args.hyperparams_path)
+        logger.info("Loaded hyperparams from %s", args.hyperparams_path)
+
+    # Determine parallelization
+    if args.parallel and args.n_jobs == 1:
+        n_jobs = -1  # --parallel flag overrides default
+    else:
+        n_jobs = args.n_jobs
 
     # Run experiment
-    results, feat_imp = run_experiment(
-        df,
-        panel,
-        train_pool_idx,
-        test_idx,
-        hyperparams=hyperparams,
-        n_seeds=args.n_seeds,
-        models=args.models,
-    )
+    if n_jobs == 1:
+        logger.info("Running in sequential mode")
+        results, feat_imp = run_experiment(
+            df,
+            panel,
+            train_pool_idx,
+            test_idx,
+            hyperparams=hyperparams,
+            n_seeds=args.n_seeds,
+            models=args.models,
+        )
+    else:
+        logger.info("Running in parallel mode with n_jobs=%d", n_jobs)
+        results, feat_imp = run_experiment_parallel(
+            df,
+            panel,
+            train_pool_idx,
+            test_idx,
+            hyperparams=hyperparams,
+            n_seeds=args.n_seeds,
+            models=args.models,
+            n_jobs=n_jobs,
+        )
 
     # Save results
     out_csv = args.output_dir / "factorial_results.csv"

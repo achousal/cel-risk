@@ -26,6 +26,6 @@ hpc:
   scheduler: lsf  # lsf or slurm
   project: acc_Chipuk_Laboratory  # Required: update before use
   queue: premium
-  walltime: "100:00"  # hours:minutes
+  walltime: "24:00"  # hours:minutes
   cores: 8
   mem_per_core: 8000  # MB

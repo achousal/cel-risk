@@ -1,198 +1,252 @@
-# 2x2x2 Factorial Experiment: Training Set Composition
+# Factorial Experiment: 2×2×2 Design
 
-Standalone experiment investigating how training set composition affects model performance.
+## Quick Start
 
-## Design
-
-**Factors** (8 cells total):
-
-| Factor | Levels | Description |
-|--------|--------|-------------|
-| `n_cases` | 50, 149 | Number of incident cases in training |
-| `ratio` | 1, 5 | Controls per case |
-| `prevalent_frac` | 0.5, 1.0 | Fraction of prevalent cases included |
-
-**Derived**: `train_N = n_cases + round(prevalent_frac * n_cases) + ratio * n_cases`
-
-**Models**: LR_EN, XGBoost
-**Panel**: Fixed 25-protein panel (`data/fixed_panel.csv`)
-**Seeds**: 10 (configurable)
-**Total runs**: 8 cells x 10 seeds x 2 models = 160
-
-## Three Guardrails
-
-### 1. Fixed TEST set
-One global stratified test split (seed=42). All cells evaluate on the same TEST set.
-Prevalent cases are excluded from TEST entirely.
-
-### 2. Paired seeds (nesting)
-For each seed, the same shuffled pools are used. Cells take **prefixes** from the shuffled pools:
-- `n_cases=50` is a strict subset of `n_cases=149` within the same seed
-- This reduces variance and enables paired statistical tests
-
-### 3. Frozen features + hyperparams
-- **Panel**: Fixed 25-protein panel (no feature selection during experiment)
-- **Hyperparams**: Tuned once on baseline cell (n_cases=149, ratio=5, prev_frac=0.5), then frozen
-
-## Usage
-
-### Option 1: Complete workflow (RECOMMENDED)
-
-Run all three steps (tune, experiment, analyze) with a single command:
+### Local (Parallel, Recommended)
 
 ```bash
-python run_factorial_complete.py \
-    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
-    --panel-path ../../../data/fixed_panel.csv \
-    --output-dir ../../../results/factorial_2x2x2 \
-    --n-seeds 10
+# Step 1: Tune cell-specific hyperparameters (~2-3 hours)
+python analysis/docs/investigations/run_factorial_2x2x2.py \
+    --data-path data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path data/fixed_panel.csv \
+    --output-dir results/factorial_2x2x2 \
+    --tune-cells \
+    --n-trials 50
+
+# Step 2: Run experiment with parallelization (~5-10 min with 8 CPUs)
+python analysis/docs/investigations/run_factorial_2x2x2.py \
+    --data-path data/Celiac_dataset_proteomics_w_demo.parquet \
+    --panel-path data/fixed_panel.csv \
+    --output-dir results/factorial_2x2x2 \
+    --hyperparams-path results/factorial_2x2x2/cell_hyperparams.yaml \
+    --n-seeds 10 \
+    --parallel
 ```
 
-This will:
-1. Tune baseline hyperparameters via Optuna (if `frozen_hyperparams.yaml` doesn't exist)
-2. Run the full factorial experiment (160 runs with default settings)
-3. Analyze results and generate all visualizations
+### HPC (SLURM or LSF)
 
-Optional flags:
-- `--models LR_EN XGBoost` -- models to run (default: both)
-- `--skip-tuning` -- skip tuning if hyperparams already exist (requires `--hyperparams-path`)
-- `--hyperparams-path PATH` -- use existing hyperparameters
-- `--top-k K` -- number of top features for Jaccard overlap analysis (default: 15)
+**SLURM:**
+```bash
+# Submit job (handles both tuning and experiment)
+sbatch analysis/docs/investigations/submit_factorial_hpc.sh
 
-### Option 2: Individual steps (for debugging or customization)
+# Monitor progress
+tail -f logs/factorial_<jobid>.out
+```
 
-#### Step 1: Tune baseline hyperparams
+**LSF:**
+```bash
+# Submit job
+bsub < analysis/docs/investigations/submit_factorial_hpc_lsf.sh
+
+# Monitor progress
+tail -f logs/factorial_<jobid>.out
+```
+
+Both scripts:
+- Auto-detect repository root (no path editing needed)
+- Match settings from `configs/pipeline_hpc.yaml`
+- Allocate 8 CPUs, 8GB per CPU, 24-hour walltime
+- Use `acc_Chipuk_Laboratory` account and `premium` queue
+
+---
+
+## Experimental Design
+
+### Factorial Structure
+
+**3 Factors × 2 Levels Each = 8 Cells:**
+
+| Factor | Levels | Rationale |
+|--------|--------|-----------|
+| `n_cases` | 50, 149 | Sample size effect (all vs half of incident cases) |
+| `ratio` | 1, 5 | Class imbalance effect (balanced vs 5:1 controls:cases) |
+| `prevalent_frac` | 0.5, 1.0 | Prevalent case inclusion (half vs all) |
+
+**Per cell:** 10 seeds × 2 models (LR_EN, XGBoost) = 20 runs
+**Total:** 8 cells × 20 runs = 160 model fits per experiment
+
+### Scientific Questions
+
+1. **Sample size effect:** Does using all 149 incident cases vs 50 improve performance?
+2. **Class imbalance effect:** Does balanced (1:1) vs imbalanced (1:5) ratio affect discrimination?
+3. **Prevalent case inclusion:** Do prevalent cases improve or harm incident CeD prediction?
+4. **Interactions:** Are there synergistic effects between factors?
+
+---
+
+## Guardrails (Statistical Rigor)
+
+### 1. Fixed Test Set
+- Created once with seed=42
+- Stratified 25% of incident/control cases
+- **Never changes** across all tuning and evaluation
+- Ensures all cells compared on identical held-out data
+
+### 2. Cell-Specific Hyperparameter Tuning
+- Each cell gets hyperparameters optimized for its data distribution
+- Prevents unfair advantages from shared hyperparams tuned on one cell
+- Uses train/val split (80/20) **within each cell** for tuning
+- Test set never used for optimization (only final evaluation logging)
+
+### 3. Paired Seeds (Nesting)
+- Same shuffled pools across cells within each seed
+- Cells take prefixes of shuffled pools (nesting guarantee)
+- Ensures seed=0 for n_cases=50 is a subset of seed=0 for n_cases=149
+
+### 4. Frozen Features
+- 25-protein panel fixed across all cells
+- Eliminates feature selection as confounding variable
+
+---
+
+## Parallelization
+
+### How It Works
+
+The experiment parallelizes at the **job level** (seed × cell × model):
+- 10 seeds × 8 cells × 2 models = 160 independent jobs
+- Each job trains one model on one cell with one seed
+- Jobs run in parallel via Python `multiprocessing.Pool`
+
+### Performance
+
+| CPUs | Runtime (160 jobs) | Speedup |
+|------|-------------------|---------|
+| 1 (sequential) | ~30-60 min | 1.0× |
+| 8 | ~5-10 min | 5-7× |
+| 16 | ~3-5 min | 10-14× |
+| 32 | ~2-3 min | 18-25× |
+
+**Note:** Hyperparameter tuning (Step 1) is NOT parallelized - Optuna trials run sequentially within each cell.
+
+### Parallel Options
 
 ```bash
-python run_factorial_2x2x2.py \
-    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
-    --panel-path ../../../data/fixed_panel.csv \
-    --output-dir ../../../results/factorial_2x2x2 \
-    --tune-baseline
+# Use all available CPUs
+--parallel
+
+# Use specific number of CPUs
+--n-jobs 16
+
+# Sequential (default)
+--n-jobs 1
 ```
 
-Saves `frozen_hyperparams.yaml` via Optuna (50 trials per model).
+---
 
-#### Step 2: Run experiment
+## Outputs
+
+```
+results/factorial_2x2x2/
+├── cell_hyperparams.yaml         # Cell-specific frozen hyperparameters
+├── test_indices.csv              # Fixed test set indices
+├── factorial_results.csv         # Main results (160 rows)
+└── feature_importances.csv       # Feature importance per run
+```
+
+### Results Schema
+
+**factorial_results.csv:**
+- `seed`: Random seed (0-9)
+- `n_cases`, `ratio`, `prevalent_frac`: Cell configuration
+- `train_N`: Training set size
+- `model`: LR_EN or XGBoost
+- `AUROC`, `PRAUC`, `Brier`: Discrimination metrics
+- `cal_slope`, `cal_intercept`: Calibration metrics
+- `sens_at_spec95`: Sensitivity at 95% specificity
+- `mean_prob_incident`, `mean_prob_prevalent`, `mean_prob_control`: Score distributions
+- `score_gap`: Incident - Prevalent mean score
+- `runtime_s`: Training time
+
+---
+
+## Analysis
+
+See [analyze_factorial_2x2x2.py](analysis/docs/investigations/analyze_factorial_2x2x2.py) for:
+
+- **Main effects plots:** Marginal effect of each factor
+- **Interaction plots:** Synergistic effects between factors
+- **Statistical tests:** ANOVA, Tukey HSD post-hoc comparisons
+- **Hyperparameter comparison:** How hyperparams vary across cells
+
+Example analysis:
+```bash
+python analysis/docs/investigations/analyze_factorial_2x2x2.py \
+    --results results/factorial_2x2x2/factorial_results.csv \
+    --output results/factorial_2x2x2/analysis
+```
+
+---
+
+## Testing
+
+Verify parallel implementation matches sequential:
 
 ```bash
-python run_factorial_2x2x2.py \
-    --data-path ../../../data/Celiac_dataset_proteomics_w_demo.parquet \
-    --panel-path ../../../data/fixed_panel.csv \
-    --output-dir ../../../results/factorial_2x2x2 \
-    --hyperparams-path ../../../results/factorial_2x2x2/frozen_hyperparams.yaml \
-    --n-seeds 10
+python analysis/docs/investigations/test_parallel.py
 ```
 
-Outputs `factorial_results.csv` (one row per seed x cell x model) and `feature_importances.csv` (one row per seed x cell x model x feature).
+Expected output:
+```
+Sequential time: 45.3s
+Parallel time: 13.2s
+Speedup: 3.43x
+Max AUROC difference: 0.00e+00
+✓ Parallel results match sequential (numerically identical)
+```
 
-#### Step 3: Analyze and visualize
+---
 
+## Files
+
+| File | Purpose |
+|------|---------|
+| [run_factorial_2x2x2.py](run_factorial_2x2x2.py) | Main experiment script |
+| [FACTORIAL_CELL_TUNING.md](FACTORIAL_CELL_TUNING.md) | Detailed tuning documentation |
+| [submit_factorial_hpc.sh](submit_factorial_hpc.sh) | SLURM submission script (8 CPUs, 24h) |
+| [submit_factorial_hpc_lsf.sh](submit_factorial_hpc_lsf.sh) | LSF submission script (8 CPUs, 24h) |
+| [test_parallel.py](test_parallel.py) | Parallelization test |
+| [analyze_factorial_2x2x2.py](analyze_factorial_2x2x2.py) | Analysis and visualization |
+
+---
+
+## Troubleshooting
+
+### Parallelization Issues
+
+**Problem:** `OSError: [Errno 24] Too many open files`
+**Solution:** Reduce `--n-jobs` or increase file descriptor limit:
 ```bash
-python analyze_factorial_2x2x2.py \
-    --results ../../../results/factorial_2x2x2/factorial_results.csv \
-    --top-k 15
+ulimit -n 4096
 ```
 
-Generates:
-- CSV summaries: `main_effects.csv`, `interactions.csv`, `feature_jaccard.csv`
-- Visualizations: `main_effects_{model}.png`, `interactions_{model}.png`, `score_distributions_{model}.png`, `cell_means_{model}.png`, `jaccard_heatmap_{model}.png`
-- Markdown reports: `summary_{model}.md`, `feature_overlap.md`
+**Problem:** Out of memory errors
+**Solution:** Reduce `--n-jobs` (each worker loads full dataset into memory)
 
-Optional flags:
-- `--feature-importances PATH` -- override path to `feature_importances.csv` (default: sibling of results file)
-- `--top-k K` -- number of top features for Jaccard overlap analysis (default: 15)
-- `--output-dir DIR` -- override output directory (default: `analysis/` subdirectory)
+### Hyperparameter Tuning Issues
 
-## Sampling Procedure
+**Problem:** Tuning is too slow
+**Solution:** Reduce `--n-trials` (minimum 20-30 recommended)
 
-For each seed s:
-1. Shuffle `I_pool` (incident), `P_pool` (prevalent), `C_pool` (controls) with seed s
-2. For each cell `(n_cases, ratio, prevalent_frac)`:
-   - `I = first n_cases from I_pool`
-   - `P = first round(prevalent_frac * n_cases) from P_pool`
-   - `C = first (ratio * n_cases) from C_pool`
-   - Train on `I + P + C`
+**Problem:** Want to skip tuning for quick testing
+**Solution:** Use default hyperparameters (omit `--hyperparams-path`), but document this limitation
 
-Prefixes guarantee nesting: smaller cells are subsets of larger cells within the same seed.
+---
 
-## Metrics
+## Citation
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| AUROC | Discrimination | Area under ROC curve |
-| PRAUC | Discrimination | Area under precision-recall curve |
-| Brier | Calibration | Brier score (lower = better) |
-| cal_slope | Calibration | Logistic calibration slope (ideal = 1) |
-| cal_intercept | Calibration | Logistic calibration intercept (ideal = 0) |
-| sens_at_spec95 | Clinical | Sensitivity at 95% specificity |
-| mean_prob_incident | Score distribution | Mean predicted probability for incident cases (test set) |
-| mean_prob_prevalent | Score distribution | Mean predicted probability for prevalent cases (train set) |
-| mean_prob_control | Score distribution | Mean predicted probability for controls (test set) |
-| score_gap | Score distribution | `mean_prob_incident - mean_prob_prevalent` (positive = incident scored higher) |
+If using this factorial design in publications, cite the methodology:
 
-## Statistical Analysis
+> We evaluated the effects of sample size, class imbalance, and prevalent case inclusion on incident Celiac Disease prediction using a 2×2×2 factorial design with cell-specific hyperparameter optimization and a fixed held-out test set to ensure valid statistical comparisons across all experimental conditions.
 
-### Main effects (paired contrasts)
-For each factor, compute `high - low` averaged over other factors, paired by seed:
-- Mean delta, 95% CI, Cohen's d (paired), paired t-test
+---
 
-### Interactions
-- **2-way**: Does the effect of factor A depend on the level of factor B?
-- **3-way**: Does the n_cases x ratio interaction depend on prevalent_frac?
+## Changelog
 
-### Feature importance overlap (Jaccard)
-For each (model, seed, n_cases, ratio) combination, the top-K features by importance
-are compared between `prevalent_frac=0.5` and `prevalent_frac=1.0`.
-Jaccard similarity measures how much the two feature sets overlap:
-- **Jaccard = 1.0**: identical top-K features regardless of prevalent fraction
-- **Jaccard << 1.0**: including more prevalent cases shifts which biomarkers the model relies on
-
-This is computed from `feature_importances.csv` (absolute LR coefficients or XGB `feature_importances_`).
-
-### Interpretation (Cohen's d)
-- `|d| < 0.2`: negligible
-- `0.2 <= |d| < 0.5`: small
-- `0.5 <= |d| < 0.8`: medium
-- `|d| >= 0.8`: large
-
-## Output Schema
-
-`factorial_results.csv`:
-```
-seed, n_cases, ratio, prevalent_frac, train_N, model,
-AUROC, PRAUC, Brier, cal_slope, cal_intercept, sens_at_spec95,
-mean_prob_incident, mean_prob_prevalent, mean_prob_control, score_gap,
-runtime_s
-```
-
-`feature_importances.csv`:
-```
-seed, n_cases, ratio, prevalent_frac, model, feature, importance
-```
-
-`analysis/` directory:
-
-**CSV outputs:**
-- `main_effects.csv` -- paired contrasts for all metrics (including score distributions)
-- `interactions.csv` -- 2-way and 3-way interaction tests
-- `feature_jaccard.csv` -- per-cell Jaccard similarity of top-K features across prevalent_frac levels
-
-**Markdown reports:**
-- `feature_overlap.md` -- markdown summary of feature overlap analysis
-- `summary_{model}.md` -- per-model markdown report (includes Jaccard section)
-
-**Visualization plots (PNG):**
-- `main_effects_{model}.png` -- forest plots of main effects with 95% CIs (* = p<0.05)
-- `interactions_{model}.png` -- 2-way interaction plots for AUROC, Brier, sens_at_spec95
-- `score_distributions_{model}.png` -- box plots of mean predicted probabilities by case type
-- `cell_means_{model}.png` -- bar plots of cell means for AUROC, PRAUC, Brier, sens_at_spec95
-- `jaccard_heatmap_{model}.png` -- heatmap of feature overlap across design factors
-
-## Seed Count Guidance
-
-| Purpose | Seeds | Total runs |
-|---------|-------|------------|
-| Quick validation | 2 | 32 |
-| Real inference | 10 | 160 |
-| High precision | 20 | 320 |
+**2026-02-01:**
+- Added cell-specific hyperparameter tuning (replaces baseline-only tuning)
+- Fixed test set leakage (now uses train/val split within cells)
+- Added parallelization support (multiprocessing.Pool)
+- Added HPC SLURM submission script
+- Updated documentation with parallelization benchmarks
