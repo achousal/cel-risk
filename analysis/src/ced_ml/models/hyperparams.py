@@ -805,3 +805,58 @@ def _is_log_spaced(values: list) -> bool:
     # Check variance in ratios
     ratio_std = np.std(ratios)
     return ratio_std / mean_ratio < 0.5  # Low relative variance = log-spaced
+
+
+# ============================================================================
+# Reduced Search Spaces for RFE Per-k Tuning
+# ============================================================================
+
+# Compact search spaces for quick per-panel-size hyperparameter re-tuning.
+# These focus on the parameters most sensitive to dimensionality changes,
+# keeping n_estimators fixed for tree models to reduce search cost.
+
+RFE_TUNE_SPACES: dict[str, dict[str, dict]] = {
+    "LR_EN": {
+        "clf__C": {"type": "float", "low": 1e-4, "high": 100.0, "log": True},
+        "clf__l1_ratio": {"type": "float", "low": 0.0, "high": 1.0, "log": False},
+    },
+    "LR_L1": {
+        "clf__C": {"type": "float", "low": 1e-4, "high": 100.0, "log": True},
+    },
+    "LinSVM_cal": {
+        "clf__estimator__C": {"type": "float", "low": 1e-3, "high": 100.0, "log": True},
+    },
+    "RF": {
+        "clf__max_depth": {"type": "int", "low": 3, "high": 20, "log": False},
+        "clf__min_samples_leaf": {"type": "int", "low": 1, "high": 10, "log": False},
+    },
+    "XGBoost": {
+        "clf__learning_rate": {"type": "float", "low": 0.001, "high": 0.3, "log": True},
+        "clf__max_depth": {"type": "int", "low": 2, "high": 12, "log": False},
+        "clf__reg_lambda": {"type": "float", "low": 1e-8, "high": 10.0, "log": True},
+    },
+}
+
+
+def get_rfe_tune_space(model_name: str) -> dict[str, dict]:
+    """Return reduced Optuna search space for RFE per-k hyperparameter tuning.
+
+    These spaces focus on parameters most sensitive to panel dimensionality,
+    keeping ensemble size (n_estimators) fixed for tree-based models.
+
+    Args:
+        model_name: Model identifier (e.g., "LR_EN", "RF", "XGBoost").
+
+    Returns:
+        Dictionary mapping parameter names (with clf__ prefix) to Optuna
+        suggest specs: {"type": str, "low": num, "high": num, "log": bool}.
+
+    Raises:
+        ValueError: If model_name is not recognized.
+    """
+    if model_name not in RFE_TUNE_SPACES:
+        raise ValueError(
+            f"No RFE tune space defined for model '{model_name}'. "
+            f"Known models: {list(RFE_TUNE_SPACES.keys())}"
+        )
+    return dict(RFE_TUNE_SPACES[model_name])

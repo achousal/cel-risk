@@ -252,19 +252,18 @@ class TestPlotAggregatedWeights:
 
         assert out_path.exists()
 
-    def test_with_subtitle_and_meta(self, tmp_path):
-        """Subtitle and meta_lines render correctly."""
+    def test_with_subtitle(self, tmp_path):
+        """Subtitle renders correctly."""
         coefs = {
             0: {"LR_EN": 0.5, "RF": 0.3},
             1: {"LR_EN": 0.55, "RF": 0.35},
         }
-        out_path = tmp_path / "agg_weights_meta.png"
+        out_path = tmp_path / "agg_weights_subtitle.png"
 
         plot_aggregated_weights(
             coefs,
             out_path,
             subtitle="Custom subtitle",
-            meta_lines=["n_splits=2", "pooled results"],
         )
 
         assert out_path.exists()

@@ -20,8 +20,8 @@ pipeline:
   models:
     - LR_EN
     - LinSVM_cal
-    # - RF
-    # - XGBoost
+    - RF
+    - XGBoost
   # split_seeds derived from splits_config.yaml (seed_start + n_splits)
   ensemble: true
   consensus: true

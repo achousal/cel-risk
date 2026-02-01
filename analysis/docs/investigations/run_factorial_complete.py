@@ -59,35 +59,50 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
-        "--data-path", type=Path, required=True,
+        "--data-path",
+        type=Path,
+        required=True,
         help="Path to proteomics parquet file",
     )
     parser.add_argument(
-        "--panel-path", type=Path, required=True,
+        "--panel-path",
+        type=Path,
+        required=True,
         help="Path to fixed_panel.csv (one protein per line)",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("results/factorial_2x2x2"),
+        "--output-dir",
+        type=Path,
+        default=Path("results/factorial_2x2x2"),
         help="Output directory (default: results/factorial_2x2x2)",
     )
     parser.add_argument(
-        "--n-seeds", type=int, default=10,
+        "--n-seeds",
+        type=int,
+        default=10,
         help="Number of seeds for experiment (default: 10)",
     )
     parser.add_argument(
-        "--models", nargs="+", default=["LR_EN", "XGBoost"],
+        "--models",
+        nargs="+",
+        default=["LR_EN", "XGBoost"],
         help="Models to run (default: LR_EN XGBoost)",
     )
     parser.add_argument(
-        "--hyperparams-path", type=Path, default=None,
+        "--hyperparams-path",
+        type=Path,
+        default=None,
         help="Path to frozen_hyperparams.yaml (if exists, skip tuning)",
     )
     parser.add_argument(
-        "--skip-tuning", action="store_true",
+        "--skip-tuning",
+        action="store_true",
         help="Skip hyperparameter tuning (requires --hyperparams-path)",
     )
     parser.add_argument(
-        "--top-k", type=int, default=15,
+        "--top-k",
+        type=int,
+        default=15,
         help="Number of top features for Jaccard overlap analysis (default: 15)",
     )
     args = parser.parse_args()
@@ -129,11 +144,16 @@ def main():
         logger.info("=" * 60)
 
         tune_cmd = [
-            sys.executable, str(run_script),
-            "--data-path", str(args.data_path),
-            "--panel-path", str(args.panel_path),
-            "--output-dir", str(args.output_dir),
-            "--models", *args.models,
+            sys.executable,
+            str(run_script),
+            "--data-path",
+            str(args.data_path),
+            "--panel-path",
+            str(args.panel_path),
+            "--output-dir",
+            str(args.output_dir),
+            "--models",
+            *args.models,
             "--tune-baseline",
         ]
 
@@ -152,13 +172,20 @@ def main():
     logger.info("=" * 60)
 
     experiment_cmd = [
-        sys.executable, str(run_script),
-        "--data-path", str(args.data_path),
-        "--panel-path", str(args.panel_path),
-        "--output-dir", str(args.output_dir),
-        "--n-seeds", str(args.n_seeds),
-        "--models", *args.models,
-        "--hyperparams-path", str(args.hyperparams_path),
+        sys.executable,
+        str(run_script),
+        "--data-path",
+        str(args.data_path),
+        "--panel-path",
+        str(args.panel_path),
+        "--output-dir",
+        str(args.output_dir),
+        "--n-seeds",
+        str(args.n_seeds),
+        "--models",
+        *args.models,
+        "--hyperparams-path",
+        str(args.hyperparams_path),
     ]
 
     run_command(experiment_cmd, "Factorial experiment")
@@ -175,10 +202,14 @@ def main():
     logger.info("=" * 60)
 
     analyze_cmd = [
-        sys.executable, str(analyze_script),
-        "--results", str(results_path),
-        "--top-k", str(args.top_k),
-        "--output-dir", str(args.output_dir / "analysis"),
+        sys.executable,
+        str(analyze_script),
+        "--results",
+        str(results_path),
+        "--top-k",
+        str(args.top_k),
+        "--output-dir",
+        str(args.output_dir / "analysis"),
     ]
 
     # Add feature importances path if it exists
@@ -199,8 +230,10 @@ def main():
     logger.info("  - Hyperparameters: %s", args.hyperparams_path)
     logger.info("  - Results: %s", results_path)
     logger.info("  - Feature importances: %s", fi_path)
-    logger.info("  - Analysis CSVs: %s/{main_effects,interactions,feature_jaccard}.csv",
-                args.output_dir / "analysis")
+    logger.info(
+        "  - Analysis CSVs: %s/{main_effects,interactions,feature_jaccard}.csv",
+        args.output_dir / "analysis",
+    )
     logger.info("  - Visualizations: %s/*.png", args.output_dir / "analysis")
     logger.info("  - Summaries: %s/summary_*.md", args.output_dir / "analysis")
 

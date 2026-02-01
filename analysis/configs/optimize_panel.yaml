@@ -18,6 +18,12 @@ cv_folds: 0                  # CV folds for OOF AUROC (default: 0 = skip, valida
 step_strategy: fine          # Feature elimination: geometric, linear, fine (default: geometric)
 
 # ==============================================================================
+# Per-k Hyperparameter Re-tuning
+# ==============================================================================
+
+retune_trials: 20            # Optuna trials per evaluation point (default: 20)
+
+# ==============================================================================
 # HPC Parallelization (only used with --hpc flag)
 # ==============================================================================
 

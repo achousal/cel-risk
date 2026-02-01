@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from ced_ml.data.filters import apply_row_filters
@@ -153,6 +154,9 @@ def run_optimize_panel(
     outdir: str | None = None,
     use_stability_panel: bool = True,
     log_level: int | None = None,
+    retune_n_trials: int = 20,
+    retune_cv_folds: int = 3,
+    retune_n_jobs: int = 1,
 ) -> RFEResult:
     """Run panel optimization via Recursive Feature Elimination.
 
@@ -385,10 +389,16 @@ def run_optimize_panel(
             f"Only {len(initial_proteins)} valid proteins, less than min_size={min_size}"
         )
 
-    logger.info(f"Starting RFE with {len(initial_proteins)} proteins")
     logger.info(
-        f"RFE parameters: step_strategy={step_strategy}, cv_folds={cv_folds}, "
-        f"min_auroc_frac={min_auroc_frac}, min_size={min_size}"
+        f"\n{'='*60}\n"
+        f"RFE Configuration\n"
+        f"{'='*60}\n"
+        f"Starting panel size: {len(initial_proteins)} proteins\n"
+        f"Minimum panel size:  {min_size}\n"
+        f"Step strategy:       {step_strategy}\n"
+        f"CV folds:            {cv_folds}\n"
+        f"Min AUROC fraction:  {min_auroc_frac:.2%}\n"
+        f"{'='*60}\n"
     )
 
     # Run RFE
@@ -416,6 +426,9 @@ def run_optimize_panel(
         step_strategy=step_strategy,
         min_auroc_frac=min_auroc_frac,
         random_state=split_seed,
+        retune_n_trials=retune_n_trials,
+        retune_cv_folds=retune_cv_folds,
+        retune_n_jobs=retune_n_jobs,
     )
 
     logger.info(f"RFE complete. Max AUROC: {result.max_auroc:.4f}")
@@ -565,12 +578,17 @@ def run_optimize_panel_aggregated(
     outdir: str | None = None,
     log_level: int | None = None,
     n_jobs: int = 1,
+    retune_n_trials: int = 20,
 ) -> RFEResult:
     """Run panel optimization using aggregated stability panel.
 
     Runs RFE independently on each available split seed, then aggregates
     the validation curves (mean + cross-seed 95% CI). This produces a
     more robust Pareto curve than single-seed optimization.
+
+    At each evaluation point, hyperparameters are re-tuned via a quick
+    Optuna search so each Pareto curve point answers "best possible AUROC
+    at panel size k".
 
     Args:
         results_dir: Path to model's aggregated results directory
@@ -584,7 +602,8 @@ def run_optimize_panel_aggregated(
         step_strategy: Elimination strategy ("geometric", "fine", "linear")
         outdir: Output directory (default: results_dir/optimize_panel)
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
-        n_jobs: Parallel jobs for multi-seed RFE (1=sequential, -1=all CPUs)
+        n_jobs: Total parallel cores (auto-split between seeds and Optuna)
+        retune_n_trials: Optuna trials per evaluation point for re-tuning
 
     Returns:
         RFEResult with optimization curve and recommendations
@@ -654,7 +673,7 @@ def run_optimize_panel_aggregated(
         )
 
     logger.info(
-        f"Found {len(stable_proteins)} stable proteins (≥{stability_threshold:.2f} threshold)"
+        f"Found {len(stable_proteins)} stable proteins (>={stability_threshold:.2f} threshold)"
     )
 
     # Discover available split seeds
@@ -694,13 +713,40 @@ def run_optimize_panel_aggregated(
 
     logger.info(f"Model metadata: {len(protein_cols)} total proteins, scenario={scenario}")
 
+    # Extract inner_folds from bundle config for retune CV
+    bundle_config = bundle.get("config", {})
+    if isinstance(bundle_config, dict):
+        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 3)
+    elif hasattr(bundle_config, "cv"):
+        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 3)
+    else:
+        retune_cv_folds = 3
+    logger.info(
+        f"Per-k re-tuning: {retune_n_trials} trials, cv={retune_cv_folds} "
+        f"(from bundle config inner_folds)"
+    )
+
+    # Auto-split parallelism: seed_jobs vs optuna_jobs
+    n_seeds = len(split_dirs)
+    if n_jobs == -1:
+        import os
+
+        n_jobs = os.cpu_count() or 1
+
+    seed_jobs = min(n_seeds, max(1, n_jobs))
+    optuna_jobs = max(1, n_jobs // seed_jobs)
+    logger.info(
+        f"Parallelism: {n_jobs} total cores -> "
+        f"{seed_jobs} seed jobs x {optuna_jobs} Optuna jobs/seed"
+    )
+
     # Load data once (shared across all seeds)
     logger.info(f"Loading data from {infile}")
     df_raw = read_proteomics_file(infile, validate=True)
 
     logger.info("Applying row filters...")
     df, filter_stats = apply_row_filters(df_raw, meta_num_cols=meta_num_cols)
-    logger.info(f"Filtered: {filter_stats['n_in']:,} → {filter_stats['n_out']:,} rows")
+    logger.info(f"Filtered: {filter_stats['n_in']:,} -> {filter_stats['n_out']:,} rows")
 
     feature_cols = protein_cols + cat_cols + meta_num_cols
     missing = [c for c in feature_cols if c not in df.columns]
@@ -733,6 +779,10 @@ def run_optimize_panel_aggregated(
     )
 
     # -- Run RFE for each split seed --
+    import time
+
+    overall_start = time.time()
+
     def _run_rfe_for_seed(seed_dir: Path) -> RFEResult:
         """Run RFE for a single split seed."""
         seed = int(seed_dir.name.replace("split_seed", ""))
@@ -740,6 +790,9 @@ def run_optimize_panel_aggregated(
 
         if not seed_model_path.exists():
             raise FileNotFoundError(f"Model not found for seed {seed}: {seed_model_path}")
+
+        logger.info(f"\n{'='*60}\n" f"Starting RFE for seed {seed}\n" f"{'='*60}")
+        seed_start = time.time()
 
         seed_bundle = joblib.load(seed_model_path)
         pipeline = seed_bundle.get("model")
@@ -768,7 +821,7 @@ def run_optimize_panel_aggregated(
             f"val={len(X_val)} ({y_val.sum()} cases)"
         )
 
-        return recursive_feature_elimination(
+        result = recursive_feature_elimination(
             X_train=X_train,
             y_train=y_train,
             X_val=X_val,
@@ -783,21 +836,85 @@ def run_optimize_panel_aggregated(
             step_strategy=step_strategy,
             min_auroc_frac=min_auroc_frac,
             random_state=seed,
+            retune_n_trials=retune_n_trials,
+            retune_cv_folds=retune_cv_folds,
+            retune_n_jobs=optuna_jobs,
         )
 
-    if len(split_dirs) > 1 and n_jobs != 1:
+        seed_elapsed = time.time() - seed_start
+        logger.info(
+            f"\n{'='*60}\n"
+            f"Completed RFE for seed {seed}\n"
+            f"Time: {seed_elapsed/60:.1f} min\n"
+            f"Max AUROC: {result.max_auroc:.4f}\n"
+            f"Evaluation points: {len(result.curve)}\n"
+            f"{'='*60}\n"
+        )
+
+        return result
+
+    if len(split_dirs) > 1 and seed_jobs != 1:
         from joblib import Parallel, delayed
 
-        effective_jobs = n_jobs if n_jobs != 0 else 1
-        logger.info(f"Running RFE across {len(split_dirs)} seeds (n_jobs={effective_jobs})")
-        per_seed_results: list[RFEResult] = Parallel(n_jobs=effective_jobs)(
+        logger.info(
+            f"\n{'='*60}\n"
+            f"Multi-seed RFE execution\n"
+            f"{'='*60}\n"
+            f"Total seeds: {len(split_dirs)}\n"
+            f"Parallel seed jobs: {seed_jobs}\n"
+            f"Optuna jobs per seed: {optuna_jobs}\n"
+            f"Starting panel: {len(initial_proteins)} proteins\n"
+            f"{'='*60}\n"
+        )
+        per_seed_results: list[RFEResult] = Parallel(n_jobs=seed_jobs)(
             delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
         )
     else:
-        per_seed_results = [_run_rfe_for_seed(sd) for sd in split_dirs]
+        logger.info(
+            f"\n{'='*60}\n"
+            f"Sequential RFE execution\n"
+            f"{'='*60}\n"
+            f"Total seeds: {len(split_dirs)}\n"
+            f"Starting panel: {len(initial_proteins)} proteins\n"
+            f"{'='*60}\n"
+        )
+        per_seed_results = []
+        for idx, sd in enumerate(split_dirs, 1):
+            logger.info(f"\nProcessing seed {idx}/{len(split_dirs)}")
+            result = _run_rfe_for_seed(sd)
+            per_seed_results.append(result)
+
+    multi_seed_elapsed = time.time() - overall_start
+
+    # Aggregated summary
+    mean_auroc = np.mean([r.max_auroc for r in per_seed_results])
+    std_auroc = np.std([r.max_auroc for r in per_seed_results])
+    logger.info(
+        f"\n{'='*60}\n"
+        f"All seeds completed\n"
+        f"Total time: {multi_seed_elapsed/60:.1f} min\n"
+        f"Average per seed: {multi_seed_elapsed/len(split_dirs)/60:.1f} min\n"
+        f"{'='*60}\n"
+    )
 
     # Aggregate across seeds
+    logger.info("Aggregating results across seeds...")
     result = aggregate_rfe_results(per_seed_results)
+
+    # Aggregated summary log
+    rec_summary = ", ".join(f"{k}={v}" for k, v in result.recommended_panels.items())
+    logger.info(
+        f"\nAggregated RFE ({n_seeds} seeds):\n"
+        f"  Mean best AUROC: {mean_auroc:.3f} +/- {std_auroc:.3f}\n"
+        f"  Recommended: {rec_summary}\n"
+        f"  Wall time: {multi_seed_elapsed/60:.1f} min ({n_jobs} cores)"
+    )
+    logger.info(
+        f"Aggregation complete:\n"
+        f"  Aggregated max AUROC: {result.max_auroc:.4f}\n"
+        f"  Evaluation points: {len(result.curve)}\n"
+        f"  Recommended panels: {len(result.recommended_panels)}\n"
+    )
 
     # Save results
     if outdir is None:
@@ -812,7 +929,6 @@ def run_optimize_panel_aggregated(
     logger.info(f"Saved RFE results to {outdir}")
 
     # Generate plots
-    n_seeds = len(split_dirs)
     try:
         plot_path = Path(outdir) / "panel_curve_aggregated.png"
         plot_pareto_curve(

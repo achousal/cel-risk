@@ -23,7 +23,6 @@ from .style import (
     FONT_LABEL,
     FONT_LEGEND,
     FONT_TITLE,
-    PAD_INCHES,
     configure_backend,
 )
 
@@ -281,19 +280,16 @@ def plot_aggregated_weights(
     out_path: Path | str,
     title: str = "Aggregated Meta-Learner Coefficients",
     subtitle: str = "",
-    meta_lines: Sequence[str] | None = None,
 ) -> None:
     """Plot meta-learner coefficients aggregated across splits with error bars.
 
-    Shows mean coefficient +/- 1 SD across multiple split seeds. Includes robust
-    metadata tracking for reproducibility.
+    Shows mean coefficient +/- 1 SD across multiple split seeds.
 
     Args:
         coefs_per_split: Dict mapping split_seed to coefficient dict.
         out_path: Output file path.
         title: Plot title.
         subtitle: Optional subtitle (e.g., n_splits info).
-        meta_lines: Optional metadata lines.
     """
     if not _HAS_PLOTTING:
         logger.warning("matplotlib not available, skipping aggregated weights plot")
@@ -362,25 +358,10 @@ def plot_aggregated_weights(
     else:
         ax.set_title(f"{title}\n(n_splits={n_splits})", fontsize=FONT_TITLE, fontweight="bold")
 
-    # Add summary statistics to metadata
-    base_meta_lines = meta_lines or []
-    summary_lines = [
-        f"n_splits={n_splits}",
-        f"n_base_models={len(all_names)}",
-        f"coef_range=[{means.min():.3f}, {means.max():.3f}]",
-    ]
-    all_meta_lines = base_meta_lines + summary_lines
-
-    # Apply metadata lines
-    from ced_ml.plotting.dca import apply_plot_metadata
-
-    bottom_margin = apply_plot_metadata(fig, all_meta_lines)
-    # Add extra breathing room for x-axis labels/ticks to avoid metadata overlap.
-    bottom_margin = min(bottom_margin + 0.04, 0.35)
-    plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
-    fig.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logger.info(f"Aggregated weights plot saved: {out_path}")
+    logger.info(f"Saved aggregated weights plot -> {out_path}")
 
 
 def save_ensemble_aggregation_metadata(

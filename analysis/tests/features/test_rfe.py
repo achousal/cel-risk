@@ -468,3 +468,146 @@ class TestAggregateRFEResults:
 
         for point in agg.curve:
             assert point["n_seeds"] == 2
+
+
+class TestGetRfeTuneSpace:
+    """Tests for get_rfe_tune_space in hyperparams module."""
+
+    def test_known_models(self):
+        """All expected models have tune spaces."""
+        from ced_ml.models.hyperparams import get_rfe_tune_space
+
+        for model in ("LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"):
+            space = get_rfe_tune_space(model)
+            assert isinstance(space, dict)
+            assert len(space) > 0
+
+    def test_lr_en_params(self):
+        """LR_EN has C and l1_ratio."""
+        from ced_ml.models.hyperparams import get_rfe_tune_space
+
+        space = get_rfe_tune_space("LR_EN")
+        assert "clf__C" in space
+        assert "clf__l1_ratio" in space
+        assert space["clf__C"]["type"] == "float"
+        assert space["clf__C"]["log"] is True
+
+    def test_rf_params(self):
+        """RF has max_depth and min_samples_leaf."""
+        from ced_ml.models.hyperparams import get_rfe_tune_space
+
+        space = get_rfe_tune_space("RF")
+        assert "clf__max_depth" in space
+        assert "clf__min_samples_leaf" in space
+
+    def test_unknown_model_raises(self):
+        """Unknown model raises ValueError."""
+        from ced_ml.models.hyperparams import get_rfe_tune_space
+
+        with pytest.raises(ValueError, match="No RFE tune space"):
+            get_rfe_tune_space("UNKNOWN_MODEL")
+
+    def test_returns_copy(self):
+        """Returns a copy, not a reference to the module-level dict."""
+        from ced_ml.models.hyperparams import RFE_TUNE_SPACES, get_rfe_tune_space
+
+        space = get_rfe_tune_space("LR_EN")
+        space["extra_param"] = {"type": "float", "low": 0, "high": 1}
+        assert "extra_param" not in RFE_TUNE_SPACES["LR_EN"]
+
+
+class TestMakeFreshEstimator:
+    """Tests for make_fresh_estimator in rfe module."""
+
+    def test_lr_en(self):
+        """LR_EN produces a LogisticRegression."""
+        from ced_ml.features.rfe import make_fresh_estimator
+
+        est = make_fresh_estimator("LR_EN", random_state=0)
+        assert hasattr(est, "predict_proba")
+        assert est.get_params()["random_state"] == 0
+
+    def test_rf(self):
+        """RF produces a RandomForestClassifier with n_estimators=300."""
+        from ced_ml.features.rfe import make_fresh_estimator
+
+        est = make_fresh_estimator("RF", random_state=0)
+        assert est.get_params()["n_estimators"] == 300
+
+    def test_xgboost(self):
+        """XGBoost produces an XGBClassifier with n_estimators=300."""
+        pytest.importorskip("xgboost")
+        from ced_ml.features.rfe import make_fresh_estimator
+
+        est = make_fresh_estimator("XGBoost", random_state=0)
+        assert est.get_params()["n_estimators"] == 300
+
+    def test_unknown_raises(self):
+        """Unknown model raises ValueError."""
+        from ced_ml.features.rfe import make_fresh_estimator
+
+        with pytest.raises(ValueError, match="Unknown model"):
+            make_fresh_estimator("UNKNOWN")
+
+
+class TestQuickTuneAtK:
+    """Tests for _quick_tune_at_k with synthetic data."""
+
+    @pytest.fixture
+    def synthetic_data(self):
+        """Create small synthetic binary classification dataset."""
+        np.random.seed(42)
+        n = 200
+        n_features = 10
+        X = pd.DataFrame(
+            np.random.randn(n, n_features),
+            columns=[f"prot_{i}" for i in range(n_features)],
+        )
+        y = (X["prot_0"] + X["prot_1"] + np.random.randn(n) * 0.3 > 0).astype(int).values
+        return X, y
+
+    def test_returns_pipeline_and_params(self, synthetic_data):
+        """Returns a fitted pipeline and best_params dict."""
+        from ced_ml.features.rfe import _quick_tune_at_k
+
+        X, y = synthetic_data
+        feature_cols = list(X.columns)
+
+        pipeline, best_params = _quick_tune_at_k(
+            model_name="LR_EN",
+            X_train=X,
+            y_train=y,
+            feature_cols=feature_cols,
+            cat_cols=[],
+            cv_folds=2,
+            n_trials=5,
+            n_jobs=1,
+            random_state=42,
+        )
+
+        assert hasattr(pipeline, "predict_proba")
+        assert isinstance(best_params, dict)
+        assert len(best_params) > 0
+        # Pipeline should be fitted (can predict)
+        probs = pipeline.predict_proba(X)
+        assert probs.shape == (len(X), 2)
+
+    def test_best_params_have_clf_prefix(self, synthetic_data):
+        """Best params keys have clf__ prefix."""
+        from ced_ml.features.rfe import _quick_tune_at_k
+
+        X, y = synthetic_data
+
+        _, best_params = _quick_tune_at_k(
+            model_name="LR_EN",
+            X_train=X,
+            y_train=y,
+            feature_cols=list(X.columns),
+            cat_cols=[],
+            cv_folds=2,
+            n_trials=3,
+            random_state=42,
+        )
+
+        for key in best_params:
+            assert key.startswith("clf__"), f"Expected clf__ prefix, got {key}"

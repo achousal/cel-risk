@@ -20,11 +20,11 @@ import argparse
 import logging
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats as sp_stats
-import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import stats as sp_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,8 +34,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 METRICS = [
-    "AUROC", "PRAUC", "Brier", "cal_slope", "cal_intercept", "sens_at_spec95",
-    "mean_prob_incident", "mean_prob_prevalent", "mean_prob_control", "score_gap",
+    "AUROC",
+    "PRAUC",
+    "Brier",
+    "cal_slope",
+    "cal_intercept",
+    "sens_at_spec95",
+    "mean_prob_incident",
+    "mean_prob_prevalent",
+    "mean_prob_control",
+    "score_gap",
 ]
 
 FACTORS = {
@@ -55,6 +63,7 @@ plt.rcParams["font.size"] = 10
 # Paired contrasts
 # ---------------------------------------------------------------------------
 
+
 def paired_contrast(
     df: pd.DataFrame,
     factor: str,
@@ -67,7 +76,7 @@ def paired_contrast(
 
     Pairing is by seed (Guardrail 2).
     """
-    other_factors = [f for f in FACTORS if f != factor]
+    [f for f in FACTORS if f != factor]
 
     # For each seed, compute mean metric at high vs low, averaging over other factors
     seeds = sorted(df["seed"].unique())
@@ -114,9 +123,7 @@ def compute_main_effects(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for metric in METRICS:
         for factor, spec in FACTORS.items():
-            row = paired_contrast(
-                df, factor, metric, spec["low"], spec["high"]
-            )
+            row = paired_contrast(df, factor, metric, spec["low"], spec["high"])
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -124,6 +131,7 @@ def compute_main_effects(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Interactions
 # ---------------------------------------------------------------------------
+
 
 def two_way_interaction(
     df: pd.DataFrame,
@@ -145,12 +153,16 @@ def two_way_interaction(
         ds = df[df["seed"] == s]
         # Effect of f1 at f2=high
         sub_hi = ds[ds[f2] == s2["high"]]
-        eff_hi = sub_hi[sub_hi[f1] == s1["high"]][metric].mean() - \
-                 sub_hi[sub_hi[f1] == s1["low"]][metric].mean()
+        eff_hi = (
+            sub_hi[sub_hi[f1] == s1["high"]][metric].mean()
+            - sub_hi[sub_hi[f1] == s1["low"]][metric].mean()
+        )
         # Effect of f1 at f2=low
         sub_lo = ds[ds[f2] == s2["low"]]
-        eff_lo = sub_lo[sub_lo[f1] == s1["high"]][metric].mean() - \
-                 sub_lo[sub_lo[f1] == s1["low"]][metric].mean()
+        eff_lo = (
+            sub_lo[sub_lo[f1] == s1["high"]][metric].mean()
+            - sub_lo[sub_lo[f1] == s1["low"]][metric].mean()
+        )
         interaction_deltas.append(eff_hi - eff_lo)
 
     deltas = np.array(interaction_deltas)
@@ -243,9 +255,7 @@ def compute_interactions(df: pd.DataFrame) -> pd.DataFrame:
     for i in range(len(factor_names)):
         for j in range(i + 1, len(factor_names)):
             for metric in METRICS:
-                row = two_way_interaction(
-                    df, factor_names[i], factor_names[j], metric
-                )
+                row = two_way_interaction(df, factor_names[i], factor_names[j], metric)
                 rows.append(row)
     # 3-way
     for metric in METRICS:
@@ -257,6 +267,7 @@ def compute_interactions(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Feature importance overlap (Jaccard)
 # ---------------------------------------------------------------------------
+
 
 def compute_feature_jaccard(
     fi_df: pd.DataFrame,
@@ -278,27 +289,25 @@ def compute_feature_jaccard(
         if lo.empty or hi.empty:
             continue
 
-        top_lo = set(
-            lo.nlargest(top_k, "importance")["feature"].values
-        )
-        top_hi = set(
-            hi.nlargest(top_k, "importance")["feature"].values
-        )
+        top_lo = set(lo.nlargest(top_k, "importance")["feature"].values)
+        top_hi = set(hi.nlargest(top_k, "importance")["feature"].values)
 
         intersection = len(top_lo & top_hi)
         union = len(top_lo | top_hi)
         jaccard = intersection / union if union > 0 else 0.0
 
-        rows.append({
-            "model": model,
-            "seed": seed,
-            "n_cases": n_cases,
-            "ratio": ratio,
-            "top_k": top_k,
-            "jaccard": jaccard,
-            "n_shared": intersection,
-            "n_union": union,
-        })
+        rows.append(
+            {
+                "model": model,
+                "seed": seed,
+                "n_cases": n_cases,
+                "ratio": ratio,
+                "top_k": top_k,
+                "jaccard": jaccard,
+                "n_shared": intersection,
+                "n_union": union,
+            }
+        )
 
     return pd.DataFrame(rows)
 
@@ -316,11 +325,15 @@ def summarize_jaccard(jaccard_df: pd.DataFrame) -> str:
     for model, grp in jaccard_df.groupby("model"):
         lines.append(f"### {model}")
         lines.append("")
-        summary = grp.groupby(["n_cases", "ratio"]).agg(
-            jaccard_mean=("jaccard", "mean"),
-            jaccard_std=("jaccard", "std"),
-            n_shared_mean=("n_shared", "mean"),
-        ).round(3)
+        summary = (
+            grp.groupby(["n_cases", "ratio"])
+            .agg(
+                jaccard_mean=("jaccard", "mean"),
+                jaccard_std=("jaccard", "std"),
+                n_shared_mean=("n_shared", "mean"),
+            )
+            .round(3)
+        )
         lines.append(summary.to_markdown())
         lines.append("")
 
@@ -338,19 +351,18 @@ def summarize_jaccard(jaccard_df: pd.DataFrame) -> str:
 # Plotting functions
 # ---------------------------------------------------------------------------
 
+
 def plot_main_effects(
     main_effects: pd.DataFrame,
     model_name: str,
     output_dir: Path,
 ) -> None:
     """Create forest plot of main effects with confidence intervals."""
-    fig, axes = plt.subplots(
-        1, len(METRICS), figsize=(20, 4), constrained_layout=True
-    )
+    fig, axes = plt.subplots(1, len(METRICS), figsize=(20, 4), constrained_layout=True)
     if len(METRICS) == 1:
         axes = [axes]
 
-    for ax, metric in zip(axes, METRICS):
+    for ax, metric in zip(axes, METRICS, strict=False):
         sub = main_effects[main_effects["metric"] == metric].copy()
         sub = sub.sort_values("mean_delta")
 
@@ -510,7 +522,7 @@ def plot_score_distributions(
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
-    for ax, col in zip(axes, score_cols):
+    for ax, col in zip(axes, score_cols, strict=False):
         # Aggregate across seeds
         agg = df.groupby(["n_cases", "ratio", "prevalent_frac"])[col].mean().reset_index()
 
@@ -559,7 +571,7 @@ def plot_cell_means(
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
     axes = axes.flatten()
 
-    for ax, metric in zip(axes, key_metrics):
+    for ax, metric in zip(axes, key_metrics, strict=False):
         # Aggregate across seeds
         agg = (
             df.groupby(["n_cases", "ratio", "prevalent_frac"])[metric]
@@ -595,6 +607,7 @@ def plot_cell_means(
 # ---------------------------------------------------------------------------
 # Summary report
 # ---------------------------------------------------------------------------
+
 
 def generate_summary(
     df: pd.DataFrame,
@@ -669,24 +682,33 @@ def generate_summary(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze 2x2x2 factorial experiment results",
     )
     parser.add_argument(
-        "--results", type=Path, required=True,
+        "--results",
+        type=Path,
+        required=True,
         help="Path to factorial_results.csv",
     )
     parser.add_argument(
-        "--feature-importances", type=Path, default=None,
+        "--feature-importances",
+        type=Path,
+        default=None,
         help="Path to feature_importances.csv (default: sibling of results file)",
     )
     parser.add_argument(
-        "--top-k", type=int, default=15,
+        "--top-k",
+        type=int,
+        default=15,
         help="Number of top features for Jaccard overlap (default: 15)",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=None,
+        "--output-dir",
+        type=Path,
+        default=None,
         help="Output directory (default: sibling 'analysis/' of results file)",
     )
     args = parser.parse_args()

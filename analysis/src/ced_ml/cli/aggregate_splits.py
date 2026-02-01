@@ -529,7 +529,6 @@ def run_aggregate_splits(
                     coefs_per_split=coefs_per_split,
                     out_path=agg_plots_dir / "ensemble_weights_aggregated.png",
                     title="Aggregated Meta-Learner Coefficients",
-                    meta_lines=[f"n_splits={len(coefs_per_split)}"],
                 )
                 logger.info("Aggregated ensemble weights plot saved")
 

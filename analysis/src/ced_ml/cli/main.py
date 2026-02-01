@@ -641,6 +641,12 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     help="Parallel jobs for multi-seed RFE (1=sequential, -1=all CPUs, default: 1 local / -1 HPC)",
 )
 @click.option(
+    "--retune-trials",
+    type=int,
+    default=None,
+    help="Optuna trials per evaluation point for hyperparameter re-tuning (default: 20)",
+)
+@click.option(
     "--hpc",
     is_flag=True,
     default=False,
@@ -746,6 +752,7 @@ def optimize_panel(ctx, config, **kwargs):
         "step_strategy",
         "outdir",
         "n_jobs",
+        "retune_trials",
     ]:
         if kwargs.get(key) is None and key in config_params:
             kwargs[key] = config_params[key]
@@ -970,6 +977,7 @@ def optimize_panel(ctx, config, **kwargs):
                 outdir=kwargs.get("outdir"),
                 log_level=ctx.obj.get("log_level"),
                 n_jobs=n_jobs,
+                retune_n_trials=kwargs.get("retune_trials") or 20,
             )
 
         click.echo(f"\n{'='*70}")
@@ -997,6 +1005,7 @@ def optimize_panel(ctx, config, **kwargs):
             outdir=kwargs.get("outdir"),
             log_level=ctx.obj.get("log_level"),
             n_jobs=kwargs.get("n_jobs") or 1,
+            retune_n_trials=kwargs.get("retune_trials") or 20,
         )
 
 

@@ -5,7 +5,6 @@ Tests the resolve_results_dir_from_run_id function to ensure it correctly
 discovers and returns all models when --run-id is used without --model.
 """
 
-import tempfile
 from pathlib import Path
 
 import pytest

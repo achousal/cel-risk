@@ -94,6 +94,7 @@ TEST_SIZE = 0.25  # fraction of incident cases held out for test
 # Data helpers
 # ---------------------------------------------------------------------------
 
+
 def load_and_filter(data_path: Path) -> pd.DataFrame:
     """Load data and apply standard row filters."""
     logger.info("Loading data from %s", data_path)
@@ -161,7 +162,9 @@ def build_pools(
     C_pool = pool_idx[labels[pool_idx] == CONTROL_LABEL]
     logger.info(
         "Pools: %d incident, %d prevalent, %d controls",
-        len(I_pool), len(P_pool), len(C_pool),
+        len(I_pool),
+        len(P_pool),
+        len(C_pool),
     )
     return I_pool, P_pool, C_pool
 
@@ -189,7 +192,7 @@ def sample_cell(
     n_prev = int(round(prevalent_frac * n_cases))
     n_controls = ratio * n_cases
 
-    I = I_shuf[:n_cases]
+    I = I_shuf[:n_cases]  # noqa: E741 - I/P/C are standard domain abbreviations
     P = P_shuf[:n_prev]
     C = C_shuf[:n_controls]
 
@@ -199,6 +202,7 @@ def sample_cell(
 # ---------------------------------------------------------------------------
 # Model builders
 # ---------------------------------------------------------------------------
+
 
 def _default_hyperparams() -> dict:
     """Sensible defaults (used if no frozen hyperparams provided)."""
@@ -231,6 +235,7 @@ def build_model(model_name: str, hyperparams: dict) -> Pipeline:
         clf = LogisticRegression(**hp)
     elif model_name == "XGBoost":
         from xgboost import XGBClassifier
+
         clf = XGBClassifier(**hp)
     else:
         raise ValueError(f"Unknown model: {model_name}")
@@ -241,6 +246,7 @@ def build_model(model_name: str, hyperparams: dict) -> Pipeline:
 # ---------------------------------------------------------------------------
 # Baseline tuning (Guardrail 3)
 # ---------------------------------------------------------------------------
+
 
 def tune_baseline(
     df: pd.DataFrame,
@@ -256,7 +262,9 @@ def tune_baseline(
 
     I_pool, P_pool, C_pool = build_pools(df, train_pool_idx)
     train_idx = sample_cell(
-        I_pool, P_pool, C_pool,
+        I_pool,
+        P_pool,
+        C_pool,
         n_cases=BASELINE_CELL["n_cases"],
         ratio=BASELINE_CELL["ratio"],
         prevalent_frac=BASELINE_CELL["prevalent_frac"],
@@ -274,13 +282,21 @@ def tune_baseline(
     def lr_objective(trial):
         C = trial.suggest_float("C", 1e-4, 100, log=True)
         l1 = trial.suggest_float("l1_ratio", 0.0, 1.0)
-        pipe = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(
-                C=C, l1_ratio=l1, penalty="elasticnet",
-                solver="saga", max_iter=2000,
-            )),
-        ])
+        pipe = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                (
+                    "clf",
+                    LogisticRegression(
+                        C=C,
+                        l1_ratio=l1,
+                        penalty="elasticnet",
+                        solver="saga",
+                        max_iter=2000,
+                    ),
+                ),
+            ]
+        )
         pipe.fit(X_train, y_train)
         return roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1])
 
@@ -306,10 +322,12 @@ def tune_baseline(
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
             "eval_metric": "logloss",
         }
-        pipe = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", XGBClassifier(**params)),
-        ])
+        pipe = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", XGBClassifier(**params)),
+            ]
+        )
         pipe.fit(X_train, y_train)
         return roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1])
 
@@ -333,14 +351,14 @@ def tune_baseline(
 # Metrics
 # ---------------------------------------------------------------------------
 
-def calibration_slope_intercept(
-    y_true: np.ndarray, y_prob: np.ndarray
-) -> tuple[float, float]:
+
+def calibration_slope_intercept(y_true: np.ndarray, y_prob: np.ndarray) -> tuple[float, float]:
     """Compute calibration slope and intercept via logistic regression on logit(p)."""
     eps = 1e-15
     p = np.clip(y_prob, eps, 1 - eps)
     logit_p = np.log(p / (1 - p))
     from sklearn.linear_model import LogisticRegression as LR
+
     cal = LR(penalty=None, solver="lbfgs", max_iter=1000)
     cal.fit(logit_p.reshape(-1, 1), y_true)
     slope = float(cal.coef_[0, 0])
@@ -353,6 +371,7 @@ def sensitivity_at_specificity(
 ) -> float:
     """Sensitivity at a fixed specificity threshold."""
     from sklearn.metrics import roc_curve
+
     fpr, tpr, _ = roc_curve(y_true, y_prob)
     spec = 1 - fpr
     # Find highest tpr where spec >= target
@@ -430,12 +449,13 @@ def extract_feature_importances(
         importances = clf.feature_importances_
     else:
         return {}
-    return dict(zip(panel, importances.tolist()))
+    return dict(zip(panel, importances.tolist(), strict=False))
 
 
 # ---------------------------------------------------------------------------
 # Main experiment loop
 # ---------------------------------------------------------------------------
+
 
 def run_experiment(
     df: pd.DataFrame,
@@ -460,7 +480,10 @@ def run_experiment(
     total = n_seeds * len(cells) * len(models)
     logger.info(
         "Running %d seeds x %d cells x %d models = %d total runs",
-        n_seeds, len(cells), len(models), total,
+        n_seeds,
+        len(cells),
+        len(models),
+        total,
     )
 
     rows = []
@@ -469,16 +492,16 @@ def run_experiment(
     for seed in range(n_seeds):
         for n_cases, ratio, prev_frac in cells:
             cell_train_idx = sample_cell(
-                I_pool, P_pool, C_pool,
+                I_pool,
+                P_pool,
+                C_pool,
                 n_cases=n_cases,
                 ratio=ratio,
                 prevalent_frac=prev_frac,
                 seed=seed,
             )
             X_train = df.iloc[cell_train_idx][panel].values
-            y_train = (
-                df.iloc[cell_train_idx][TARGET_COL] == INCIDENT_LABEL
-            ).astype(int).values
+            y_train = (df.iloc[cell_train_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
 
             for model_name in models:
                 t0 = time.perf_counter()
@@ -489,7 +512,11 @@ def run_experiment(
 
                 metrics = compute_metrics(y_test, y_prob)
                 score_dist = compute_score_distributions(
-                    pipe, df, panel, cell_train_idx, test_idx,
+                    pipe,
+                    df,
+                    panel,
+                    cell_train_idx,
+                    test_idx,
                 )
                 row = {
                     "seed": seed,
@@ -507,15 +534,17 @@ def run_experiment(
                 # Feature importances
                 fi = extract_feature_importances(pipe, panel, model_name)
                 for feat, imp in fi.items():
-                    fi_rows.append({
-                        "seed": seed,
-                        "n_cases": n_cases,
-                        "ratio": ratio,
-                        "prevalent_frac": prev_frac,
-                        "model": model_name,
-                        "feature": feat,
-                        "importance": imp,
-                    })
+                    fi_rows.append(
+                        {
+                            "seed": seed,
+                            "n_cases": n_cases,
+                            "ratio": ratio,
+                            "prevalent_frac": prev_frac,
+                            "model": model_name,
+                            "feature": feat,
+                            "importance": imp,
+                        }
+                    )
 
                 done += 1
                 if done % 16 == 0 or done == total:
@@ -528,6 +557,7 @@ def run_experiment(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="2x2x2 factorial experiment (n_cases x ratio x prevalent_frac)",
@@ -535,31 +565,44 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
-        "--data-path", type=Path, required=True,
+        "--data-path",
+        type=Path,
+        required=True,
         help="Path to proteomics parquet file",
     )
     parser.add_argument(
-        "--panel-path", type=Path, required=True,
+        "--panel-path",
+        type=Path,
+        required=True,
         help="Path to fixed_panel.csv (one protein per line)",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("results/factorial_2x2x2"),
+        "--output-dir",
+        type=Path,
+        default=Path("results/factorial_2x2x2"),
         help="Output directory (default: results/factorial_2x2x2)",
     )
     parser.add_argument(
-        "--n-seeds", type=int, default=10,
+        "--n-seeds",
+        type=int,
+        default=10,
         help="Number of seeds (default: 10)",
     )
     parser.add_argument(
-        "--models", nargs="+", default=["LR_EN", "XGBoost"],
+        "--models",
+        nargs="+",
+        default=["LR_EN", "XGBoost"],
         help="Models to run (default: LR_EN XGBoost)",
     )
     parser.add_argument(
-        "--tune-baseline", action="store_true",
+        "--tune-baseline",
+        action="store_true",
         help="Tune hyperparams on baseline cell via Optuna, then exit",
     )
     parser.add_argument(
-        "--hyperparams-path", type=Path, default=None,
+        "--hyperparams-path",
+        type=Path,
+        default=None,
         help="Path to frozen_hyperparams.yaml (required unless --tune-baseline)",
     )
     args = parser.parse_args()
@@ -580,7 +623,9 @@ def main():
     # Save test indices for reproducibility
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.savetxt(
-        args.output_dir / "test_indices.csv", test_idx, fmt="%d",
+        args.output_dir / "test_indices.csv",
+        test_idx,
+        fmt="%d",
         header="positional index into filtered dataframe",
     )
 
@@ -600,7 +645,10 @@ def main():
 
     # Run experiment
     results, feat_imp = run_experiment(
-        df, panel, train_pool_idx, test_idx,
+        df,
+        panel,
+        train_pool_idx,
+        test_idx,
         hyperparams=hyperparams,
         n_seeds=args.n_seeds,
         models=args.models,

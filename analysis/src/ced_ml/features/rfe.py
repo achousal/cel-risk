@@ -436,6 +436,135 @@ def build_lightweight_pipeline(
     return Pipeline([("pre", preprocessor), ("clf", cloned_clf)])
 
 
+def make_fresh_estimator(model_name: str, random_state: int = 42) -> object:
+    """Create a fresh classifier from registry defaults.
+
+    Builds a new estimator instance (not cloned from a fitted model) suitable
+    for hyperparameter tuning at a given panel size.
+
+    Args:
+        model_name: Model identifier (e.g., "LR_EN", "RF", "XGBoost").
+        random_state: Random seed for the estimator.
+
+    Returns:
+        Unfitted sklearn-compatible estimator.
+    """
+    from ced_ml.models.registry import (
+        build_linear_svm_calibrated,
+        build_logistic_regression,
+        build_random_forest,
+        build_xgboost,
+    )
+
+    if model_name == "LR_EN":
+        return build_logistic_regression(random_state=random_state)
+    elif model_name == "LR_L1":
+        return build_logistic_regression(l1_ratio=1.0, penalty="l1", random_state=random_state)
+    elif model_name == "LinSVM_cal":
+        return build_linear_svm_calibrated(random_state=random_state)
+    elif model_name == "RF":
+        return build_random_forest(n_estimators=300, random_state=random_state)
+    elif model_name == "XGBoost":
+        return build_xgboost(n_estimators=300, random_state=random_state)
+    else:
+        raise ValueError(f"Unknown model for RFE tuning: {model_name}")
+
+
+def _quick_tune_at_k(
+    model_name: str,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    feature_cols: list[str],
+    cat_cols: list[str],
+    cv_folds: int = 3,
+    n_trials: int = 20,
+    n_jobs: int = 1,
+    random_state: int = 42,
+) -> tuple[Pipeline, dict]:
+    """Re-tune hyperparameters at a specific panel size k.
+
+    Builds a fresh estimator, constructs a reduced search space, and runs
+    OptunaSearchCV on the TRAIN set only. Returns the fitted pipeline and
+    best hyperparameters found.
+
+    Args:
+        model_name: Model identifier (e.g., "LR_EN", "RF", "XGBoost").
+        X_train: Training features (already subset to feature_cols).
+        y_train: Training labels.
+        feature_cols: Column names in X_train (for logging only).
+        cat_cols: Categorical metadata columns.
+        cv_folds: CV folds for the Optuna search.
+        n_trials: Number of Optuna trials.
+        n_jobs: Parallel jobs for Optuna CV evaluation.
+        random_state: Random seed.
+
+    Returns:
+        Tuple of (fitted Pipeline with best params, best_params dict).
+    """
+    import time
+
+    import optuna
+
+    from ced_ml.cli.train import build_preprocessor
+    from ced_ml.models.hyperparams import get_rfe_tune_space
+    from ced_ml.models.optuna_search import OptunaSearchCV
+
+    # Suppress Optuna verbosity
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    tune_space = get_rfe_tune_space(model_name)
+    param_names = [k.replace("clf__", "") for k in tune_space]
+    logger.info(
+        f"[RFE k={len(feature_cols)}] Tuning {len(tune_space)} hyperparams "
+        f"({', '.join(param_names)}) | {n_trials} trials, cv={cv_folds}, n_jobs={n_jobs}"
+    )
+
+    tune_start = time.time()
+
+    # Build fresh pipeline
+    clf = make_fresh_estimator(model_name, random_state=random_state)
+    preprocessor = build_preprocessor(cat_cols)
+    pipeline = Pipeline([("pre", preprocessor), ("clf", clf)])
+
+    # Run Optuna search
+    search = OptunaSearchCV(
+        estimator=pipeline,
+        param_distributions=tune_space,
+        n_trials=n_trials,
+        scoring="roc_auc",
+        cv=cv_folds,
+        n_jobs=n_jobs,
+        random_state=random_state,
+        refit=True,
+        direction="maximize",
+        sampler="tpe",
+        sampler_seed=random_state,
+        pruner="hyperband",
+        verbose=0,
+    )
+    search.fit(X_train, y_train)
+
+    best_params = search.best_params_
+    best_score = search.best_score_
+    tune_elapsed = time.time() - tune_start
+
+    # Log results
+    param_summary = ", ".join(
+        (
+            f"{k.replace('clf__', '')}={v:.4g}"
+            if isinstance(v, float)
+            else f"{k.replace('clf__', '')}={v}"
+        )
+        for k, v in best_params.items()
+    )
+    logger.info(
+        f"[RFE k={len(feature_cols)}] Best: {param_summary} " f"(CV AUROC={best_score:.3f})"
+    )
+    logger.info(f"[RFE k={len(feature_cols)}] Tuning completed in {tune_elapsed:.1f}s")
+
+    return search.best_estimator_, best_params
+
+
 def recursive_feature_elimination(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
@@ -452,11 +581,16 @@ def recursive_feature_elimination(
     min_auroc_frac: float = 0.90,
     random_state: int = 42,
     n_perm_repeats: int = 5,
+    retune_n_trials: int = 20,
+    retune_cv_folds: int = 3,
+    retune_n_jobs: int = 1,
 ) -> RFEResult:
     """Perform recursive feature elimination to find minimum viable panel.
 
     Iteratively removes least important proteins, evaluating AUROC at each
-    step. Returns the Pareto curve and recommended panel sizes.
+    step. At each evaluation point, hyperparameters are re-tuned on TRAIN
+    via a quick Optuna search so each Pareto curve point reflects the best
+    achievable AUROC at that panel size.
 
     WARNING: When cv_folds > 0, the OOF AUROC estimates are optimistically
     biased because feature ranking is computed on the full training set before
@@ -479,31 +613,85 @@ def recursive_feature_elimination(
         min_auroc_frac: Early stop if AUROC drops below this fraction of max.
         random_state: Random seed.
         n_perm_repeats: Permutation repeats for tree importance.
+        retune_n_trials: Optuna trials for per-k hyperparameter re-tuning.
+        retune_cv_folds: CV folds for per-k Optuna search.
+        retune_n_jobs: Parallel jobs for per-k Optuna CV evaluation.
 
     Returns:
         RFEResult with curve, feature_ranking, and recommended_panels.
     """
+    import time
+
+    from ced_ml.models.hyperparams import RFE_TUNE_SPACES
+
+    start_time = time.time()
     logger.info("Starting recursive feature elimination")
     logger.info(f"  initial_proteins: {len(initial_proteins)} proteins")
     logger.info(f"  X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
     logger.info(f"  model_name: {model_name}")
+
+    # Check if per-k tuning is available for this model
+    can_retune = model_name in RFE_TUNE_SPACES
+    if can_retune:
+        logger.info(
+            f"  Per-k hyperparameter re-tuning: enabled "
+            f"({retune_n_trials} trials, cv={retune_cv_folds}, n_jobs={retune_n_jobs})"
+        )
+    else:
+        logger.info(
+            f"  Per-k hyperparameter re-tuning: disabled "
+            f"(no tune space defined for {model_name})"
+        )
 
     current_proteins = list(initial_proteins)
     curve: list[dict[str, Any]] = []
     feature_ranking: dict[str, int] = {}
     elimination_order = 0
     max_auroc_seen = 0.0
+    all_best_params: list[dict] = []
 
     # Determine evaluation points
     logger.debug(f"Computing eval sizes: current={len(current_proteins)}, min={min_size}")
     eval_sizes = compute_eval_sizes(len(current_proteins), min_size, step_strategy)
     logger.debug(f"Eval sizes computed: {eval_sizes}")
     logger.info(f"RFE: Starting with {len(current_proteins)} proteins, target sizes: {eval_sizes}")
+    logger.info(f"RFE: Will evaluate {len(eval_sizes)} panel sizes")
+
+    total_eval_points = len(eval_sizes)
+    eval_point_idx = 0
+    total_tune_time = 0.0
 
     for target_size in eval_sizes:
+        eval_point_idx += 1
+        elapsed = time.time() - start_time
+        logger.info(
+            f"\n{'='*60}\n"
+            f"RFE Progress: {eval_point_idx}/{total_eval_points} evaluation points "
+            f"({eval_point_idx/total_eval_points*100:.1f}%)\n"
+            f"Elapsed time: {elapsed/60:.1f} min\n"
+            f"Target panel size: {target_size}\n"
+            f"{'='*60}"
+        )
+
         # Eliminate proteins until we reach target_size
+        proteins_to_eliminate = len(current_proteins) - target_size
+        logger.info(
+            f"Eliminating {proteins_to_eliminate} proteins to reach target size {target_size}"
+        )
+
+        elimination_count = 0
         while len(current_proteins) > target_size and len(current_proteins) > min_size:
-            # Build pipeline with current panel
+            elimination_count += 1
+
+            # Progress checkpoint every 10 eliminations
+            if elimination_count % 10 == 0:
+                logger.info(
+                    f"  Elimination progress: {elimination_count}/{proteins_to_eliminate} "
+                    f"({elimination_count/proteins_to_eliminate*100:.1f}%), "
+                    f"current panel size: {len(current_proteins)}"
+                )
+
+            # Build pipeline with current panel (frozen hyperparams for elimination steps)
             try:
                 pipeline = build_lightweight_pipeline(base_pipeline, current_proteins, cat_cols)
             except Exception as e:
@@ -548,16 +736,41 @@ def recursive_feature_elimination(
 
         # Evaluate at this panel size
         if len(current_proteins) < min_size:
+            logger.warning(
+                f"Panel size {len(current_proteins)} below min_size {min_size}, stopping"
+            )
             break
 
-        # Build and fit final pipeline for this size
-        pipeline = build_lightweight_pipeline(base_pipeline, current_proteins, cat_cols)
+        logger.info(f"\nEvaluating panel size {len(current_proteins)}...")
+
         feature_cols = current_proteins + cat_cols + meta_num_cols
         X_train_subset = X_train[feature_cols]
         X_val_subset = X_val[feature_cols]
 
         try:
-            pipeline.fit(X_train_subset, y_train)
+            eval_start = time.time()
+
+            # Per-k hyperparameter re-tuning at evaluation points
+            best_params = {}
+            if can_retune:
+                tune_start = time.time()
+                pipeline, best_params = _quick_tune_at_k(
+                    model_name=model_name,
+                    X_train=X_train_subset,
+                    y_train=y_train,
+                    feature_cols=feature_cols,
+                    cat_cols=cat_cols,
+                    cv_folds=retune_cv_folds,
+                    n_trials=retune_n_trials,
+                    n_jobs=retune_n_jobs,
+                    random_state=random_state,
+                )
+                total_tune_time += time.time() - tune_start
+                all_best_params.append(best_params)
+            else:
+                # Fallback: use frozen hyperparams from base pipeline
+                pipeline = build_lightweight_pipeline(base_pipeline, current_proteins, cat_cols)
+                pipeline.fit(X_train_subset, y_train)
 
             # CV metrics (OOF estimate) - skip if cv_folds <= 1 for speed
             if cv_folds > 1:
@@ -591,6 +804,7 @@ def recursive_feature_elimination(
                 )
 
             # Validation metrics
+            logger.info("  Computing validation metrics...")
             val_probs = pipeline.predict_proba(X_val_subset)[:, 1]
             auroc_val = auroc(y_val, val_probs)
             prauc_val = prauc(y_val, val_probs)
@@ -599,6 +813,14 @@ def recursive_feature_elimination(
             auroc_val_std, auroc_val_ci_low, auroc_val_ci_high = _bootstrap_auroc_ci(
                 y_val, val_probs, n_bootstrap=200
             )
+
+            eval_elapsed = time.time() - eval_start
+            logger.info(
+                f"[RFE k={len(current_proteins)}] Val AUROC={auroc_val:.3f} "
+                f"(95% CI: {auroc_val_ci_low:.3f}-{auroc_val_ci_high:.3f}), "
+                f"PR-AUC={prauc_val:.3f}, Brier={brier_val:.4f}"
+            )
+            logger.info(f"[RFE k={len(current_proteins)}] Completed in {eval_elapsed:.1f}s")
 
         except Exception as e:
             logger.error(f"Evaluation failed at size {len(current_proteins)}: {e}")
@@ -620,27 +842,67 @@ def recursive_feature_elimination(
             "sens_at_95spec_cv": sens_cv,
             "sens_at_95spec_val": sens_val,
             "proteins": list(current_proteins),
+            "best_params": best_params,
         }
         curve.append(point)
         logger.info(
-            f"Panel size {len(current_proteins)}: "
-            f"AUROC_cv={auroc_cv:.4f}, AUROC_val={auroc_val:.4f}, "
-            f"Sens@95%Spec_val={sens_val:.4f}"
+            f"\n  *** Panel size {len(current_proteins)} results: ***\n"
+            f"    AUROC_cv:        {auroc_cv:.4f} +/- {auroc_cv_std:.4f}\n"
+            f"    AUROC_val:       {auroc_val:.4f} (95% CI: {auroc_val_ci_low:.4f}-{auroc_val_ci_high:.4f})\n"
+            f"    PR-AUC_val:      {prauc_val:.4f}\n"
+            f"    Brier_val:       {brier_val:.4f}\n"
+            f"    Sens@95%Spec:    {sens_val:.4f}\n"
         )
 
         # Track max AUROC
         if auroc_val > max_auroc_seen:
             max_auroc_seen = auroc_val
+            logger.info(f"  New maximum AUROC: {max_auroc_seen:.4f}")
 
         # Early stopping check
         if auroc_val < max_auroc_seen * min_auroc_frac:
             logger.info(
-                f"Early stop: AUROC {auroc_val:.4f} < {min_auroc_frac:.0%} of max {max_auroc_seen:.4f}"
+                f"\n*** Early stopping triggered ***\n"
+                f"AUROC {auroc_val:.4f} < {min_auroc_frac:.0%} of max {max_auroc_seen:.4f}\n"
             )
             break
 
+    # Per-seed summary
+    if can_retune and all_best_params:
+        # Summarize hyperparameter ranges across evaluation points
+        param_ranges: dict[str, list] = {}
+        for bp in all_best_params:
+            for k, v in bp.items():
+                param_ranges.setdefault(k, []).append(v)
+
+        range_summary = ", ".join(
+            (
+                f"{k.replace('clf__', '')} [{min(vs):.4g}, {max(vs):.4g}]"
+                if isinstance(vs[0], float)
+                else f"{k.replace('clf__', '')} [{min(vs)}, {max(vs)}]"
+            )
+            for k, vs in param_ranges.items()
+        )
+        logger.info(
+            f"\nRFE Summary (seed {random_state}):\n"
+            f"  Eval points: {len(curve)} | Total tune time: {total_tune_time/60:.1f} min | "
+            f"Total elapsed: {(time.time() - start_time)/60:.1f} min\n"
+            f"  Hyperparams varied: {range_summary}"
+        )
+
     # Compute recommendations
+    logger.info("\nComputing recommended panel sizes...")
     recommended = find_recommended_panels(curve)
+
+    total_elapsed = time.time() - start_time
+    logger.info(
+        f"\n{'='*60}\n"
+        f"RFE Completed\n"
+        f"Total time: {total_elapsed/60:.1f} min\n"
+        f"Evaluation points: {len(curve)}\n"
+        f"Max AUROC: {max_auroc_seen:.4f}\n"
+        f"{'='*60}\n"
+    )
 
     return RFEResult(
         curve=curve,

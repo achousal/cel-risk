@@ -8,7 +8,7 @@ cv:
   n_jobs: 1
 
 optuna:
-  n_trials: 2
+  n_trials: 5
   sampler: random
   pruner: hyperband
   pruner_n_startup_trials: 5
