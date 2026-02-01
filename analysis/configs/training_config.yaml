@@ -77,7 +77,7 @@ features:
   model_selector_min_features: 10  # Minimum features floor (prevents empty selection)
 
   # Fixed Panel Configuration (used when feature_selection_strategy='fixed_panel')
-  # The pipeline expects a file named 'fixed_panel.csv' in the configs/ folder
+  # The pipeline expects a file named 'fixed_panel.csv' in the data/ folder
   # CSV format: 'protein' column OR features in first column (one per row, protein names only)
   # Note: age, BMI, sex, ethnicity are automatically added - do not include in CSV
   fixed_panel_csv: "fixed_panel.csv"

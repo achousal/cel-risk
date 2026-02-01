@@ -17,6 +17,10 @@ pipeline:
     - XGBoost
   n_boot: 1000  # Bootstrap iterations for publication-ready CIs
 
+# Output Settings (HPC-specific overrides)
+output:
+  plot_optuna: false  # Disable Optuna plots on HPC (requires Chrome/Kaleido)
+
 # HPC Settings (LSF/Slurm)
 hpc:
   scheduler: lsf  # lsf or slurm

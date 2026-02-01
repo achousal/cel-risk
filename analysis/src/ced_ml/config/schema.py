@@ -233,7 +233,7 @@ class FeatureConfig(BaseModel):
         default=None,
         description=(
             "Path to CSV file containing fixed panel features. "
-            "Relative paths are resolved from configs/ directory. "
+            "Relative paths are resolved from data/ directory. "
             "CSV should have 'protein' column or features in first column. "
             "Only used when feature_selection_strategy='fixed_panel'."
         ),

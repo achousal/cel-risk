@@ -74,7 +74,7 @@ RESULTS_DIR="$SCRIPT_DIR/../../../results"
 INVEST_RESULTS_DIR="$SCRIPT_DIR/../../../results/investigations"
 SPLITS_BASE_DIR="$ANALYSIS_DIR/../splits_experiments"
 LOG_DIR="$ANALYSIS_DIR/../logs/experiments"
-PANEL_FILE="$SCRIPT_DIR/top100_panel.csv"
+PANEL_FILE="$ANALYSIS_DIR/../data/fixed_panel.csv"
 FROZEN_CONFIG="$SCRIPT_DIR/training_config_frozen.yaml"
 
 # Defaults
@@ -381,8 +381,8 @@ if [ "$SKIP_PANEL" = false ] || [ "$FORCE_PANEL" = true ]; then
             PANEL_LOG="$LOG_DIR/panel_generation_${EXPERIMENT_ID}.log"
             if (cd "$ANALYSIS_DIR" && python docs/investigations/generate_fixed_panel.py \
                 --infile ../data/Celiac_dataset_proteomics_w_demo.parquet \
-                --outfile docs/investigations/top100_panel.csv \
-                --final-k 100) > "$PANEL_LOG" 2>&1; then
+                --outfile ../data/fixed_panel.csv \
+                --final-k 25) > "$PANEL_LOG" 2>&1; then
                 PANEL_SIZE=$(wc -l < "$PANEL_FILE" | tr -d ' ')
                 print_success "Panel generated: $PANEL_SIZE proteins"
                 print_info "Panel log: $PANEL_LOG"
@@ -548,7 +548,7 @@ stdbuf -oL -eL ced train \
   --split-seed "$seed" \
   --scenario IncidentPlusPrevalent \
   --outdir "$RESULTS_SUBDIR" \
-  --fixed-panel docs/investigations/top100_panel.csv \
+  --fixed-panel ../data/fixed_panel.csv \
   2>&1 | tee -a "$LIVE_LOG"
 
 exit \${PIPESTATUS[0]}

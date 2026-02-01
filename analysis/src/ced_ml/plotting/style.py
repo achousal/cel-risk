@@ -54,6 +54,13 @@ COLOR_FILL_ALPHA = 0.2
 ALPHA_CI = 0.15
 ALPHA_SD = 0.30
 
+# -- Plot element alpha values --
+ALPHA_SCATTER = 0.7  # Scatter plot markers
+ALPHA_LINE = 0.6  # Line plots connecting points
+ALPHA_REFERENCE = 0.7  # Reference lines (perfect calibration, ideal)
+ALPHA_RECALIBRATION = 0.8  # Recalibration line (slightly higher for emphasis)
+ALPHA_LEGEND_MARKER = 0.7  # Legend marker alpha (unified)
+
 # -- Ensemble / bar chart palette --
 COLOR_BAR_POSITIVE = "#2a9d8f"
 COLOR_BAR_NEGATIVE = "#e76f51"

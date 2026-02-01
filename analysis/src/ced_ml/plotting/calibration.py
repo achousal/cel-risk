@@ -29,6 +29,11 @@ from ced_ml.utils.math_utils import jeffreys_smooth, logit
 
 from .style import (
     ALPHA_CI,
+    ALPHA_LEGEND_MARKER,
+    ALPHA_LINE,
+    ALPHA_RECALIBRATION,
+    ALPHA_REFERENCE,
+    ALPHA_SCATTER,
     ALPHA_SD,
     COLOR_EDGE,
     COLOR_PRIMARY,
@@ -37,6 +42,7 @@ from .style import (
     FONT_LABEL,
     FONT_LEGEND,
     FONT_TITLE,
+    GRID_ALPHA,
     LW_PRIMARY,
     LW_SECONDARY,
     PAD_INCHES,
@@ -123,7 +129,14 @@ def _plot_prob_calibration_panel(
         variable_sizes: If True, circle sizes vary with bin sample counts
         skip_ci_band: If True, skip rendering 95% CI band (only show ±1 SD)
     """
-    ax.plot([0, 1], [0, 1], "k--", linewidth=LW_SECONDARY, label="Perfect calibration", alpha=0.7)
+    ax.plot(
+        [0, 1],
+        [0, 1],
+        "k--",
+        linewidth=LW_SECONDARY,
+        label="Perfect calibration",
+        alpha=ALPHA_REFERENCE,
+    )
 
     if unique_splits is not None and len(unique_splits) > 1:
         curves = []
@@ -191,7 +204,7 @@ def _plot_prob_calibration_panel(
             obs_mean[valid],
             s=scatter_sizes,
             color=COLOR_PRIMARY,
-            alpha=0.7,
+            alpha=ALPHA_SCATTER,
             edgecolors=COLOR_EDGE,
             linewidths=0.5,
         )
@@ -200,7 +213,7 @@ def _plot_prob_calibration_panel(
             obs_mean,
             color=COLOR_PRIMARY,
             linewidth=LW_PRIMARY,
-            alpha=0.6,
+            alpha=ALPHA_LINE,
             label=f"Mean (n={len(curves)} splits)",
         )
     else:
@@ -237,12 +250,16 @@ def _plot_prob_calibration_panel(
             obs[valid],
             s=scatter_sizes,
             color=COLOR_PRIMARY,
-            alpha=0.7,
+            alpha=ALPHA_SCATTER,
             edgecolors=COLOR_EDGE,
             linewidths=0.5,
         )
         ax.plot(
-            pred_means[valid], obs[valid], color=COLOR_PRIMARY, linewidth=LW_SECONDARY, alpha=0.6
+            pred_means[valid],
+            obs[valid],
+            color=COLOR_PRIMARY,
+            linewidth=LW_SECONDARY,
+            alpha=ALPHA_LINE,
         )
 
     bin_label = "quantile" if bin_strategy == "quantile" else "uniform"
@@ -253,7 +270,7 @@ def _plot_prob_calibration_panel(
     ax.set_title(title_text, fontsize=FONT_TITLE, fontweight="bold")
     ax.set_xlabel("Predicted probability", fontsize=FONT_LABEL)
     ax.set_ylabel("Expected frequency", fontsize=FONT_LABEL)
-    ax.grid(True, alpha=0.2)
+    ax.grid(True, alpha=GRID_ALPHA)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     ax.set_aspect("equal")
@@ -302,7 +319,7 @@ def _plot_prob_calibration_panel(
                 markeredgecolor=COLOR_EDGE,
                 markeredgewidth=0.5,
                 linestyle="None",
-                alpha=0.6,
+                alpha=ALPHA_LEGEND_MARKER,
             )
             size_handles.append(handle)
             size_labels.append(f"{sample_count}")
@@ -623,7 +640,7 @@ def _plot_logit_calibration_panel(
                 "-",
                 color=COLOR_PRIMARY,
                 linewidth=LW_PRIMARY,
-                alpha=0.6,
+                alpha=ALPHA_LINE,
                 zorder=4,
             )
 
@@ -646,7 +663,7 @@ def _plot_logit_calibration_panel(
                 s=scatter_area,
                 marker="o",
                 color=COLOR_PRIMARY,
-                alpha=0.7,
+                alpha=ALPHA_SCATTER,
                 edgecolors=COLOR_EDGE,
                 linewidth=0.5,
                 label=f"Mean logit calib (n={len(unique_splits)} splits)",
@@ -680,7 +697,7 @@ def _plot_logit_calibration_panel(
         logit_range_x,
         "k--",
         linewidth=LW_SECONDARY,
-        alpha=0.7,
+        alpha=ALPHA_REFERENCE,
         label="Ideal (α=0, β=1)",
     )
 
@@ -698,7 +715,7 @@ def _plot_logit_calibration_panel(
             recal_y,
             "r-",
             linewidth=LW_PRIMARY,
-            alpha=0.8,
+            alpha=ALPHA_RECALIBRATION,
             label=f"Recalibration (α={calib_intercept:.2f}, β={calib_slope:.2f})",
         )
         # Extend y-range if recalibration line goes outside
@@ -752,7 +769,9 @@ def _plot_logit_calibration_panel(
             )
 
             # Plot line connecting bin centers
-            ax.plot(bx, by, "-", color=COLOR_PRIMARY, linewidth=LW_PRIMARY, alpha=0.6, zorder=5)
+            ax.plot(
+                bx, by, "-", color=COLOR_PRIMARY, linewidth=LW_PRIMARY, alpha=ALPHA_LINE, zorder=5
+            )
 
             # Compute marker sizes: use same sqrt scaling as probability plot
             if bin_strategy == "uniform" and bin_sizes is not None and len(bin_sizes) > 0:
@@ -767,7 +786,7 @@ def _plot_logit_calibration_panel(
                 s=scatter_area,
                 marker="o",
                 color=COLOR_PRIMARY,
-                alpha=0.7,
+                alpha=ALPHA_SCATTER,
                 edgecolors=COLOR_EDGE,
                 linewidth=0.5,
                 label=f"Binned logits (n={len(bx)} bins)",
@@ -839,7 +858,7 @@ def _plot_logit_calibration_panel(
                 markeredgecolor=COLOR_EDGE,
                 markeredgewidth=0.5,
                 linestyle="None",
-                alpha=0.8,
+                alpha=ALPHA_LEGEND_MARKER,
             )
             size_handles.append(handle)
             size_labels.append(f"{sample_count}")
@@ -863,7 +882,7 @@ def _plot_logit_calibration_panel(
     else:
         ax.legend(loc="upper left", fontsize=FONT_LEGEND, framealpha=0.9, labelspacing=1.0)
 
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=GRID_ALPHA)
     ax.set_xlim(logit_range_x)
     ax.set_ylim(logit_range_y)
 

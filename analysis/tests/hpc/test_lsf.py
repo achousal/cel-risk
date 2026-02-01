@@ -158,3 +158,7 @@ def test_build_job_script_log_paths():
     # No more .live.log files - ced commands create their own logs
     assert ".live.log" not in script
     assert "tee" not in script
+    # Verify cleanup logic for empty .err files
+    assert "EXIT_CODE=$?" in script
+    assert "rm -f" in script
+    assert "[ ! -s" in script  # Check for empty file test

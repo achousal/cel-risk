@@ -7,6 +7,27 @@ Analyzes 2x2 factorial design:
 - Factor 2: train_control_per_case (1:1 vs 1:5)
 
 Performs paired t-tests with Bonferroni correction and effect size calculations.
+
+Usage:
+    # Analyze latest run (auto-detect)
+    python investigate_factorial.py
+
+    # Analyze specific run
+    python investigate_factorial.py --run-id run_20260131_232604
+
+    # Custom paths
+    python investigate_factorial.py --results-dir /path/to/results --output-dir /path/to/output
+
+Inputs:
+    - Results from: results/run_{timestamp}/{model}/split_seed{N}/
+    - Reads: config_metadata.json, core/test_metrics.csv
+
+Outputs:
+    - results/{run_id}/analysis/factorial/metrics_all.csv
+    - results/{run_id}/analysis/factorial/comparison_table.csv
+    - results/{run_id}/analysis/factorial/statistical_tests.csv
+    - results/{run_id}/analysis/factorial/power_analysis.csv
+    - results/{run_id}/analysis/factorial/summary.md
 """
 
 import argparse
@@ -22,17 +43,35 @@ from statsmodels.stats.power import TTestPower
 
 def discover_runs(results_root: Path) -> List[Path]:
     """
-    Find all run_* directories in results tree.
+    Find all split directories in results tree.
 
-    Searches for: results/{model}/run_{timestamp}/split_seed{N}/
+    Current structure: results/run_{timestamp}/{model}/splits/split_seed{N}/
+    Legacy structure: results/{model}/run_{timestamp}/split_seed{N}/
+
+    Returns list of split_seed directories containing model outputs.
     """
     run_dirs = []
-    for model_dir in results_root.iterdir():
-        if not model_dir.is_dir() or model_dir.name.startswith('.'):
-            continue
-        for run_dir in model_dir.glob('run_*/split_seed*'):
+
+    # Try current structure: {model}/splits/split_seed* (when called on specific run)
+    for run_dir in results_root.glob('*/splits/split_seed*'):
+        if run_dir.is_dir():
+            run_dirs.append(run_dir)
+
+    # Try alternative: run_*/model/splits/split_seed* (when called on results root)
+    if not run_dirs:
+        for run_dir in results_root.glob('run_*/*/splits/split_seed*'):
             if run_dir.is_dir():
                 run_dirs.append(run_dir)
+
+    # Try legacy structure: model/run_*/split_seed* (no splits subdirectory)
+    if not run_dirs:
+        for model_dir in results_root.iterdir():
+            if not model_dir.is_dir() or model_dir.name.startswith('.'):
+                continue
+            for run_dir in model_dir.glob('run_*/split_seed*'):
+                if run_dir.is_dir():
+                    run_dirs.append(run_dir)
+
     return sorted(run_dirs)
 
 
@@ -47,6 +86,10 @@ def identify_config(run_dir: Path) -> Tuple[str, str, int]:
         n_train=298 + train_prev~50% -> 1:1 ratio
         n_train=894 + train_prev~17% -> 1:5 ratio
         (prevalent_frac inferred from case composition)
+
+    Directory structure:
+        Current: results/run_{timestamp}/{model}/split_seed{N}/
+        Legacy: results/{model}/run_{timestamp}/split_seed{N}/
     """
     metadata_path = run_dir / 'config_metadata.json'
     if not metadata_path.exists():
@@ -78,7 +121,14 @@ def identify_config(run_dir: Path) -> Tuple[str, str, int]:
     config_id = f"{pf}_{ccr}"
 
     # Extract model and seed
-    model_name = run_dir.parent.parent.name
+    # Handle directory structures:
+    #   Current: model/splits/split_seed* -> parent.parent is model
+    #   Legacy: model/run_*/split_seed* -> parent.parent is model
+    if run_dir.parent.name == 'splits':
+        model_name = run_dir.parent.parent.name  # splits/split_seed -> model/splits -> model
+    else:
+        model_name = run_dir.parent.name  # run_*/split_seed -> run_*
+
     split_seed = int(run_dir.name.replace('split_seed', ''))
 
     return config_id, model_name, split_seed
@@ -99,8 +149,9 @@ def extract_metrics(run_dir: Path) -> Dict:
     test_metrics_path = run_dir / 'core' / 'test_metrics.csv'
     if test_metrics_path.exists():
         df = pd.read_csv(test_metrics_path)
-        metrics['AUROC'] = df.loc[0, 'AUROC']
-        metrics['PR_AUC'] = df.loc[0, 'PR_AUC']
+        # Handle both uppercase and lowercase column names
+        metrics['AUROC'] = df.loc[0, 'auroc'] if 'auroc' in df.columns else df.loc[0, 'AUROC']
+        metrics['PR_AUC'] = df.loc[0, 'prauc'] if 'prauc' in df.columns else df.loc[0, 'PR_AUC']
         metrics['Sens_95spec'] = df.loc[0, 'sens_ctrl_95']
         metrics['Brier'] = df.loc[0, 'brier_score'] if 'brier_score' in df.columns else None
 
@@ -250,56 +301,146 @@ def generate_summary(
 ):
     """
     Generate human-readable markdown summary with interpretation.
+
+    Falls back to CSV if tabulate is not available.
     """
     with open(output_path, 'w') as f:
         f.write("# Factorial Experiment Results\n\n")
         f.write(f"**Analysis Date**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}\n\n")
 
-        f.write("## Summary Statistics\n\n")
-        f.write(comparison_df.to_markdown(index=False))
-        f.write("\n\n")
+        # Try markdown format, fallback to CSV-style
+        try:
+            f.write("## Summary Statistics\n\n")
+            f.write(comparison_df.to_markdown(index=False))
+            f.write("\n\n")
 
-        f.write("## Statistical Tests\n\n")
-        f.write(statistical_tests.to_markdown(index=False))
-        f.write("\n\n")
+            f.write("## Statistical Tests\n\n")
+            f.write(statistical_tests.to_markdown(index=False))
+            f.write("\n\n")
 
-        f.write("## Power Analysis\n\n")
-        f.write(power_df.to_markdown(index=False))
-        f.write("\n\n")
+            f.write("## Power Analysis\n\n")
+            f.write(power_df.to_markdown(index=False))
+            f.write("\n\n")
+        except ImportError:
+            # Fallback to CSV format if tabulate not available
+            f.write("## Summary Statistics\n\n")
+            f.write("```csv\n")
+            comparison_df.to_csv(f, index=False)
+            f.write("```\n\n")
+
+            f.write("## Statistical Tests\n\n")
+            f.write("```csv\n")
+            statistical_tests.to_csv(f, index=False)
+            f.write("```\n\n")
+
+            f.write("## Power Analysis\n\n")
+            f.write("```csv\n")
+            power_df.to_csv(f, index=False)
+            f.write("```\n\n")
 
         # Interpretation
         f.write("## Interpretation\n\n")
 
-        sig_tests = statistical_tests[statistical_tests['significant']]
-        if len(sig_tests) > 0:
-            f.write("### Significant Differences (Bonferroni-corrected)\n\n")
-            for _, row in sig_tests.iterrows():
-                f.write(f"- **{row['comparison']}** ({row['model']}): "
-                       f"Δ={row['mean_diff']:.3f}, d={row['cohen_d']:.2f}, "
-                       f"p={row['p_value']:.4f}\n")
+        if len(statistical_tests) == 0:
+            f.write("No statistical tests performed (insufficient data or single config).\n")
+        elif 'significant' in statistical_tests.columns:
+            sig_tests = statistical_tests[statistical_tests['significant']]
+            if len(sig_tests) > 0:
+                f.write("### Significant Differences (Bonferroni-corrected)\n\n")
+                for _, row in sig_tests.iterrows():
+                    f.write(f"- **{row['comparison']}** ({row['model']}): "
+                           f"Δ={row['mean_diff']:.3f}, d={row['cohen_d']:.2f}, "
+                           f"p={row['p_value']:.4f}\n")
+            else:
+                f.write("No statistically significant differences detected.\n")
         else:
-            f.write("No statistically significant differences detected.\n")
+            f.write("Statistical test results unavailable.\n")
 
         f.write("\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Factorial experiment analysis')
-    parser.add_argument('--results-dir', type=Path, required=True,
-                       help='Results root directory')
-    parser.add_argument('--output-dir', type=Path, required=True,
-                       help='Output directory for analysis')
-    parser.add_argument('--metric', default='AUROC',
-                       help='Primary metric for statistical testing')
+    parser = argparse.ArgumentParser(
+        description='Factorial experiment analysis',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Analyze latest run (auto-detect from results/)
+  python investigate_factorial.py
+
+  # Analyze specific run
+  python investigate_factorial.py --run-id run_20260131_232604
+
+  # Specify custom paths
+  python investigate_factorial.py --results-dir /path/to/results --output-dir /path/to/output
+        """
+    )
+    parser.add_argument(
+        '--results-dir',
+        type=Path,
+        default=None,
+        help='Results root directory (default: auto-detect from script location → ../../results/)'
+    )
+    parser.add_argument(
+        '--run-id',
+        type=str,
+        default=None,
+        help='Specific run ID to analyze (e.g., run_20260131_232604). If not provided, uses latest run.'
+    )
+    parser.add_argument(
+        '--output-dir',
+        type=Path,
+        default=None,
+        help='Output directory for analysis (default: results/{run_id}/analysis/factorial/)'
+    )
+    parser.add_argument(
+        '--metric',
+        default='AUROC',
+        help='Primary metric for statistical testing (default: AUROC)'
+    )
     args = parser.parse_args()
+
+    # Auto-detect project root and results directory
+    if args.results_dir is None:
+        # Script location: analysis/docs/investigations/investigate_factorial.py
+        # Project root: ../../../
+        script_dir = Path(__file__).resolve().parent
+        project_root = script_dir.parent.parent.parent
+        args.results_dir = project_root / 'results'
+        print(f"Auto-detected results directory: {args.results_dir}")
+
+    if not args.results_dir.exists():
+        raise FileNotFoundError(f"Results directory not found: {args.results_dir}")
+
+    # Determine run_id (use specified or latest)
+    if args.run_id:
+        run_path = args.results_dir / args.run_id
+        if not run_path.exists():
+            raise FileNotFoundError(f"Run directory not found: {run_path}")
+        selected_run = args.run_id
+    else:
+        # Find latest run_* directory
+        run_dirs = sorted([d for d in args.results_dir.glob('run_*') if d.is_dir()])
+        if not run_dirs:
+            raise FileNotFoundError(f"No run_* directories found in {args.results_dir}")
+        selected_run = run_dirs[-1].name
+        print(f"Auto-detected latest run: {selected_run}")
+
+    # Set search path to specific run
+    search_path = args.results_dir / selected_run
+
+    # Auto-detect output directory if not specified
+    if args.output_dir is None:
+        args.output_dir = search_path / 'analysis' / 'factorial'
+        print(f"Auto-detected output directory: {args.output_dir}")
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Discover runs
-    print("Discovering runs...")
-    run_dirs = discover_runs(args.results_dir)
-    print(f"Found {len(run_dirs)} run directories")
+    print(f"Discovering runs in: {search_path}")
+    run_dirs = discover_runs(search_path)
+    print(f"Found {len(run_dirs)} split directories")
 
     # Extract metrics
     print("Extracting metrics...")

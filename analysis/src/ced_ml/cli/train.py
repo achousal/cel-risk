@@ -733,12 +733,12 @@ def run_train(
     # Check if fixed panel is specified in config
     if not fixed_panel_path and config.features.feature_selection_strategy == "fixed_panel":
         if config.features.fixed_panel_csv:
-            # Resolve path relative to configs/ directory if not absolute
+            # Resolve path relative to data/ directory if not absolute
             fixed_panel_path = Path(config.features.fixed_panel_csv)
             if not fixed_panel_path.is_absolute():
-                # Assume path is relative to configs/ directory
-                config_dir = Path(__file__).parent.parent.parent.parent / "configs"
-                fixed_panel_path = config_dir / fixed_panel_path
+                # Assume path is relative to data/ directory
+                data_dir = Path(__file__).parent.parent.parent.parent.parent / "data"
+                fixed_panel_path = data_dir / fixed_panel_path
         else:
             raise ValueError(
                 "feature_selection_strategy='fixed_panel' but fixed_panel_csv not specified in config. "
@@ -1176,111 +1176,117 @@ def run_train(
             logger.info(f"Optuna best params saved: {optuna_params_path}")
 
             # Generate Optuna plots using existing study (no refitting)
-            try:
-                from ced_ml.plotting.optuna_plots import save_optuna_plots
+            if config.output.plot_optuna:
+                try:
+                    from ced_ml.plotting.optuna_plots import save_optuna_plots
 
-                logger.info("Generating Optuna hyperparameter tuning plots...")
+                    logger.info("Generating Optuna hyperparameter tuning plots...")
 
-                # Try to load study from persistent storage if configured
-                study_loaded = False
-                if config.optuna.storage and config.optuna.study_name:
-                    try:
-                        import optuna
+                    # Try to load study from persistent storage if configured
+                    study_loaded = False
+                    if config.optuna.storage and config.optuna.study_name:
+                        try:
+                            import optuna
 
+                            logger.info(
+                                f"Loading existing Optuna study from storage: {config.optuna.study_name}"
+                            )
+                            study = optuna.load_study(
+                                study_name=config.optuna.study_name, storage=config.optuna.storage
+                            )
+                            study_loaded = True
+                            logger.info(
+                                f"Successfully loaded study with {len(study.trials)} trials "
+                                "(reusing from CV, no refitting needed)"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not load study from storage: {e}")
+
+                    # Fallback: refit if study not available in storage
+                    if not study_loaded:
                         logger.info(
-                            f"Loading existing Optuna study from storage: {config.optuna.study_name}"
+                            "No persistent study storage configured, refitting for plots "
+                            "(consider setting optuna.storage and optuna.study_name to avoid this)"
                         )
-                        study = optuna.load_study(
-                            study_name=config.optuna.study_name, storage=config.optuna.storage
+                        from ced_ml.models.training import _build_hyperparameter_search
+
+                        # Build and fit hyperparameter search on full training set
+                        optuna_pipeline = build_training_pipeline(
+                            config,
+                            classifier,
+                            protein_cols,
+                            resolved.categorical_metadata,
+                            model_name=config.model,
                         )
-                        study_loaded = True
-                        logger.info(
-                            f"Successfully loaded study with {len(study.trials)} trials "
-                            "(reusing from CV, no refitting needed)"
+
+                        xgb_spw = None
+                        if config.model == ModelName.XGBoost:
+                            from ced_ml.models.training import _compute_xgb_scale_pos_weight
+
+                            xgb_spw = _compute_xgb_scale_pos_weight(y_train, config)
+
+                        optuna_search = _build_hyperparameter_search(
+                            optuna_pipeline, config.model, config, seed, xgb_spw, grid_rng=None
                         )
-                    except Exception as e:
-                        logger.warning(f"Could not load study from storage: {e}")
 
-                # Fallback: refit if study not available in storage
-                if not study_loaded:
-                    logger.info(
-                        "No persistent study storage configured, refitting for plots "
-                        "(consider setting optuna.storage and optuna.study_name to avoid this)"
-                    )
-                    from ced_ml.models.training import _build_hyperparameter_search
-
-                    # Build and fit hyperparameter search on full training set
-                    optuna_pipeline = build_training_pipeline(
-                        config,
-                        classifier,
-                        protein_cols,
-                        resolved.categorical_metadata,
-                        model_name=config.model,
-                    )
-
-                    xgb_spw = None
-                    if config.model == ModelName.XGBoost:
-                        from ced_ml.models.training import _compute_xgb_scale_pos_weight
-
-                        xgb_spw = _compute_xgb_scale_pos_weight(y_train, config)
-
-                    optuna_search = _build_hyperparameter_search(
-                        optuna_pipeline, config.model, config, seed, xgb_spw, grid_rng=None
-                    )
-
-                    if optuna_search is not None:
-                        optuna_search.fit(X_train, y_train)
-                        if hasattr(optuna_search, "study_") and optuna_search.study_ is not None:
-                            study = optuna_search.study_
+                        if optuna_search is not None:
+                            optuna_search.fit(X_train, y_train)
+                            if (
+                                hasattr(optuna_search, "study_")
+                                and optuna_search.study_ is not None
+                            ):
+                                study = optuna_search.study_
+                            else:
+                                study = None
                         else:
                             study = None
-                    else:
-                        study = None
 
-                # Generate plots if we have a study
-                if study is not None:
-                    save_optuna_plots(
-                        study=study,
-                        out_dir=cv_dir,
-                        prefix=f"{config.model}__",
-                        plot_format=config.output.plot_format,
-                    )
-                    logger.info(f"Optuna plots saved to: {cv_dir}")
-
-                    # Generate Pareto frontier plot if multi-objective
-                    # Note: Pareto plot needs the search_cv object, not just the study
-                    # Only available if we had to refit (fallback path)
-                    if (
-                        hasattr(config.optuna, "multi_objective")
-                        and config.optuna.multi_objective
-                        and not study_loaded
-                        and "optuna_search" in locals()
-                    ):
-                        from ced_ml.plotting.optuna_plots import plot_pareto_frontier
-
-                        try:
-                            plot_pareto_frontier(
-                                search_cv=optuna_search,
-                                outdir=cv_dir,
-                                plot_format=config.output.plot_format,
-                                dpi=config.output.plot_dpi,
-                            )
-                            logger.info(f"Pareto frontier plot saved to: {cv_dir}")
-                        except Exception as e:
-                            logger.warning(f"Failed to generate Pareto frontier plot: {e}")
-                    elif (
-                        hasattr(config.optuna, "multi_objective")
-                        and config.optuna.multi_objective
-                        and study_loaded
-                    ):
-                        logger.info(
-                            "Pareto frontier plot skipped (requires refitting, use persistent storage to avoid)"
+                    # Generate plots if we have a study
+                    if study is not None:
+                        save_optuna_plots(
+                            study=study,
+                            out_dir=cv_dir,
+                            prefix=f"{config.model}__",
+                            plot_format=config.output.plot_format,
                         )
-                else:
-                    logger.warning("No Optuna study available for plotting")
+                        logger.info(f"Optuna plots saved to: {cv_dir}")
 
-            except Exception as e:
-                logger.warning(f"Failed to generate Optuna plots: {e}")
+                        # Generate Pareto frontier plot if multi-objective
+                        # Note: Pareto plot needs the search_cv object, not just the study
+                        # Only available if we had to refit (fallback path)
+                        if (
+                            hasattr(config.optuna, "multi_objective")
+                            and config.optuna.multi_objective
+                            and not study_loaded
+                            and "optuna_search" in locals()
+                        ):
+                            from ced_ml.plotting.optuna_plots import plot_pareto_frontier
+
+                            try:
+                                plot_pareto_frontier(
+                                    search_cv=optuna_search,
+                                    outdir=cv_dir,
+                                    plot_format=config.output.plot_format,
+                                    dpi=config.output.plot_dpi,
+                                )
+                                logger.info(f"Pareto frontier plot saved to: {cv_dir}")
+                            except Exception as e:
+                                logger.warning(f"Failed to generate Pareto frontier plot: {e}")
+                        elif (
+                            hasattr(config.optuna, "multi_objective")
+                            and config.optuna.multi_objective
+                            and study_loaded
+                        ):
+                            logger.info(
+                                "Pareto frontier plot skipped (requires refitting, use persistent storage to avoid)"
+                            )
+                    else:
+                        logger.warning("No Optuna study available for plotting")
+
+                except Exception as e:
+                    logger.warning(f"Failed to generate Optuna plots: {e}")
+            else:
+                logger.info("Optuna plots disabled (output.plot_optuna=False)")
 
         else:
             logger.warning(
