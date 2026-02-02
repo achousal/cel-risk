@@ -33,7 +33,7 @@ repos:
     rev: v0.1.14
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix]
         files: ^analysis/(src|tests)/.*\.py$
 
   # Python type checking - Disabled due to many type issues, run manually
