@@ -36,7 +36,6 @@ from ced_ml.features.kbest import (
     build_kbest_pipeline_step,
 )
 from ced_ml.features.panels import build_multi_size_panels
-from ced_ml.features.screening import screen_proteins
 from ced_ml.features.stability import (
     compute_selection_frequencies,
     extract_stable_panel,
@@ -1942,6 +1941,27 @@ def run_train(
                 n_train_prevalent=train_breakdown.get("prevalent"),
                 split_mode="development",
             )
+            # Precompute screening on full training set so learning curve
+            # iterations reuse the result instead of re-running Mann-Whitney
+            # 25 times (5 sizes x 5 folds).
+            lc_precomputed_screen = None
+            screen_method = getattr(config.features, "screen_method", "none")
+            screen_top_n = getattr(config.features, "screen_top_n", 0)
+            if screen_method and screen_method != "none" and screen_top_n > 0:
+                from ced_ml.features.screening import screen_proteins
+
+                lc_precomputed_screen, _, _ = screen_proteins(
+                    X_train=X_train,
+                    y_train=y_train,
+                    protein_cols=protein_cols,
+                    method=screen_method,
+                    top_n=screen_top_n,
+                )
+                logger.info(
+                    f"Precomputed screening for learning curve: "
+                    f"{len(lc_precomputed_screen)} proteins"
+                )
+
             # Build a fresh pipeline for learning curve (don't use fitted one)
             lc_pipeline = build_training_pipeline(
                 config,
@@ -1950,6 +1970,10 @@ def run_train(
                 resolved.categorical_metadata,
                 model_name=config.model,
             )
+
+            # Inject precomputed screening to avoid redundant computation
+            if lc_precomputed_screen is not None and "screen" in dict(lc_pipeline.steps):
+                lc_pipeline.named_steps["screen"].precomputed_features = lc_precomputed_screen
             save_learning_curve_csv(
                 estimator=lc_pipeline,
                 X=X_train,

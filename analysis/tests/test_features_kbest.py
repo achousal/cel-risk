@@ -445,3 +445,39 @@ def test_screening_transformer_attributes():
     assert (
         len(screener.selected_proteins_) == 2
     ), f"Expected 2 proteins, got {len(screener.selected_proteins_)}"
+
+
+def test_screening_transformer_precomputed_features():
+    """Test ScreeningTransformer skips screening when precomputed_features is set."""
+    from ced_ml.features.kbest import ScreeningTransformer
+
+    rng = np.random.default_rng(42)
+    X = pd.DataFrame(
+        {
+            "P1": rng.normal(0, 1, 100),
+            "P2": rng.normal(1.5, 1, 100),
+            "P3": rng.normal(0, 1, 100),
+            "meta_col": rng.choice(["A", "B"], 100),
+        }
+    )
+    y = np.concatenate([np.zeros(50), np.ones(50)])
+
+    precomputed = ["P1", "P3"]
+    screener = ScreeningTransformer(
+        method="mannwhitney",
+        top_n=2,
+        protein_cols=["P1", "P2", "P3"],
+        precomputed_features=precomputed,
+    )
+    screener.fit(X, y)
+
+    assert screener.selected_features_ == ["P1", "P3"]
+    assert screener.selected_proteins_ == ["P1", "P3"]
+    assert screener.screening_stats_ is None
+
+    # Transform should keep precomputed proteins + non-protein columns
+    result = screener.transform(X)
+    assert "P1" in result.columns
+    assert "P3" in result.columns
+    assert "meta_col" in result.columns
+    assert "P2" not in result.columns

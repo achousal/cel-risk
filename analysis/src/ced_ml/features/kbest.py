@@ -391,6 +391,7 @@ class ScreeningTransformer:
         method: str = "mannwhitney",
         top_n: int = 1000,
         protein_cols: list[str] | None = None,
+        precomputed_features: list[str] | None = None,
     ):
         """Initialize screening transformer.
 
@@ -398,10 +399,14 @@ class ScreeningTransformer:
             method: "mannwhitney" or "f_classif"
             top_n: Number of top features to keep
             protein_cols: List of protein column names (set during fit)
+            precomputed_features: If provided, skip screening and use these
+                features directly. Useful for learning curves where screening
+                should be computed once on the full training set.
         """
         self.method = method
         self.top_n = top_n
         self.protein_cols = protein_cols or []
+        self.precomputed_features = precomputed_features
         self.selected_features_ = None
         self.screening_stats_ = None
 
@@ -434,6 +439,13 @@ class ScreeningTransformer:
                 "not after. Current pipeline has ColumnTransformer -> ScreeningTransformer "
                 "which is incompatible."
             )
+
+        # Short-circuit: use precomputed features (e.g. for learning curves)
+        if self.precomputed_features is not None:
+            self.selected_features_ = list(self.precomputed_features)
+            self.selected_proteins_ = list(self.precomputed_features)
+            self.screening_stats_ = None
+            return self
 
         # Determine protein columns if not set
         if not self.protein_cols:
