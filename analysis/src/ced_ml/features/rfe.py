@@ -484,6 +484,7 @@ def _quick_tune_at_k(
     n_trials: int = 20,
     n_jobs: int = 1,
     random_state: int = 42,
+    rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> tuple[Pipeline, dict]:
     """Re-tune hyperparameters at a specific panel size k.
 
@@ -501,6 +502,8 @@ def _quick_tune_at_k(
         n_trials: Number of Optuna trials.
         n_jobs: Parallel jobs for Optuna CV evaluation.
         random_state: Random seed.
+        rfe_tune_spaces: Optional config-driven search spaces from
+            optimize_panel.yaml. Passed to ``get_rfe_tune_space``.
 
     Returns:
         Tuple of (fitted Pipeline with best params, best_params dict).
@@ -516,7 +519,7 @@ def _quick_tune_at_k(
     # Suppress Optuna verbosity
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    tune_space = get_rfe_tune_space(model_name)
+    tune_space = get_rfe_tune_space(model_name, config_overrides=rfe_tune_spaces)
     param_names = [k.replace("clf__", "") for k in tune_space]
     logger.info(
         f"[RFE k={len(feature_cols)}] Tuning {len(tune_space)} hyperparams "
@@ -682,6 +685,7 @@ def recursive_feature_elimination(
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
     selection_freq: dict[str, float] | None = None,
+    rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> RFEResult:
     """Perform recursive feature elimination to find minimum viable panel.
 
@@ -720,6 +724,8 @@ def recursive_feature_elimination(
         corr_method: Correlation method ("spearman" or "pearson").
         selection_freq: Stability selection frequencies for representative
             selection. If None, uses uniform weights.
+        rfe_tune_spaces: Optional config-driven per-model search spaces from
+            optimize_panel.yaml. Overrides hardcoded RFE_TUNE_SPACES defaults.
 
     Returns:
         RFEResult with curve, feature_ranking, and recommended_panels.
@@ -734,8 +740,13 @@ def recursive_feature_elimination(
     logger.info(f"  X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
     logger.info(f"  model_name: {model_name}")
 
-    # Check if per-k tuning is available for this model
-    can_retune = model_name in RFE_TUNE_SPACES
+    # Check if per-k tuning is available for this model.
+    # When config overrides are provided (rfe_tune_spaces from optimize_panel.yaml),
+    # only models listed there get retuned. Models absent from config use fixed HPs.
+    if rfe_tune_spaces:
+        can_retune = model_name in rfe_tune_spaces
+    else:
+        can_retune = model_name in RFE_TUNE_SPACES
     if can_retune:
         logger.info(
             f"  Per-k hyperparameter re-tuning: enabled "
@@ -884,6 +895,7 @@ def recursive_feature_elimination(
                     n_trials=retune_n_trials,
                     n_jobs=retune_n_jobs,
                     random_state=random_state,
+                    rfe_tune_spaces=rfe_tune_spaces,
                 )
                 total_tune_time += time.time() - tune_start
                 all_best_params.append(best_params)

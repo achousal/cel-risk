@@ -5,6 +5,9 @@
 #   ced optimize-panel --run-id 20260127_104409                # All models (RECOMMENDED)
 #   ced optimize-panel --run-id 20260127_104409 --model LR_EN  # Single model
 #
+# PRIORITY: This file is loaded first, CLI args override these values.
+#   When using `ced run-pipeline`, values from this file are used as defaults.
+#
 # Reference: docs/reference/FEATURE_SELECTION.md#aggregated-rfe-deployment-optimization
 
 # ==============================================================================
@@ -12,16 +15,18 @@
 # ==============================================================================
 
 stability_threshold: 0.90    # Minimum selection fraction for stable proteins (default: 0.90)
+start_size: 100               # Cap starting panel to top N proteins by selection frequency (null = no cap)
 min_size: 5                  # Minimum panel size to evaluate (default: 5)
-min_auroc_frac: 0.5         # Early stop if AUROC < this fraction of max (default: 0.90)
-cv_folds: 0                  # CV folds for OOF AUROC (default: 0 = skip, validation-only)
-step_strategy: fine          # Feature elimination: geometric, linear, fine (default: geometric)
+min_auroc_frac: 0.50         # Early stop if AUROC < this fraction of max (default: 0.90)
+cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended for stable estimates)
+step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # ==============================================================================
 # Per-k Hyperparameter Re-tuning
 # ==============================================================================
 
-retune_trials: 40            # Optuna trials per evaluation point (default: 40)
+retune_trials: 40            # Optuna trials per evaluation point (was 40; 60 for more reliable tuning)
+retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # ==============================================================================
 # Correlation-Aware Pruning
@@ -35,4 +40,23 @@ corr_method: spearman        # Correlation method: spearman or pearson (default:
 # HPC Parallelization (only used with --hpc flag)
 # ==============================================================================
 
-n_jobs_hpc: -1                       # Number of parallel jobs per model (-1 = all CPUs, only with --hpc)
+n_jobs_hpc: -1               # Number of parallel jobs per model (-1 = all CPUs, only with --hpc)
+
+# ==============================================================================
+# Per-k Hyperparameter Search Spaces (mirrors training_config.yaml Optuna ranges)
+# ==============================================================================
+# Defines Optuna search spaces for per-panel-size re-tuning during RFE.
+# Parameter names use clf__ prefix (sklearn Pipeline convention).
+# If a model key is absent, falls back to hardcoded defaults in hyperparams.py.
+# To keep experimental design consistent, these should match training_config.yaml
+# Optuna ranges unless you have a specific reason to diverge.
+
+rfe_tune_spaces:
+  LR_EN:
+    clf__C: {type: float, low: 1.0e-4, high: 1.0, log: true}
+    clf__l1_ratio: {type: float, low: 0.0, high: 1.0, log: false}
+  LinSVM_cal:
+    clf__estimator__C: {type: float, low: 1.0e-3, high: 1.0, log: true}
+  # RF and XGBoost: fixed HPs from full-feature training (no per-k re-tuning).
+  # Tree ensembles are robust to feature count changes; re-tuning at each k
+  # introduces noise and overfitting risk with small positive class.

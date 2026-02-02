@@ -1007,6 +1007,8 @@ class TestConsensusPanelWithRunId:
                     str(small_proteomics_data),
                     "--split-dir",
                     str(splits_dir),
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )

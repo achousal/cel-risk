@@ -56,7 +56,7 @@ features:
 
   # Strategy 1: Hybrid Stability parameters (used if strategy=hybrid_stability)
   k_grid: [100, 150, 200, 300, 400]  # K-best tuning grid
-  stability_thresh: 0.70  # Stability selection threshold
+  stability_thresh: 0.85  # Stability selection threshold (was 0.70; raised to reduce panel size)
   stable_corr_thresh: 0.85  # Remove features with r > 0.85
 
   # Strategy 2: RFECV parameters (used if strategy=rfecv)
@@ -92,15 +92,15 @@ features:
 # Logistic Regression (LR_EN, LR_L1)
 lr:
   # Tuned parameters (explored by RandomizedSearchCV/Optuna):
-  C_min: 0.0001            # Expanded range for exploration
-  C_max: 10.0              # (was 1.0)
-  C_points: 20             # (was 10)
+  C_min: 0.001
+  C_max: 10.0
+  C_points: 20
   l1_ratio: [0.0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0] # Expanded to include L1-heavy
   class_weight_options: "balanced"  # Options: "None", "balanced", "{0:1,1:5}"
 
   # Optuna-specific ranges (optional, override C_min/C_max):
-  optuna_C: [1.0e-5, 100.0]         # Expanded for exploratory search
-  optuna_l1_ratio: [0.0, 1.0]        # Full range
+  optuna_C: [0.01, 100.0]
+  optuna_l1_ratio: [0.0, 1.0]
 
   # Fixed parameters (used as baseline for all trials):
   solver: saga              # Solver supporting L1/ElasticNet
@@ -112,9 +112,9 @@ lr:
 # Linear SVM (LinSVM_cal) - wrapped in CalibratedClassifierCV
 svm:
   # Tuned parameters (explored by RandomizedSearchCV/Optuna):
-  C_min: 0.0001             # Expanded range
-  C_max: 10.0               # (was 1.0)
-  C_points: 15              # (was 10)
+  C_min: 0.0001
+  C_max: 10.0
+  C_points: 15
   class_weight_options: "balanced"
 
   # Optuna-specific ranges (optional, override C_min/C_max):
@@ -138,9 +138,9 @@ rf:
 
   # Optuna-specific ranges (optional, override grid-derived ranges)
   optuna_n_estimators: [100, 800]            # Exploratory range
-  optuna_max_depth: [5, 50]                  # Exploratory range
+  optuna_max_depth: [5, 30]                  # Capped at 30 (was 50) to reduce overfitting
   optuna_min_samples_split: [2, 30]          # Exploratory range
-  optuna_min_samples_leaf: [1, 15]           # Exploratory range
+  optuna_min_samples_leaf: [2, 20]           # Raised floor to 2, cap to 20 (was 1-15)
   optuna_max_features: [0.05, 0.8]           # Exploratory range
 
   # Search algorithm settings:
@@ -161,7 +161,7 @@ xgboost:
   reg_lambda_grid: [1.0, 5.0, 10.0, 30.0, 50.0, 100.0]  # Much stronger L2
 
   # Optuna-specific ranges - regularized for production
-  optuna_n_estimators: [500, 2500]         # More rounds (was 50-1500)
+  optuna_n_estimators: [500, 1000]         # Capped at 1000 (was 2500) to limit overfitting via boosting rounds
   optuna_max_depth: [3, 7]                 # Shallow only (was 3-10)
   optuna_learning_rate: [0.005, 0.05]      # Slow (was 0.005-0.3)
   optuna_min_child_weight: [5.0, 30.0]     # Conservative (was 0.1-20.0)

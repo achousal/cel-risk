@@ -891,7 +891,15 @@ class TestPanelOptimizationOutputStructure:
 
         result_opt = runner.invoke(
             cli,
-            ["optimize-panel", "--run-id", run_id, "--min-size", "2"],
+            [
+                "optimize-panel",
+                "--run-id",
+                run_id,
+                "--min-size",
+                "2",
+                "--stability-threshold",
+                "0.75",
+            ],
             catch_exceptions=False,
         )
 
@@ -977,7 +985,15 @@ class TestPanelOptimizationOutputStructure:
 
         result_opt = runner.invoke(
             cli,
-            ["optimize-panel", "--run-id", run_id, "--min-size", "2"],
+            [
+                "optimize-panel",
+                "--run-id",
+                run_id,
+                "--min-size",
+                "2",
+                "--stability-threshold",
+                "0.75",
+            ],
             catch_exceptions=False,
         )
 
@@ -1091,6 +1107,8 @@ class TestConsensusPanelOutputStructure:
                     str(tiny_proteomics_data),
                     "--split-dir",
                     str(splits_dir),
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )
@@ -1197,6 +1215,8 @@ class TestConsensusPanelOutputStructure:
                     str(tiny_proteomics_data),
                     "--split-dir",
                     str(splits_dir),
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )

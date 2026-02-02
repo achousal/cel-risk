@@ -788,9 +788,9 @@ class PanelOptimizeConfig(BaseModel):
     )
 
     # Elimination strategy
-    step_strategy: Literal["adaptive", "linear", "geometric"] = Field(
-        default="adaptive",
-        description="Feature elimination strategy: adaptive (10%/iter), linear (1/iter), geometric",
+    step_strategy: Literal["adaptive", "linear", "geometric", "fine"] = Field(
+        default="fine",
+        description="Feature elimination strategy: fine (geometric+quarter-steps), geometric, adaptive, linear",
     )
 
     # Feature initialization

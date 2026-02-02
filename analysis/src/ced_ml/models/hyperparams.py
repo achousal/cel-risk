@@ -887,15 +887,17 @@ def _is_log_spaced(values: list) -> bool:
 # keeping n_estimators fixed for tree models to reduce search cost.
 
 RFE_TUNE_SPACES: dict[str, dict[str, dict]] = {
+    # C capped at 1.0 for linear models to prevent overfitting at high feature counts
+    # (was 100.0; caused inverted Pareto curves where fewer features -> higher AUROC)
     "LR_EN": {
-        "clf__C": {"type": "float", "low": 1e-4, "high": 100.0, "log": True},
+        "clf__C": {"type": "float", "low": 1e-4, "high": 1.0, "log": True},
         "clf__l1_ratio": {"type": "float", "low": 0.0, "high": 1.0, "log": False},
     },
     "LR_L1": {
-        "clf__C": {"type": "float", "low": 1e-4, "high": 100.0, "log": True},
+        "clf__C": {"type": "float", "low": 1e-4, "high": 1.0, "log": True},
     },
     "LinSVM_cal": {
-        "clf__estimator__C": {"type": "float", "low": 1e-3, "high": 100.0, "log": True},
+        "clf__estimator__C": {"type": "float", "low": 1e-3, "high": 1.0, "log": True},
     },
     "RF": {
         "clf__max_depth": {"type": "int", "low": 3, "high": 20, "log": False},
@@ -909,22 +911,31 @@ RFE_TUNE_SPACES: dict[str, dict[str, dict]] = {
 }
 
 
-def get_rfe_tune_space(model_name: str) -> dict[str, dict]:
-    """Return reduced Optuna search space for RFE per-k hyperparameter tuning.
+def get_rfe_tune_space(
+    model_name: str,
+    config_overrides: dict[str, dict[str, dict]] | None = None,
+) -> dict[str, dict]:
+    """Return Optuna search space for RFE per-k hyperparameter tuning.
 
-    These spaces focus on parameters most sensitive to panel dimensionality,
-    keeping ensemble size (n_estimators) fixed for tree-based models.
+    If ``config_overrides`` contains an entry for *model_name*, that entry
+    is used verbatim (full replacement).  Otherwise falls back to the
+    hardcoded ``RFE_TUNE_SPACES`` defaults.
 
     Args:
         model_name: Model identifier (e.g., "LR_EN", "RF", "XGBoost").
+        config_overrides: Optional mapping ``{model_name: {param: spec}}``
+            loaded from ``optimize_panel.yaml`` ``rfe_tune_spaces`` section.
 
     Returns:
         Dictionary mapping parameter names (with clf__ prefix) to Optuna
         suggest specs: {"type": str, "low": num, "high": num, "log": bool}.
 
     Raises:
-        ValueError: If model_name is not recognized.
+        ValueError: If model_name is not recognized in either source.
     """
+    if config_overrides and model_name in config_overrides:
+        return dict(config_overrides[model_name])
+
     if model_name not in RFE_TUNE_SPACES:
         raise ValueError(
             f"No RFE tune space defined for model '{model_name}'. "

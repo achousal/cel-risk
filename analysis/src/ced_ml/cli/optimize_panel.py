@@ -157,12 +157,13 @@ def run_optimize_panel(
     outdir: str | None = None,
     use_stability_panel: bool = True,
     log_level: int | None = None,
-    retune_n_trials: int = 40,
-    retune_cv_folds: int = 3,
+    retune_n_trials: int = 60,
+    retune_cv_folds: int = 5,
     retune_n_jobs: int = 1,
     corr_aware: bool = True,
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
+    rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> RFEResult:
     """Run panel optimization via Recursive Feature Elimination.
 
@@ -429,6 +430,7 @@ def run_optimize_panel(
         corr_threshold=corr_threshold,
         corr_method=corr_method,
         selection_freq=selection_freq,
+        rfe_tune_spaces=rfe_tune_spaces,
     )
 
     logger.info(f"RFE complete. Max AUROC: {result.max_auroc:.4f}")
@@ -588,16 +590,18 @@ def run_optimize_panel_single_seed(
     seed: int,
     model_name: str | None = None,
     stability_threshold: float = 0.90,
+    start_size: int | None = None,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
     cv_folds: int = 0,
     step_strategy: str = "geometric",
     log_level: int | None = None,
-    retune_n_trials: int = 40,
+    retune_n_trials: int = 60,
     retune_n_jobs: int = 1,
     corr_aware: bool = True,
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
+    rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> RFEResult:
     """Run panel optimization RFE for a single split seed and save the result.
 
@@ -612,6 +616,8 @@ def run_optimize_panel_single_seed(
         seed: The split seed to run RFE for.
         model_name: Model name (auto-detected if None).
         stability_threshold: Minimum selection frequency (default: 0.90).
+        start_size: Cap starting panel to top N proteins by selection frequency.
+            None or 0 means no cap (use all stable proteins).
         min_size: Minimum panel size.
         min_auroc_frac: Early stop threshold.
         cv_folds: CV folds for RFE.
@@ -674,6 +680,15 @@ def run_optimize_panel_single_seed(
     if not stable_proteins:
         raise ValueError(f"No proteins meet stability threshold {stability_threshold:.2f}.")
 
+    # Cap to top start_size proteins by selection frequency (if specified)
+    if start_size and start_size > 0 and len(stable_proteins) > start_size:
+        # Sort by selection_fraction descending to keep most stable
+        stable_sorted = stability_df[stability_df["protein"].isin(stable_proteins)].sort_values(
+            "selection_fraction", ascending=False
+        )
+        stable_proteins = stable_sorted["protein"].head(start_size).tolist()
+        logger.info(f"Capped {len(stable_sorted)} stable proteins to start_size={start_size}")
+
     # Build selection frequency dict for correlation-aware clustering
     selection_freq = dict(
         zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
@@ -706,11 +721,11 @@ def run_optimize_panel_single_seed(
     # Extract retune_cv_folds from bundle config
     bundle_config = bundle.get("config", {})
     if isinstance(bundle_config, dict):
-        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 3)
+        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 5)
     elif hasattr(bundle_config, "cv"):
-        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 3)
+        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 5)
     else:
-        retune_cv_folds = 3
+        retune_cv_folds = 5
 
     # Load data
     logger.info(f"Loading data from {infile}")
@@ -785,6 +800,7 @@ def run_optimize_panel_single_seed(
         corr_threshold=corr_threshold,
         corr_method=corr_method,
         selection_freq=selection_freq,
+        rfe_tune_spaces=rfe_tune_spaces,
     )
 
     seed_elapsed = time.time() - seed_start
@@ -812,6 +828,7 @@ def run_optimize_panel_aggregated(
     split_dir: str,
     model_name: str | None = None,
     stability_threshold: float = 0.90,
+    start_size: int | None = None,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
     cv_folds: int = 0,
@@ -819,10 +836,11 @@ def run_optimize_panel_aggregated(
     outdir: str | None = None,
     log_level: int | None = None,
     n_jobs: int = 1,
-    retune_n_trials: int = 40,
+    retune_n_trials: int = 60,
     corr_aware: bool = True,
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
+    rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> RFEResult:
     """Run panel optimization using aggregated stability panel.
 
@@ -840,6 +858,8 @@ def run_optimize_panel_aggregated(
         split_dir: Directory containing split indices
         model_name: Model name (auto-detected if None)
         stability_threshold: Minimum selection frequency (default: 0.90)
+        start_size: Cap starting panel to top N proteins by selection frequency.
+            None or 0 means no cap (use all stable proteins).
         min_size: Minimum panel size
         min_auroc_frac: Early stop threshold
         cv_folds: CV folds for RFE
@@ -918,6 +938,14 @@ def run_optimize_panel_aggregated(
             f"Try lowering --stability-threshold."
         )
 
+    # Cap to top start_size proteins by selection frequency (if specified)
+    if start_size and start_size > 0 and len(stable_proteins) > start_size:
+        stable_sorted = stability_df[stability_df["protein"].isin(stable_proteins)].sort_values(
+            "selection_fraction", ascending=False
+        )
+        stable_proteins = stable_sorted["protein"].head(start_size).tolist()
+        logger.info(f"Capped {len(stable_sorted)} stable proteins to start_size={start_size}")
+
     # Build selection frequency dict for correlation-aware clustering
     selection_freq = dict(
         zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
@@ -967,11 +995,11 @@ def run_optimize_panel_aggregated(
     # Extract inner_folds from bundle config for retune CV
     bundle_config = bundle.get("config", {})
     if isinstance(bundle_config, dict):
-        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 3)
+        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 5)
     elif hasattr(bundle_config, "cv"):
-        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 3)
+        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 5)
     else:
-        retune_cv_folds = 3
+        retune_cv_folds = 5
     logger.info(
         f"Per-k re-tuning: {retune_n_trials} trials, cv={retune_cv_folds} "
         f"(from bundle config inner_folds)"
@@ -1124,6 +1152,7 @@ def run_optimize_panel_aggregated(
                 corr_threshold=corr_threshold,
                 corr_method=corr_method,
                 selection_freq=selection_freq,
+                rfe_tune_spaces=rfe_tune_spaces,
             )
 
             seed_elapsed = time.time() - seed_start

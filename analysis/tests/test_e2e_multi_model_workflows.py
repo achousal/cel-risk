@@ -569,6 +569,8 @@ class TestConsensusPanelIntegration:
                     str(multi_model_proteomics_data),
                     "--split-dir",
                     str(splits_dir),
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )
@@ -658,6 +660,8 @@ class TestConsensusPanelIntegration:
                     str(multi_model_proteomics_data),
                     "--split-dir",
                     str(splits_dir),
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )
@@ -934,6 +938,8 @@ class TestMultiModelPanelOptimization:
                     SHARED_RUN_ID,
                     "--min-size",
                     "3",
+                    "--stability-threshold",
+                    "0.75",
                 ],
                 catch_exceptions=False,
             )

@@ -828,19 +828,37 @@ def run_pipeline(
         for model_name, results_dir in model_dirs.items():
             logger.info(f"\nOptimizing panel for {model_name}")
 
+            # Load rfe_tune_spaces from optimize_panel.yaml if available
+            _op_config_path = (
+                Path(__file__).parent.parent.parent.parent / "configs" / "optimize_panel.yaml"
+            )
+            _op_rfe_spaces = None
+            _op_cfg = {}
+            if _op_config_path.exists():
+                import yaml
+
+                with open(_op_config_path) as _f:
+                    _op_cfg = yaml.safe_load(_f) or {}
+                _op_rfe_spaces = _op_cfg.get("rfe_tune_spaces")
+                if _op_rfe_spaces:
+                    logger.info("Loaded rfe_tune_spaces from %s", _op_config_path)
+
             run_optimize_panel_aggregated(
                 results_dir=results_dir,
                 infile=str(infile),
                 split_dir=str(split_dir),
                 model_name=model_name,
-                stability_threshold=0.90,
-                min_size=5,
-                min_auroc_frac=0.90,
-                cv_folds=5,
-                step_strategy="geometric",
+                stability_threshold=_op_cfg.get("stability_threshold", 0.90),
+                start_size=_op_cfg.get("start_size"),
+                min_size=_op_cfg.get("min_size", 5),
+                min_auroc_frac=_op_cfg.get("min_auroc_frac", 0.90),
+                cv_folds=_op_cfg.get("cv_folds", 5),
+                step_strategy=_op_cfg.get("step_strategy", "fine"),
+                retune_n_trials=_op_cfg.get("retune_trials", 60),
                 outdir=None,
                 log_level=log_level,
                 n_jobs=-1,
+                rfe_tune_spaces=_op_rfe_spaces,
             )
         step_timings.append(("Panel optimization", time.monotonic() - t0))
 

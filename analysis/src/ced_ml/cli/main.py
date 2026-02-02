@@ -608,6 +608,12 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     help="Minimum selection fraction for stable proteins (default: 0.75)",
 )
 @click.option(
+    "--start-size",
+    type=int,
+    default=None,
+    help="Cap starting panel to top N proteins by selection frequency (default: no cap)",
+)
+@click.option(
     "--min-size",
     type=int,
     default=None,
@@ -776,6 +782,7 @@ def optimize_panel(ctx, config, **kwargs):
         "split_dir",
         "model",
         "stability_threshold",
+        "start_size",
         "min_size",
         "min_auroc_frac",
         "cv_folds",
@@ -783,6 +790,7 @@ def optimize_panel(ctx, config, **kwargs):
         "outdir",
         "n_jobs",
         "retune_trials",
+        "retune_cv_folds",
         "corr_aware",
         "corr_threshold",
         "corr_method",
@@ -876,17 +884,19 @@ def optimize_panel(ctx, config, **kwargs):
                 split_dir=split_dir,
                 seed=seed,
                 model_name=model_name,
-                stability_threshold=kwargs.get("stability_threshold") or 0.90,
-                min_size=kwargs.get("min_size") or 5,
-                min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
-                cv_folds=kwargs.get("cv_folds") or 0,
-                step_strategy=kwargs.get("step_strategy") or "geometric",
+                stability_threshold=kwargs.get("stability_threshold", 0.90),
+                start_size=kwargs.get("start_size"),
+                min_size=kwargs.get("min_size", 5),
+                min_auroc_frac=kwargs.get("min_auroc_frac", 0.50),
+                cv_folds=kwargs.get("cv_folds", 5),
+                step_strategy=kwargs.get("step_strategy", "fine"),
                 log_level=ctx.obj.get("log_level"),
-                retune_n_trials=kwargs.get("retune_trials") or 40,
+                retune_n_trials=kwargs.get("retune_trials", 60),
                 retune_n_jobs=kwargs.get("n_jobs") or 1,
                 corr_aware=kwargs.get("corr_aware", True),
-                corr_threshold=kwargs.get("corr_threshold") or 0.80,
-                corr_method=kwargs.get("corr_method") or "spearman",
+                corr_threshold=kwargs.get("corr_threshold", 0.80),
+                corr_method=kwargs.get("corr_method", "spearman"),
+                rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
             )
 
         return
@@ -1093,18 +1103,20 @@ def optimize_panel(ctx, config, **kwargs):
                 infile=infile,
                 split_dir=split_dir,
                 model_name=model_name,
-                stability_threshold=kwargs.get("stability_threshold") or 0.90,
-                min_size=kwargs.get("min_size") or 5,
-                min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
-                cv_folds=kwargs.get("cv_folds") or 0,
-                step_strategy=kwargs.get("step_strategy") or "geometric",
+                stability_threshold=kwargs.get("stability_threshold", 0.90),
+                start_size=kwargs.get("start_size"),
+                min_size=kwargs.get("min_size", 5),
+                min_auroc_frac=kwargs.get("min_auroc_frac", 0.50),
+                cv_folds=kwargs.get("cv_folds", 5),
+                step_strategy=kwargs.get("step_strategy", "fine"),
                 outdir=kwargs.get("outdir"),
                 log_level=ctx.obj.get("log_level"),
                 n_jobs=n_jobs,
-                retune_n_trials=kwargs.get("retune_trials") or 40,
+                retune_n_trials=kwargs.get("retune_trials", 60),
                 corr_aware=kwargs.get("corr_aware", True),
-                corr_threshold=kwargs.get("corr_threshold") or 0.80,
-                corr_method=kwargs.get("corr_method") or "spearman",
+                corr_threshold=kwargs.get("corr_threshold", 0.80),
+                corr_method=kwargs.get("corr_method", "spearman"),
+                rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
             )
 
         click.echo(f"\n{'='*70}")
@@ -1125,6 +1137,7 @@ def optimize_panel(ctx, config, **kwargs):
             split_dir=kwargs["split_dir"],
             model_name=kwargs.get("model"),
             stability_threshold=kwargs.get("stability_threshold") or 0.90,
+            start_size=kwargs.get("start_size"),
             min_size=kwargs.get("min_size") or 5,
             min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
             cv_folds=kwargs.get("cv_folds") or 0,
@@ -1136,6 +1149,7 @@ def optimize_panel(ctx, config, **kwargs):
             corr_aware=kwargs.get("corr_aware", True),
             corr_threshold=kwargs.get("corr_threshold") or 0.80,
             corr_method=kwargs.get("corr_method") or "spearman",
+            rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
         )
 
 

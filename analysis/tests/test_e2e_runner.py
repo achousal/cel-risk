@@ -1111,6 +1111,8 @@ class TestE2EPanelOptimization:
                 "LR_EN",
                 "--min-size",
                 "3",
+                "--stability-threshold",
+                "0.75",
             ],
             catch_exceptions=False,
         )
