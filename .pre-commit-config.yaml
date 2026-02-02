@@ -20,20 +20,20 @@ repos:
         args: ['--baseline', '.secrets.baseline']
         exclude: package.lock.json
 
+  # Python linting (must run before black so import sorting sticks)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.14
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^analysis/(src|tests)/.*\.py$
+
   # Python formatting
   - repo: https://github.com/psf/black
     rev: 24.1.1
     hooks:
       - id: black
         language_version: python3.11
-        files: ^analysis/(src|tests)/.*\.py$
-
-  # Python linting
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.14
-    hooks:
-      - id: ruff
-        args: [--fix]
         files: ^analysis/(src|tests)/.*\.py$
 
   # Python type checking - Disabled due to many type issues, run manually

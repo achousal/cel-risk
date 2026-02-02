@@ -97,9 +97,9 @@ if [ -d "venv" ]; then
         info "Activating environment..."
         source venv/bin/activate
         info "Upgrading pip..."
-        pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+        pip install --upgrade pip setuptools wheel
         info "Installing/updating package..."
-        pip install -e . > /dev/null 2>&1
+        pip install -e .
         success "Package updated successfully"
         echo ""
         echo "=========================================="
@@ -127,14 +127,14 @@ source venv/bin/activate
 
 # Upgrade pip
 info "Upgrading pip, setuptools, and wheel..."
-pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+pip install --upgrade pip setuptools wheel
 success "pip upgraded to version $(pip --version | awk '{print $2}')"
 
 # Install package
-info "Installing CeliacRisks package (this may take 2-3 minutes)..."
+info "Installing CeliacRisks package (this may take several minutes on HPC)..."
 mkdir -p ../logs/setup
 SETUP_LOG="../logs/setup/install_$(date +%Y%m%d_%H%M%S).log"
-pip install -e . > "${SETUP_LOG}" 2>&1
+pip install -e . 2>&1 | tee "${SETUP_LOG}"
 
 if [ $? -eq 0 ]; then
     success "Package installed successfully"
