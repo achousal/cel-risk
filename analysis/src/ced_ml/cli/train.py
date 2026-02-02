@@ -83,7 +83,7 @@ from ced_ml.plotting import (
 )
 from ced_ml.plotting.dca import plot_dca_curve
 from ced_ml.plotting.learning_curve import save_learning_curve_csv
-from ced_ml.utils.logging import auto_log_path, log_section, setup_logger
+from ced_ml.utils.logging import auto_log_path, log_hpc_context, log_section, setup_logger
 from ced_ml.utils.metadata import (
     build_oof_metadata,
     build_plot_metadata,
@@ -609,6 +609,8 @@ def run_train(
     )
     logger = setup_logger("ced_ml", level=log_level, log_file=log_file)
     logger.info(f"Logging to file: {log_file}")
+
+    log_hpc_context(logger)
 
     # Save resolved config to run-specific directory
     config_path = Path(outdirs.root) / "training_config.yaml"

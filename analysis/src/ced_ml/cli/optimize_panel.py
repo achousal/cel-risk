@@ -160,6 +160,9 @@ def run_optimize_panel(
     retune_n_trials: int = 20,
     retune_cv_folds: int = 3,
     retune_n_jobs: int = 1,
+    corr_aware: bool = True,
+    corr_threshold: float = 0.80,
+    corr_method: str = "spearman",
 ) -> RFEResult:
     """Run panel optimization via Recursive Feature Elimination.
 
@@ -314,6 +317,7 @@ def run_optimize_panel(
     logger.info(f"Val: {len(X_val)} samples, {y_val.sum()} cases")
 
     # Determine initial proteins
+    selection_freq: dict[str, float] | None = None
     if use_stability_panel:
         # Try to load stability panel from model directory
         model_dir = Path(model_path).parent.parent  # Go up from core/
@@ -361,6 +365,7 @@ def run_optimize_panel(
                 )
 
             if freq:
+                selection_freq = freq
                 ranked = rank_proteins_by_frequency(freq)
                 initial_proteins = ranked[:start_size]
                 logger.info(f"Using top {len(initial_proteins)} proteins from stability ranking")
@@ -420,6 +425,10 @@ def run_optimize_panel(
         retune_n_trials=retune_n_trials,
         retune_cv_folds=retune_cv_folds,
         retune_n_jobs=retune_n_jobs,
+        corr_aware=corr_aware,
+        corr_threshold=corr_threshold,
+        corr_method=corr_method,
+        selection_freq=selection_freq,
     )
 
     logger.info(f"RFE complete. Max AUROC: {result.max_auroc:.4f}")
@@ -574,6 +583,9 @@ def run_optimize_panel_single_seed(
     log_level: int | None = None,
     retune_n_trials: int = 20,
     retune_n_jobs: int = 1,
+    corr_aware: bool = True,
+    corr_threshold: float = 0.80,
+    corr_method: str = "spearman",
 ) -> RFEResult:
     """Run panel optimization RFE for a single split seed and save the result.
 
@@ -602,7 +614,7 @@ def run_optimize_panel_single_seed(
     import time
 
     from ced_ml.data.schema import get_positive_label
-    from ced_ml.utils.logging import auto_log_path, setup_logger
+    from ced_ml.utils.logging import auto_log_path, log_hpc_context, setup_logger
 
     results_path = Path(results_dir)
 
@@ -631,6 +643,8 @@ def run_optimize_panel_single_seed(
         log_file=log_file,
     )
     logger.info(f"Single-seed panel optimization: model={model_name}, seed={seed}")
+    logger.info(f"Run ID: {_run_id or 'unknown'}")
+    log_hpc_context(logger)
 
     # Load aggregated stability panel
     stability_file = results_path / "panels" / "feature_stability_summary.csv"
@@ -647,6 +661,11 @@ def run_optimize_panel_single_seed(
 
     if not stable_proteins:
         raise ValueError(f"No proteins meet stability threshold {stability_threshold:.2f}.")
+
+    # Build selection frequency dict for correlation-aware clustering
+    selection_freq = dict(
+        zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
+    )
 
     logger.info(f"Loaded {len(stable_proteins)} stable proteins")
 
@@ -750,6 +769,10 @@ def run_optimize_panel_single_seed(
         retune_n_trials=retune_n_trials,
         retune_cv_folds=retune_cv_folds,
         retune_n_jobs=retune_n_jobs,
+        corr_aware=corr_aware,
+        corr_threshold=corr_threshold,
+        corr_method=corr_method,
+        selection_freq=selection_freq,
     )
 
     seed_elapsed = time.time() - seed_start
@@ -785,6 +808,9 @@ def run_optimize_panel_aggregated(
     log_level: int | None = None,
     n_jobs: int = 1,
     retune_n_trials: int = 20,
+    corr_aware: bool = True,
+    corr_threshold: float = 0.80,
+    corr_method: str = "spearman",
 ) -> RFEResult:
     """Run panel optimization using aggregated stability panel.
 
@@ -820,7 +846,7 @@ def run_optimize_panel_aggregated(
     """
     import logging
 
-    from ced_ml.utils.logging import auto_log_path, setup_logger
+    from ced_ml.utils.logging import auto_log_path, log_hpc_context, setup_logger
 
     results_path = Path(results_dir)
 
@@ -854,7 +880,9 @@ def run_optimize_panel_aggregated(
     )
     logger.info(f"Logging to file: {log_file}")
     logger.info(f"Aggregated panel optimization started for {model_name}")
+    logger.info(f"Run ID: {_run_id or 'unknown'}")
     logger.info(f"Results dir: {results_dir}")
+    log_hpc_context(logger)
 
     # Load aggregated stability panel
     stability_file = results_path / "panels" / "feature_stability_summary.csv"
@@ -877,6 +905,11 @@ def run_optimize_panel_aggregated(
             f"No proteins meet stability threshold {stability_threshold:.2f}. "
             f"Try lowering --stability-threshold."
         )
+
+    # Build selection frequency dict for correlation-aware clustering
+    selection_freq = dict(
+        zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
+    )
 
     logger.info(
         f"Found {len(stable_proteins)} stable proteins (>={stability_threshold:.2f} threshold)"
@@ -1075,6 +1108,10 @@ def run_optimize_panel_aggregated(
                 retune_n_trials=retune_n_trials,
                 retune_cv_folds=retune_cv_folds,
                 retune_n_jobs=optuna_jobs,
+                corr_aware=corr_aware,
+                corr_threshold=corr_threshold,
+                corr_method=corr_method,
+                selection_freq=selection_freq,
             )
 
             seed_elapsed = time.time() - seed_start

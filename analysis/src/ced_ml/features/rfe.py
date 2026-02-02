@@ -63,6 +63,9 @@ class RFEResult:
         recommended_panels: Dict with minimum sizes at various AUROC thresholds.
         max_auroc: Maximum AUROC achieved.
         model_name: Name of model used.
+        cluster_map: Dict mapping representative protein -> cluster metadata
+            (cluster_id, cluster_size, members). Empty if correlation-aware
+            pre-filtering was not used.
     """
 
     curve: list[dict[str, Any]] = field(default_factory=list)
@@ -70,6 +73,7 @@ class RFEResult:
     recommended_panels: dict[str, int] = field(default_factory=dict)
     max_auroc: float = 0.0
     model_name: str = ""
+    cluster_map: dict[str, dict] = field(default_factory=dict)
 
 
 def compute_eval_sizes(
@@ -565,6 +569,96 @@ def _quick_tune_at_k(
     return search.best_estimator_, best_params
 
 
+def cluster_correlated_proteins_for_rfe(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    protein_cols: list[str],
+    selection_freq: dict[str, float] | None = None,
+    corr_threshold: float = 0.80,
+    corr_method: str = "spearman",
+) -> tuple[list[str], dict[str, dict]]:
+    """Cluster correlated proteins and select representatives for RFE.
+
+    Uses graph-based connected components (from corr_prune) to group
+    proteins with |correlation| >= threshold, then selects one
+    representative per cluster using composite criterion: stability
+    frequency (primary) + Mann-Whitney p-value (tiebreak).
+
+    All correlation analysis uses TRAIN data only.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training features.
+    y_train : np.ndarray
+        Training labels.
+    protein_cols : list[str]
+        Input proteins to cluster.
+    selection_freq : dict[str, float] or None
+        Selection frequency from CV folds {protein: frequency}.
+        If None, all proteins get equal weight.
+    corr_threshold : float
+        Absolute correlation threshold for clustering (0.0-1.0).
+    corr_method : str
+        Correlation method ("spearman" or "pearson").
+
+    Returns
+    -------
+    representative_proteins : list[str]
+        Cluster representatives to pass to RFE.
+    cluster_map : dict[str, dict]
+        Mapping representative -> {cluster_id, cluster_size, members}.
+        Empty if clustering was skipped.
+    """
+    from ced_ml.features.corr_prune import prune_correlated_proteins
+
+    if corr_threshold >= 1.0 or len(protein_cols) < 2:
+        logger.info("Skipping correlation clustering (threshold >= 1.0 or < 2 proteins)")
+        return list(protein_cols), {}
+
+    df_map, kept_proteins = prune_correlated_proteins(
+        df=X_train,
+        y=y_train,
+        proteins=protein_cols,
+        selection_freq=selection_freq,
+        corr_threshold=corr_threshold,
+        corr_method=corr_method,
+        tiebreak_method="freq_then_univariate",
+    )
+
+    if df_map.empty:
+        return list(protein_cols), {}
+
+    # Build cluster_map from df_map
+    cluster_map: dict[str, dict] = {}
+    for rep in kept_proteins:
+        comp_rows = df_map[df_map["rep_protein"] == rep]
+        comp_id = int(comp_rows["component_id"].iloc[0])
+        members = sorted(comp_rows["protein"].tolist())
+        cluster_map[rep] = {
+            "cluster_id": comp_id,
+            "cluster_size": len(members),
+            "members": members,
+        }
+
+    n_multi = sum(1 for v in cluster_map.values() if v["cluster_size"] > 1)
+    logger.info(
+        f"Clustered {len(protein_cols)} proteins into {len(cluster_map)} clusters "
+        f"({len(cluster_map) - n_multi} singletons, {n_multi} multi-protein)"
+    )
+    if n_multi > 0:
+        top_clusters = sorted(
+            [(rep, info) for rep, info in cluster_map.items() if info["cluster_size"] > 1],
+            key=lambda x: -x[1]["cluster_size"],
+        )[:5]
+        for rep, info in top_clusters:
+            preview = ", ".join(info["members"][:3])
+            ellipsis = "..." if len(info["members"]) > 3 else ""
+            logger.info(f"  {rep}: {info['cluster_size']} members ({preview}{ellipsis})")
+
+    return kept_proteins, cluster_map
+
+
 def recursive_feature_elimination(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
@@ -584,6 +678,10 @@ def recursive_feature_elimination(
     retune_n_trials: int = 20,
     retune_cv_folds: int = 3,
     retune_n_jobs: int = 1,
+    corr_aware: bool = True,
+    corr_threshold: float = 0.80,
+    corr_method: str = "spearman",
+    selection_freq: dict[str, float] | None = None,
 ) -> RFEResult:
     """Perform recursive feature elimination to find minimum viable panel.
 
@@ -616,6 +714,12 @@ def recursive_feature_elimination(
         retune_n_trials: Optuna trials for per-k hyperparameter re-tuning.
         retune_cv_folds: CV folds for per-k Optuna search.
         retune_n_jobs: Parallel jobs for per-k Optuna CV evaluation.
+        corr_aware: If True, cluster correlated proteins before RFE and
+            run elimination on representatives only.
+        corr_threshold: Correlation threshold for clustering (0.0-1.0).
+        corr_method: Correlation method ("spearman" or "pearson").
+        selection_freq: Stability selection frequencies for representative
+            selection. If None, uses uniform weights.
 
     Returns:
         RFEResult with curve, feature_ranking, and recommended_panels.
@@ -643,7 +747,23 @@ def recursive_feature_elimination(
             f"(no tune space defined for {model_name})"
         )
 
-    current_proteins = list(initial_proteins)
+    # Correlation-aware pre-filtering
+    cluster_map: dict[str, dict] = {}
+    if corr_aware:
+        logger.info(
+            f"Correlation-aware pre-filtering: threshold={corr_threshold}, " f"method={corr_method}"
+        )
+        current_proteins, cluster_map = cluster_correlated_proteins_for_rfe(
+            X_train=X_train,
+            y_train=y_train,
+            protein_cols=initial_proteins,
+            selection_freq=selection_freq,
+            corr_threshold=corr_threshold,
+            corr_method=corr_method,
+        )
+    else:
+        current_proteins = list(initial_proteins)
+
     curve: list[dict[str, Any]] = []
     feature_ranking: dict[str, int] = {}
     elimination_order = 0
@@ -914,6 +1034,7 @@ def recursive_feature_elimination(
         recommended_panels=recommended,
         max_auroc=max_auroc_seen,
         model_name=model_name,
+        cluster_map=cluster_map,
     )
 
 
@@ -985,40 +1106,81 @@ def save_rfe_results(
 
     # 1. Panel curve CSV
     curve_path = os.path.join(output_dir, f"panel_curve{suffix}.csv")
-    curve_df = pd.DataFrame(
-        [
-            {
-                "size": p["size"],
-                "auroc_cv": p["auroc_cv"],
-                "auroc_cv_std": p["auroc_cv_std"],
-                "auroc_val": p["auroc_val"],
-                "auroc_val_std": p.get("auroc_val_std", 0.0),
-                "auroc_val_ci_low": p.get("auroc_val_ci_low", 0.0),
-                "auroc_val_ci_high": p.get("auroc_val_ci_high", 0.0),
-                "prauc_cv": p.get("prauc_cv", float("nan")),
-                "prauc_val": p.get("prauc_val", float("nan")),
-                "brier_cv": p.get("brier_cv", float("nan")),
-                "brier_val": p.get("brier_val", float("nan")),
-                "sens_at_95spec_cv": p.get("sens_at_95spec_cv", float("nan")),
-                "sens_at_95spec_val": p.get("sens_at_95spec_val", float("nan")),
-                "proteins": json.dumps(p["proteins"]),
+    curve_records = []
+    for p in result.curve:
+        record = {
+            "size": p["size"],
+            "auroc_cv": p["auroc_cv"],
+            "auroc_cv_std": p["auroc_cv_std"],
+            "auroc_val": p["auroc_val"],
+            "auroc_val_std": p.get("auroc_val_std", 0.0),
+            "auroc_val_ci_low": p.get("auroc_val_ci_low", 0.0),
+            "auroc_val_ci_high": p.get("auroc_val_ci_high", 0.0),
+            "prauc_cv": p.get("prauc_cv", float("nan")),
+            "prauc_val": p.get("prauc_val", float("nan")),
+            "brier_cv": p.get("brier_cv", float("nan")),
+            "brier_val": p.get("brier_val", float("nan")),
+            "sens_at_95spec_cv": p.get("sens_at_95spec_cv", float("nan")),
+            "sens_at_95spec_val": p.get("sens_at_95spec_val", float("nan")),
+            "proteins": json.dumps(p["proteins"]),
+        }
+        if result.cluster_map:
+            total_members = sum(
+                result.cluster_map.get(prot, {}).get("cluster_size", 1) for prot in p["proteins"]
+            )
+            record["total_cluster_members"] = total_members
+            members_map = {
+                prot: result.cluster_map[prot]["members"]
+                for prot in p["proteins"]
+                if prot in result.cluster_map
             }
-            for p in result.curve
-        ]
-    )
+            record["cluster_members_json"] = json.dumps(members_map)
+        curve_records.append(record)
+    curve_df = pd.DataFrame(curve_records)
     curve_df.to_csv(curve_path, index=False)
     paths["panel_curve"] = curve_path
 
     # 2. Feature ranking CSV
     ranking_path = os.path.join(output_dir, f"feature_ranking{suffix}.csv")
-    ranking_df = pd.DataFrame(
-        [
-            {"protein": p, "elimination_order": order}
-            for p, order in sorted(result.feature_ranking.items(), key=lambda x: x[1])
-        ]
-    )
+    ranking_records = []
+    for p, order in sorted(result.feature_ranking.items(), key=lambda x: x[1]):
+        record = {"protein": p, "elimination_order": order}
+        if result.cluster_map and p in result.cluster_map:
+            info = result.cluster_map[p]
+            record["cluster_id"] = info["cluster_id"]
+            record["cluster_size"] = info["cluster_size"]
+            record["cluster_members"] = json.dumps(info["members"])
+        elif result.cluster_map:
+            record["cluster_id"] = None
+            record["cluster_size"] = 1
+            record["cluster_members"] = json.dumps([p])
+        ranking_records.append(record)
+    ranking_df = pd.DataFrame(ranking_records)
     ranking_df.to_csv(ranking_path, index=False)
     paths["feature_ranking"] = ranking_path
+
+    # 2b. Cluster mapping CSV (if clusters were used)
+    if result.cluster_map:
+        cluster_map_path = os.path.join(output_dir, f"cluster_mapping{suffix}.csv")
+        cluster_records = []
+        for rep, info in result.cluster_map.items():
+            for member in info["members"]:
+                cluster_records.append(
+                    {
+                        "representative": rep,
+                        "member_protein": member,
+                        "cluster_id": info["cluster_id"],
+                        "cluster_size": info["cluster_size"],
+                        "is_representative": member == rep,
+                    }
+                )
+        cluster_df = pd.DataFrame(cluster_records).sort_values(
+            ["cluster_id", "is_representative"],
+            ascending=[True, False],
+        )
+        cluster_df.to_csv(cluster_map_path, index=False)
+        paths["cluster_mapping"] = cluster_map_path
+        logger.info(f"Saved cluster mapping to {cluster_map_path}")
 
     # 3. Recommended panels JSON
     rec_path = os.path.join(output_dir, f"recommended_panels{suffix}.json")
@@ -1184,10 +1346,14 @@ def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
         f"max mean AUROC={max_auroc:.4f}"
     )
 
+    # Use first seed's cluster map as canonical (same proteins -> same clusters)
+    cluster_map = results[0].cluster_map if results[0].cluster_map else {}
+
     return RFEResult(
         curve=aggregated_curve,
         feature_ranking=sorted_ranking,
         recommended_panels=recommended,
         max_auroc=max_auroc,
         model_name=model_name,
+        cluster_map=cluster_map,
     )

@@ -674,6 +674,23 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     default=False,
     help="Preview HPC job submission without executing (--hpc mode only)",
 )
+@click.option(
+    "--corr-aware/--no-corr-aware",
+    default=True,
+    help="Enable correlation-aware pre-filtering (clusters correlated proteins before RFE)",
+)
+@click.option(
+    "--corr-threshold",
+    type=float,
+    default=0.80,
+    help="Correlation threshold for clustering (0.0-1.0, default: 0.80)",
+)
+@click.option(
+    "--corr-method",
+    type=click.Choice(["spearman", "pearson"], case_sensitive=False),
+    default="spearman",
+    help="Correlation method for clustering (default: spearman)",
+)
 @click.pass_context
 def optimize_panel(ctx, config, **kwargs):
     """Find minimum viable panel from aggregated cross-split results.
@@ -864,6 +881,9 @@ def optimize_panel(ctx, config, **kwargs):
                 log_level=ctx.obj.get("log_level"),
                 retune_n_trials=kwargs.get("retune_trials") or 20,
                 retune_n_jobs=kwargs.get("n_jobs") or 1,
+                corr_aware=kwargs.get("corr_aware", True),
+                corr_threshold=kwargs.get("corr_threshold") or 0.80,
+                corr_method=kwargs.get("corr_method") or "spearman",
             )
 
         return
@@ -1079,6 +1099,9 @@ def optimize_panel(ctx, config, **kwargs):
                 log_level=ctx.obj.get("log_level"),
                 n_jobs=n_jobs,
                 retune_n_trials=kwargs.get("retune_trials") or 20,
+                corr_aware=kwargs.get("corr_aware", True),
+                corr_threshold=kwargs.get("corr_threshold") or 0.80,
+                corr_method=kwargs.get("corr_method") or "spearman",
             )
 
         click.echo(f"\n{'='*70}")
@@ -1107,6 +1130,9 @@ def optimize_panel(ctx, config, **kwargs):
             log_level=ctx.obj.get("log_level"),
             n_jobs=kwargs.get("n_jobs") or 1,
             retune_n_trials=kwargs.get("retune_trials") or 20,
+            corr_aware=kwargs.get("corr_aware", True),
+            corr_threshold=kwargs.get("corr_threshold") or 0.80,
+            corr_method=kwargs.get("corr_method") or "spearman",
         )
 
 

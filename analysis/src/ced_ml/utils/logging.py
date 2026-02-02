@@ -112,6 +112,39 @@ def finalize_live_log(logger: logging.Logger) -> None:
                     logger.removeHandler(handler)
 
 
+def log_hpc_context(logger: logging.Logger) -> None:
+    """Log HPC scheduler metadata if running inside a batch job.
+
+    Reads environment variables from LSF (LSB_*) and SLURM (SLURM_*)
+    to emit job ID, hostname, allocated resources, and queue/partition.
+    No-op when no scheduler variables are detected (local runs).
+    """
+    import os
+    import socket
+
+    # LSF
+    lsf_job_id = os.environ.get("LSB_JOBID")
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+
+    if lsf_job_id:
+        logger.info("--- HPC context (LSF) ---")
+        logger.info(f"  Job ID:    {lsf_job_id}")
+        logger.info(f"  Node:      {socket.gethostname()}")
+        logger.info(f"  Queue:     {os.environ.get('LSB_QUEUE', 'n/a')}")
+        logger.info(f"  Project:   {os.environ.get('LSB_PROJECT_NAME', 'n/a')}")
+        logger.info(f"  CPUs:      {os.environ.get('LSB_DJOB_NUMPROC', 'n/a')}")
+        logger.info("--- end HPC context ---")
+    elif slurm_job_id:
+        logger.info("--- HPC context (SLURM) ---")
+        logger.info(f"  Job ID:    {slurm_job_id}")
+        logger.info(f"  Node:      {socket.gethostname()}")
+        logger.info(f"  Partition: {os.environ.get('SLURM_JOB_PARTITION', 'n/a')}")
+        logger.info(f"  Account:   {os.environ.get('SLURM_JOB_ACCOUNT', 'n/a')}")
+        logger.info(f"  CPUs:      {os.environ.get('SLURM_CPUS_ON_NODE', 'n/a')}")
+        logger.info(f"  Mem (MB):  {os.environ.get('SLURM_MEM_PER_NODE', 'n/a')}")
+        logger.info("--- end HPC context ---")
+
+
 def auto_log_path(
     command: str,
     outdir: Path | str = "results",
@@ -177,7 +210,8 @@ def auto_log_path(
 
     if command == "optimize-panel":
         model_part = model or "all"
-        return logs_root / "optimization" / f"run_{rid}" / f"{model_part}.log"
+        seed_part = f"_seed{split_seed}" if split_seed is not None else ""
+        return logs_root / "optimization" / f"run_{rid}" / f"{model_part}{seed_part}.log"
 
     if command == "consensus-panel":
         return logs_root / "consensus" / f"run_{rid}" / "consensus.log"
