@@ -186,6 +186,15 @@ def plot_pareto_curve(
                 rec_ci_lo = ci_lower[idx[0]]
                 rec_ci_hi = ci_upper[idx[0]]
 
+                # Build legend label with CI info
+                if rec_ci_lo != rec_ci_hi:
+                    legend_label = (
+                        f"{thresh:.0%} panel (n={rec_size}): "
+                        f"AUROC {rec_auroc:.3f} [{rec_ci_lo:.3f}, {rec_ci_hi:.3f}]"
+                    )
+                else:
+                    legend_label = f"{thresh:.0%} panel (n={rec_size}): AUROC {rec_auroc:.3f}"
+
                 ax.scatter(
                     [rec_size],
                     [rec_auroc],
@@ -195,29 +204,7 @@ def plot_pareto_curve(
                     zorder=10,
                     edgecolors="white",
                     linewidths=1.5,
-                )
-
-                # Annotation with percentile CI
-                if rec_ci_lo != rec_ci_hi:
-                    annotation_text = (
-                        f"n={rec_size}\nAUROC: {rec_auroc:.3f} [{rec_ci_lo:.3f}, {rec_ci_hi:.3f}]"
-                    )
-                else:
-                    annotation_text = f"n={rec_size}\nAUROC: {rec_auroc:.3f}"
-
-                ax.annotate(
-                    annotation_text,
-                    (rec_size, rec_auroc),
-                    textcoords="offset points",
-                    xytext=(10, -15),
-                    fontsize=8,
-                    color=colors[i % len(colors)],
-                    bbox={
-                        "facecolor": "white",
-                        "alpha": 0.8,
-                        "edgecolor": "none",
-                        "pad": 2,
-                    },
+                    label=legend_label,
                 )
 
     # Mark knee point
@@ -229,6 +216,15 @@ def plot_pareto_curve(
             knee_ci_lo = ci_lower[idx[0]]
             knee_ci_hi = ci_upper[idx[0]]
 
+            # Build legend label with CI info
+            if knee_ci_lo != knee_ci_hi:
+                knee_label = (
+                    f"Knee (n={knee_size}): "
+                    f"AUROC {knee_auroc:.3f} [{knee_ci_lo:.3f}, {knee_ci_hi:.3f}]"
+                )
+            else:
+                knee_label = f"Knee (n={knee_size}): AUROC {knee_auroc:.3f}"
+
             ax.scatter(
                 [knee_size],
                 [knee_auroc],
@@ -238,28 +234,7 @@ def plot_pareto_curve(
                 zorder=10,
                 edgecolors="white",
                 linewidths=1,
-            )
-
-            # Annotation with percentile CI
-            if knee_ci_lo != knee_ci_hi:
-                knee_text = f"Knee (n={knee_size})\nAUROC: {knee_auroc:.3f} [{knee_ci_lo:.3f}, {knee_ci_hi:.3f}]"
-            else:
-                knee_text = f"Knee (n={knee_size})\nAUROC: {knee_auroc:.3f}"
-
-            ax.annotate(
-                knee_text,
-                (knee_size, knee_auroc),
-                textcoords="offset points",
-                xytext=(-10, 10),
-                fontsize=8,
-                fontweight="bold",
-                color=COLOR_TERTIARY,
-                bbox={
-                    "facecolor": "white",
-                    "alpha": 0.8,
-                    "edgecolor": "none",
-                    "pad": 2,
-                },
+                label=knee_label,
             )
 
     # Add statistical comparison annotations for adjacent recommended sizes
@@ -335,19 +310,23 @@ def plot_pareto_curve(
     if run_id:
         summary_lines.append(f"Run: {run_id}")
 
-    summary_text = "\n".join(summary_lines)
-    ax.text(
-        0.02,
-        0.02,
-        summary_text,
-        transform=ax.transAxes,
-        fontsize=8,
-        verticalalignment="bottom",
-        horizontalalignment="left",
-        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 3},
-    )
+    summary_text = "  |  ".join(summary_lines)
 
     plt.tight_layout()
+
+    # Place metadata text below the plot
+    fig.subplots_adjust(bottom=0.18)
+    fig.text(
+        0.5,
+        0.02,
+        summary_text,
+        fontsize=7,
+        ha="center",
+        va="bottom",
+        color="gray",
+        fontstyle="italic",
+    )
+
     plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
 
