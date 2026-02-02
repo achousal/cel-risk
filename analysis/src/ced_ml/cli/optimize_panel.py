@@ -560,6 +560,217 @@ def discover_models_by_run_id(
     return model_dirs
 
 
+def run_optimize_panel_single_seed(
+    results_dir: str | Path,
+    infile: str,
+    split_dir: str,
+    seed: int,
+    model_name: str | None = None,
+    stability_threshold: float = 0.75,
+    min_size: int = 5,
+    min_auroc_frac: float = 0.90,
+    cv_folds: int = 0,
+    step_strategy: str = "geometric",
+    log_level: int | None = None,
+    retune_n_trials: int = 20,
+    retune_n_jobs: int = 1,
+) -> RFEResult:
+    """Run panel optimization RFE for a single split seed and save the result.
+
+    This is the HPC-parallelizable unit: one (model, seed) pair. The result
+    is saved as a joblib file under optimize_panel/seeds/seed_{N}/rfe_result.joblib
+    for later aggregation by run_optimize_panel_aggregated().
+
+    Args:
+        results_dir: Path to model's aggregated results directory.
+        infile: Path to input data file.
+        split_dir: Directory containing split indices.
+        seed: The split seed to run RFE for.
+        model_name: Model name (auto-detected if None).
+        stability_threshold: Minimum selection frequency (default: 0.75).
+        min_size: Minimum panel size.
+        min_auroc_frac: Early stop threshold.
+        cv_folds: CV folds for RFE.
+        step_strategy: Elimination strategy.
+        log_level: Logging level.
+        retune_n_trials: Optuna trials per evaluation point.
+        retune_n_jobs: Parallel jobs for Optuna CV.
+
+    Returns:
+        RFEResult for this seed.
+    """
+    import time
+
+    from ced_ml.data.schema import get_positive_label
+    from ced_ml.utils.logging import auto_log_path, setup_logger
+
+    results_path = Path(results_dir)
+
+    if not model_name:
+        model_name = results_path.parent.parent.name
+
+    if log_level is None:
+        log_level = logging.INFO
+
+    _run_id = None
+    for parent in [results_path] + list(results_path.parents):
+        if parent.name.startswith("run_"):
+            _run_id = parent.name[4:]
+            break
+
+    log_file = auto_log_path(
+        command="optimize-panel",
+        outdir=results_path.parent.parent if _run_id else results_path,
+        run_id=_run_id,
+        model=model_name,
+        split_seed=seed,
+    )
+    logger = setup_logger(
+        f"ced_ml.optimize_panel.{model_name}_seed{seed}",
+        level=log_level,
+        log_file=log_file,
+    )
+    logger.info(f"Single-seed panel optimization: model={model_name}, seed={seed}")
+
+    # Load aggregated stability panel
+    stability_file = results_path / "panels" / "feature_stability_summary.csv"
+    if not stability_file.exists():
+        raise FileNotFoundError(
+            f"Feature stability file not found: {stability_file}\n"
+            "Run 'ced aggregate-splits' first."
+        )
+
+    stability_df = pd.read_csv(stability_file)
+    stable_proteins = stability_df[stability_df["selection_fraction"] >= stability_threshold][
+        "protein"
+    ].tolist()
+
+    if not stable_proteins:
+        raise ValueError(f"No proteins meet stability threshold {stability_threshold:.2f}.")
+
+    logger.info(f"Loaded {len(stable_proteins)} stable proteins")
+
+    # Load model for this seed
+    run_dir = results_path.parent
+    seed_dir = run_dir / "splits" / f"split_seed{seed}"
+    model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found for seed {seed}: {model_path}")
+
+    bundle = joblib.load(model_path)
+    if not isinstance(bundle, dict):
+        raise ValueError("Model bundle must be a dictionary")
+
+    pipeline = bundle.get("model")
+    if pipeline is None:
+        raise ValueError(f"Model bundle missing 'model' key for seed {seed}")
+
+    resolved_cols = bundle.get("resolved_columns", {})
+    scenario = bundle.get("scenario", "IncidentOnly")
+    protein_cols = resolved_cols.get("protein_cols", [])
+    cat_cols = resolved_cols.get("categorical_metadata", [])
+    meta_num_cols = resolved_cols.get("numeric_metadata", [])
+
+    # Extract retune_cv_folds from bundle config
+    bundle_config = bundle.get("config", {})
+    if isinstance(bundle_config, dict):
+        retune_cv_folds = bundle_config.get("cv", {}).get("inner_folds", 3)
+    elif hasattr(bundle_config, "cv"):
+        retune_cv_folds = getattr(bundle_config.cv, "inner_folds", 3)
+    else:
+        retune_cv_folds = 3
+
+    # Load data
+    logger.info(f"Loading data from {infile}")
+    df_raw = read_proteomics_file(infile, validate=True)
+    df, filter_stats = apply_row_filters(df_raw, meta_num_cols=meta_num_cols)
+    logger.info(f"Filtered: {filter_stats['n_in']:,} -> {filter_stats['n_out']:,} rows")
+
+    feature_cols = protein_cols + cat_cols + meta_num_cols
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        feature_cols = [c for c in feature_cols if c in df.columns]
+        protein_cols = [c for c in protein_cols if c in df.columns]
+
+    if TARGET_COL not in df.columns:
+        raise ValueError(f"Target column '{TARGET_COL}' not found")
+
+    positive_label = get_positive_label(scenario)
+    y_all = (df[TARGET_COL] == positive_label).astype(int).values
+
+    # Load split indices
+    split_path = Path(split_dir)
+    train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
+    val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+
+    if not train_file.exists() or not val_file.exists():
+        raise FileNotFoundError(f"Split files not found for seed {seed}")
+
+    train_idx = pd.read_csv(train_file).squeeze().values
+    val_idx = pd.read_csv(val_file).squeeze().values
+
+    X_train = df.iloc[train_idx][feature_cols].copy()
+    y_train = y_all[train_idx]
+    X_val = df.iloc[val_idx][feature_cols].copy()
+    y_val = y_all[val_idx]
+
+    logger.info(
+        f"Seed {seed}: train={len(X_train)} ({y_train.sum()} cases), "
+        f"val={len(X_val)} ({y_val.sum()} cases)"
+    )
+
+    initial_proteins = [p for p in stable_proteins if p in df.columns]
+    if len(initial_proteins) < min_size:
+        raise ValueError(
+            f"Only {len(initial_proteins)} stable proteins available, less than min_size={min_size}"
+        )
+
+    filtered_cat_cols = [c for c in cat_cols if c in df.columns]
+    filtered_meta_num_cols = [c for c in meta_num_cols if c in df.columns]
+
+    from ced_ml.features.rfe import recursive_feature_elimination
+
+    seed_start = time.time()
+    result = recursive_feature_elimination(
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        base_pipeline=pipeline,
+        model_name=model_name,
+        initial_proteins=initial_proteins,
+        cat_cols=filtered_cat_cols,
+        meta_num_cols=filtered_meta_num_cols,
+        min_size=min_size,
+        cv_folds=cv_folds,
+        step_strategy=step_strategy,
+        min_auroc_frac=min_auroc_frac,
+        random_state=seed,
+        retune_n_trials=retune_n_trials,
+        retune_cv_folds=retune_cv_folds,
+        retune_n_jobs=retune_n_jobs,
+    )
+
+    seed_elapsed = time.time() - seed_start
+    logger.info(
+        f"RFE for seed {seed} completed in {seed_elapsed/60:.1f} min, max AUROC={result.max_auroc:.4f}"
+    )
+
+    # Save RFEResult as joblib for later aggregation
+    outdir = results_path / "optimize_panel" / "seeds" / f"seed_{seed}"
+    outdir.mkdir(parents=True, exist_ok=True)
+    result_path = outdir / "rfe_result.joblib"
+    joblib.dump(result, result_path)
+    logger.info(f"Saved seed {seed} RFE result to {result_path}")
+
+    print(f"Single-seed panel optimization complete: {model_name} seed {seed}")
+    print(f"  Max AUROC: {result.max_auroc:.4f}")
+    print(f"  Saved to: {result_path}")
+
+    return result
+
+
 def run_optimize_panel_aggregated(
     results_dir: str | Path,
     infile: str,
@@ -773,111 +984,141 @@ def run_optimize_panel_aggregated(
         f"Numeric metadata: {len(filtered_meta_num_cols)}"
     )
 
-    # -- Run RFE for each split seed --
+    # -- Check for pre-computed per-seed results (HPC mode) --
+    seeds_cache_dir = results_path / "optimize_panel" / "seeds"
+    precomputed_results: list[RFEResult] = []
+    precomputed_seeds: set[int] = set()
+    if seeds_cache_dir.exists():
+        for seed_dir_candidate in sorted(seeds_cache_dir.glob("seed_*")):
+            joblib_path = seed_dir_candidate / "rfe_result.joblib"
+            if joblib_path.exists():
+                seed_num = int(seed_dir_candidate.name.replace("seed_", ""))
+                precomputed_seeds.add(seed_num)
+
+    available_seeds = {int(sd.name.replace("split_seed", "")) for sd in split_dirs}
+
+    if precomputed_seeds and precomputed_seeds >= available_seeds:
+        # All seeds have pre-computed results; load and skip to aggregation
+        logger.info(
+            f"Found pre-computed RFE results for all {len(available_seeds)} seeds, "
+            f"skipping RFE and proceeding to aggregation"
+        )
+        for seed_num in sorted(available_seeds):
+            joblib_path = seeds_cache_dir / f"seed_{seed_num}" / "rfe_result.joblib"
+            loaded_result = joblib.load(joblib_path)
+            precomputed_results.append(loaded_result)
+            logger.info(f"  Loaded seed {seed_num}: max AUROC={loaded_result.max_auroc:.4f}")
+
+    # -- Run RFE for each split seed (if not pre-computed) --
     import time
 
     overall_start = time.time()
 
-    def _run_rfe_for_seed(seed_dir: Path) -> RFEResult:
-        """Run RFE for a single split seed."""
-        seed = int(seed_dir.name.replace("split_seed", ""))
-        seed_model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
+    if precomputed_results:
+        per_seed_results = precomputed_results
+        multi_seed_elapsed = time.time() - overall_start
+    else:
 
-        if not seed_model_path.exists():
-            raise FileNotFoundError(f"Model not found for seed {seed}: {seed_model_path}")
+        def _run_rfe_for_seed(seed_dir: Path) -> RFEResult:
+            """Run RFE for a single split seed."""
+            seed = int(seed_dir.name.replace("split_seed", ""))
+            seed_model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
 
-        logger.info(f"\n{'='*60}\n" f"Starting RFE for seed {seed}\n" f"{'='*60}")
-        seed_start = time.time()
+            if not seed_model_path.exists():
+                raise FileNotFoundError(f"Model not found for seed {seed}: {seed_model_path}")
 
-        seed_bundle = joblib.load(seed_model_path)
-        pipeline = seed_bundle.get("model")
-        if pipeline is None:
-            raise ValueError(f"Model bundle missing 'model' key for seed {seed}")
+            logger.info(f"\n{'='*60}\n" f"Starting RFE for seed {seed}\n" f"{'='*60}")
+            seed_start = time.time()
 
-        split_path = Path(split_dir)
-        train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
-        val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+            seed_bundle = joblib.load(seed_model_path)
+            pipeline = seed_bundle.get("model")
+            if pipeline is None:
+                raise ValueError(f"Model bundle missing 'model' key for seed {seed}")
 
-        if not train_file.exists() or not val_file.exists():
-            raise FileNotFoundError(
-                f"Split files not found for seed {seed}: {train_file}, {val_file}"
+            split_path = Path(split_dir)
+            train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
+            val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+
+            if not train_file.exists() or not val_file.exists():
+                raise FileNotFoundError(
+                    f"Split files not found for seed {seed}: {train_file}, {val_file}"
+                )
+
+            train_idx = pd.read_csv(train_file).squeeze().values
+            val_idx = pd.read_csv(val_file).squeeze().values
+
+            X_train = df.iloc[train_idx][feature_cols].copy()
+            y_train = y_all[train_idx]
+            X_val = df.iloc[val_idx][feature_cols].copy()
+            y_val = y_all[val_idx]
+
+            logger.info(
+                f"Seed {seed}: train={len(X_train)} ({y_train.sum()} cases), "
+                f"val={len(X_val)} ({y_val.sum()} cases)"
             )
 
-        train_idx = pd.read_csv(train_file).squeeze().values
-        val_idx = pd.read_csv(val_file).squeeze().values
+            result = recursive_feature_elimination(
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                base_pipeline=pipeline,
+                model_name=model_name,
+                initial_proteins=initial_proteins,
+                cat_cols=filtered_cat_cols,
+                meta_num_cols=filtered_meta_num_cols,
+                min_size=min_size,
+                cv_folds=cv_folds,
+                step_strategy=step_strategy,
+                min_auroc_frac=min_auroc_frac,
+                random_state=seed,
+                retune_n_trials=retune_n_trials,
+                retune_cv_folds=retune_cv_folds,
+                retune_n_jobs=optuna_jobs,
+            )
 
-        X_train = df.iloc[train_idx][feature_cols].copy()
-        y_train = y_all[train_idx]
-        X_val = df.iloc[val_idx][feature_cols].copy()
-        y_val = y_all[val_idx]
+            seed_elapsed = time.time() - seed_start
+            logger.info(
+                f"\n{'='*60}\n"
+                f"Completed RFE for seed {seed}\n"
+                f"Time: {seed_elapsed/60:.1f} min\n"
+                f"Max AUROC: {result.max_auroc:.4f}\n"
+                f"Evaluation points: {len(result.curve)}\n"
+                f"{'='*60}\n"
+            )
 
-        logger.info(
-            f"Seed {seed}: train={len(X_train)} ({y_train.sum()} cases), "
-            f"val={len(X_val)} ({y_val.sum()} cases)"
-        )
+            return result
 
-        result = recursive_feature_elimination(
-            X_train=X_train,
-            y_train=y_train,
-            X_val=X_val,
-            y_val=y_val,
-            base_pipeline=pipeline,
-            model_name=model_name,
-            initial_proteins=initial_proteins,
-            cat_cols=filtered_cat_cols,
-            meta_num_cols=filtered_meta_num_cols,
-            min_size=min_size,
-            cv_folds=cv_folds,
-            step_strategy=step_strategy,
-            min_auroc_frac=min_auroc_frac,
-            random_state=seed,
-            retune_n_trials=retune_n_trials,
-            retune_cv_folds=retune_cv_folds,
-            retune_n_jobs=optuna_jobs,
-        )
+        if len(split_dirs) > 1 and seed_jobs != 1:
+            from sklearn.utils.parallel import Parallel, delayed
 
-        seed_elapsed = time.time() - seed_start
-        logger.info(
-            f"\n{'='*60}\n"
-            f"Completed RFE for seed {seed}\n"
-            f"Time: {seed_elapsed/60:.1f} min\n"
-            f"Max AUROC: {result.max_auroc:.4f}\n"
-            f"Evaluation points: {len(result.curve)}\n"
-            f"{'='*60}\n"
-        )
-
-        return result
-
-    if len(split_dirs) > 1 and seed_jobs != 1:
-        from joblib import Parallel, delayed
-
-        logger.info(
-            f"\n{'='*60}\n"
-            f"Multi-seed RFE execution\n"
-            f"{'='*60}\n"
-            f"Total seeds: {len(split_dirs)}\n"
-            f"Parallel seed jobs: {seed_jobs}\n"
-            f"Optuna jobs per seed: {optuna_jobs}\n"
-            f"Starting panel: {len(initial_proteins)} proteins\n"
-            f"{'='*60}\n"
-        )
-        per_seed_results: list[RFEResult] = Parallel(n_jobs=seed_jobs)(
-            delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
-        )
-    else:
-        logger.info(
-            f"\n{'='*60}\n"
-            f"Sequential RFE execution\n"
-            f"{'='*60}\n"
-            f"Total seeds: {len(split_dirs)}\n"
-            f"Starting panel: {len(initial_proteins)} proteins\n"
-            f"{'='*60}\n"
-        )
-        per_seed_results = []
-        for idx, sd in enumerate(split_dirs, 1):
-            logger.info(f"\nProcessing seed {idx}/{len(split_dirs)}")
-            result = _run_rfe_for_seed(sd)
-            per_seed_results.append(result)
+            logger.info(
+                f"\n{'='*60}\n"
+                f"Multi-seed RFE execution\n"
+                f"{'='*60}\n"
+                f"Total seeds: {len(split_dirs)}\n"
+                f"Parallel seed jobs: {seed_jobs}\n"
+                f"Optuna jobs per seed: {optuna_jobs}\n"
+                f"Starting panel: {len(initial_proteins)} proteins\n"
+                f"{'='*60}\n"
+            )
+            per_seed_results: list[RFEResult] = Parallel(n_jobs=seed_jobs)(
+                delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
+            )
+        else:
+            logger.info(
+                f"\n{'='*60}\n"
+                f"Sequential RFE execution\n"
+                f"{'='*60}\n"
+                f"Total seeds: {len(split_dirs)}\n"
+                f"Starting panel: {len(initial_proteins)} proteins\n"
+                f"{'='*60}\n"
+            )
+            per_seed_results = []
+            for idx, sd in enumerate(split_dirs, 1):
+                logger.info(f"\nProcessing seed {idx}/{len(split_dirs)}")
+                result = _run_rfe_for_seed(sd)
+                per_seed_results.append(result)
 
     multi_seed_elapsed = time.time() - overall_start
 

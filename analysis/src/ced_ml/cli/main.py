@@ -650,6 +650,13 @@ def train_ensemble(ctx, config, base_models, **kwargs):
     help="Optuna trials per evaluation point for hyperparameter re-tuning (default: 20)",
 )
 @click.option(
+    "--split-seed",
+    type=int,
+    default=None,
+    help="Run RFE for a single split seed only (for HPC parallelization). "
+    "Saves result as joblib for later aggregation.",
+)
+@click.option(
     "--hpc",
     is_flag=True,
     default=False,
@@ -772,6 +779,94 @@ def optimize_panel(ctx, config, **kwargs):
 
     if not kwargs.get("results_dir") and not kwargs.get("run_id"):
         raise click.UsageError("Either --results-dir or --run-id is required.")
+
+    # Single-seed mode: run RFE for one seed and save joblib, then exit
+    if kwargs.get("split_seed") is not None:
+        import json
+        import os
+        from pathlib import Path
+
+        from ced_ml.cli.optimize_panel import (
+            discover_models_by_run_id,
+            run_optimize_panel_single_seed,
+        )
+        from ced_ml.utils.paths import get_project_root
+
+        if not kwargs.get("run_id"):
+            raise click.UsageError("--split-seed requires --run-id.")
+
+        run_id = kwargs["run_id"]
+        seed = kwargs["split_seed"]
+
+        results_root_env = os.environ.get("CED_RESULTS_DIR")
+        results_root = (
+            Path(results_root_env) if results_root_env else get_project_root() / "results"
+        )
+
+        model_dirs = discover_models_by_run_id(
+            run_id=run_id,
+            results_root=results_root,
+            model_filter=kwargs.get("model"),
+        )
+
+        if not model_dirs:
+            raise click.ClickException(
+                f"No models found with run_id={run_id} and aggregated results"
+            )
+
+        # Auto-detect infile and split_dir from run metadata
+        first_model_dir = next(iter(model_dirs.values()))
+        run_level_dir = first_model_dir.parent.parent
+        metadata_file = run_level_dir / "run_metadata.json"
+
+        if not metadata_file.exists():
+            model_dir = first_model_dir.parent
+            split_dirs_list = list(model_dir.glob("splits/split_seed*"))
+            if split_dirs_list:
+                metadata_file = split_dirs_list[0] / "run_metadata.json"
+
+        infile = kwargs.get("infile")
+        split_dir = kwargs.get("split_dir")
+
+        if metadata_file.exists() and (not infile or not split_dir):
+            with open(metadata_file) as f:
+                metadata = json.load(f)
+            first_model_name = next(iter(model_dirs))
+            model_meta = metadata.get("models", {}).get(first_model_name, {})
+            if not infile:
+                infile = model_meta.get("infile") or metadata.get("infile")
+            if not split_dir:
+                split_dir = (
+                    model_meta.get("split_dir")
+                    or metadata.get("split_dir")
+                    or metadata.get("splits_dir")
+                )
+
+        if not infile or not split_dir:
+            raise click.ClickException(
+                "Could not auto-detect infile and split_dir. "
+                "Please specify --infile and --split-dir manually."
+            )
+
+        for model_name, agg_dir in model_dirs.items():
+            click.echo(f"Running single-seed RFE: {model_name} seed {seed}")
+            run_optimize_panel_single_seed(
+                results_dir=agg_dir,
+                infile=infile,
+                split_dir=split_dir,
+                seed=seed,
+                model_name=model_name,
+                stability_threshold=kwargs.get("stability_threshold") or 0.75,
+                min_size=kwargs.get("min_size") or 5,
+                min_auroc_frac=kwargs.get("min_auroc_frac") or 0.90,
+                cv_folds=kwargs.get("cv_folds") or 0,
+                step_strategy=kwargs.get("step_strategy") or "geometric",
+                log_level=ctx.obj.get("log_level"),
+                retune_n_trials=kwargs.get("retune_trials") or 20,
+                retune_n_jobs=kwargs.get("n_jobs") or 1,
+            )
+
+        return
 
     # HPC mode: submit jobs and exit
     hpc_flag = kwargs.get("hpc", False)
