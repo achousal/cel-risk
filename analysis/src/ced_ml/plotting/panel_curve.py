@@ -57,6 +57,7 @@ def plot_pareto_curve(
     n_val_cases: int | None = None,
     feature_selection_method: str | None = None,
     run_id: str | None = None,
+    full_model_auroc: float | None = None,
 ) -> None:
     """Plot validation AUROC vs panel size curve with bootstrap CI and annotations.
 
@@ -79,6 +80,8 @@ def plot_pareto_curve(
         n_val_cases: Number of positive cases in validation (optional).
         feature_selection_method: Feature selection method used (optional).
         run_id: Run identifier (optional).
+        full_model_auroc: AUROC of the full model (all features, full tuning) as
+            a horizontal reference line on the plot.
 
     Returns:
         None. Saves plot to out_path.
@@ -151,6 +154,18 @@ def plot_pareto_curve(
             alpha=ci_alpha,
             label="95% CI (percentile bootstrap)",
             zorder=1,
+        )
+
+    # Full-model reference line
+    if full_model_auroc is not None:
+        ax.axhline(
+            y=full_model_auroc,
+            color="black",
+            linestyle="--",
+            alpha=0.6,
+            linewidth=LW_REFERENCE,
+            zorder=3,
+            label=f"Full model AUROC: {full_model_auroc:.3f}",
         )
 
     # Threshold lines
@@ -254,9 +269,12 @@ def plot_pareto_curve(
     ax.set_ylabel("AUROC", fontsize=FONT_LABEL)
     ax.set_xlim(0, sizes.max() * 1.05)
 
-    # Y-axis: show reasonable range around the data
+    # Y-axis: show reasonable range around the data (include reference line)
     y_min = ci_lower.min() - 0.02 if has_ci else aurocs_val.min() - 0.02
     y_max = ci_upper.max() + 0.02 if has_ci else aurocs_val.max() + 0.02
+    if full_model_auroc is not None:
+        y_max = max(y_max, full_model_auroc + 0.02)
+        y_min = min(y_min, full_model_auroc - 0.02)
     y_min = max(0.5, y_min)  # Don't go below 0.5
     y_max = min(1.0, y_max)  # Don't go above 1.0
     ax.set_ylim(y_min, y_max)

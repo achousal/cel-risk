@@ -229,7 +229,7 @@ def run_consensus_panel(
     run_id: str,
     infile: str | None = None,
     split_dir: str | None = None,
-    stability_threshold: float = 0.75,
+    stability_threshold: float = 0.90,
     corr_threshold: float = 0.85,
     target_size: int = 25,
     rfe_weight: float = 0.5,

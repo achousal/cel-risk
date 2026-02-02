@@ -157,7 +157,7 @@ def run_optimize_panel(
     outdir: str | None = None,
     use_stability_panel: bool = True,
     log_level: int | None = None,
-    retune_n_trials: int = 20,
+    retune_n_trials: int = 40,
     retune_cv_folds: int = 3,
     retune_n_jobs: int = 1,
     corr_aware: bool = True,
@@ -444,6 +444,17 @@ def run_optimize_panel(
     paths = save_rfe_results(result, outdir, model_name, split_seed)
     logger.info(f"Saved RFE results to {outdir}")
 
+    # Compute full-model val AUROC as reference
+    _full_model_auroc = None
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        _full_proba = pipeline.predict_proba(X_val)[:, 1]
+        _full_model_auroc = float(roc_auc_score(y_val, _full_proba))
+        logger.info(f"Full-model reference AUROC (val): {_full_model_auroc:.4f}")
+    except Exception as e:
+        logger.debug(f"Could not compute full-model AUROC: {e}")
+
     # Generate plots
     try:
         plot_path = Path(outdir) / "panel_curve.png"
@@ -458,6 +469,7 @@ def run_optimize_panel(
             n_train_cases=int(y_train.sum()),
             n_val_cases=int(y_val.sum()),
             feature_selection_method="Single-split RFE",
+            full_model_auroc=_full_model_auroc,
         )
         paths["panel_curve_plot"] = str(plot_path)
         logger.info(f"Saved panel curve plot to {plot_path}")
@@ -575,13 +587,13 @@ def run_optimize_panel_single_seed(
     split_dir: str,
     seed: int,
     model_name: str | None = None,
-    stability_threshold: float = 0.75,
+    stability_threshold: float = 0.90,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
     cv_folds: int = 0,
     step_strategy: str = "geometric",
     log_level: int | None = None,
-    retune_n_trials: int = 20,
+    retune_n_trials: int = 40,
     retune_n_jobs: int = 1,
     corr_aware: bool = True,
     corr_threshold: float = 0.80,
@@ -599,7 +611,7 @@ def run_optimize_panel_single_seed(
         split_dir: Directory containing split indices.
         seed: The split seed to run RFE for.
         model_name: Model name (auto-detected if None).
-        stability_threshold: Minimum selection frequency (default: 0.75).
+        stability_threshold: Minimum selection frequency (default: 0.90).
         min_size: Minimum panel size.
         min_auroc_frac: Early stop threshold.
         cv_folds: CV folds for RFE.
@@ -799,7 +811,7 @@ def run_optimize_panel_aggregated(
     infile: str,
     split_dir: str,
     model_name: str | None = None,
-    stability_threshold: float = 0.75,
+    stability_threshold: float = 0.90,
     min_size: int = 5,
     min_auroc_frac: float = 0.90,
     cv_folds: int = 0,
@@ -807,7 +819,7 @@ def run_optimize_panel_aggregated(
     outdir: str | None = None,
     log_level: int | None = None,
     n_jobs: int = 1,
-    retune_n_trials: int = 20,
+    retune_n_trials: int = 40,
     corr_aware: bool = True,
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
@@ -827,7 +839,7 @@ def run_optimize_panel_aggregated(
         infile: Path to input data file
         split_dir: Directory containing split indices
         model_name: Model name (auto-detected if None)
-        stability_threshold: Minimum selection frequency (default: 0.75)
+        stability_threshold: Minimum selection frequency (default: 0.90)
         min_size: Minimum panel size
         min_auroc_frac: Early stop threshold
         cv_folds: CV folds for RFE
@@ -1201,6 +1213,18 @@ def run_optimize_panel_aggregated(
     paths = save_rfe_results(result, str(outdir), model_name, split_seed=-1)
     logger.info(f"Saved RFE results to {outdir}")
 
+    # Load full-model AUROC as reference (from aggregated pooled val metrics)
+    _full_model_auroc = None
+    _val_metrics_file = results_path / "metrics" / "pooled_val_metrics.csv"
+    if _val_metrics_file.exists():
+        try:
+            _val_df = pd.read_csv(_val_metrics_file)
+            if "auroc" in _val_df.columns and len(_val_df) > 0:
+                _full_model_auroc = float(_val_df["auroc"].iloc[0])
+                logger.info(f"Full-model reference AUROC (pooled val): {_full_model_auroc:.4f}")
+        except Exception as e:
+            logger.debug(f"Could not load full-model AUROC: {e}")
+
     # Generate plots
     try:
         plot_path = Path(outdir) / "panel_curve_aggregated.png"
@@ -1213,6 +1237,7 @@ def run_optimize_panel_aggregated(
             n_splits=n_seeds,
             feature_selection_method="Aggregated RFE",
             run_id=_run_id,
+            full_model_auroc=_full_model_auroc,
         )
         paths["panel_curve_plot"] = str(plot_path)
         logger.info(f"Saved panel curve plot to {plot_path}")

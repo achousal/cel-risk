@@ -8,7 +8,7 @@
 
 # Stability threshold: minimum selection fraction to include a protein
 # Proteins must be selected in >= this fraction of CV folds to be considered "stable"
-stability_threshold: 0.75
+stability_threshold: 0.90
 
 # Correlation threshold for clustering redundant proteins
 # Proteins with |correlation| >= this threshold are grouped, and one representative

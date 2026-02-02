@@ -675,7 +675,7 @@ def recursive_feature_elimination(
     min_auroc_frac: float = 0.90,
     random_state: int = 42,
     n_perm_repeats: int = 5,
-    retune_n_trials: int = 20,
+    retune_n_trials: int = 40,
     retune_cv_folds: int = 3,
     retune_n_jobs: int = 1,
     corr_aware: bool = True,

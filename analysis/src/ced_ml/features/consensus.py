@@ -399,7 +399,7 @@ def build_consensus_panel(
     model_stability: dict[str, pd.DataFrame],
     model_rfe_rankings: dict[str, dict[str, int] | None],
     df_train: pd.DataFrame,
-    stability_threshold: float = 0.75,
+    stability_threshold: float = 0.90,
     corr_threshold: float = 0.85,
     target_size: int = 25,
     rfe_weight: float = 0.5,

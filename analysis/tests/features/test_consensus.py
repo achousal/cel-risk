@@ -478,6 +478,7 @@ class TestBuildConsensusPanel:
             model_stability=model_stability,
             model_rfe_rankings=model_rfe,
             df_train=df_train,
+            stability_threshold=0.75,
             target_size=5,
         )
 
@@ -516,6 +517,7 @@ class TestBuildConsensusPanel:
                 model_stability=model_stability,
                 model_rfe_rankings={"LR_EN": None},
                 df_train=df_train,
+                stability_threshold=0.75,
             )
 
     def test_metadata_populated(self, mock_data):
@@ -526,6 +528,7 @@ class TestBuildConsensusPanel:
             model_stability=model_stability,
             model_rfe_rankings=model_rfe,
             df_train=df_train,
+            stability_threshold=0.75,
         )
 
         assert "timestamp" in result.metadata
