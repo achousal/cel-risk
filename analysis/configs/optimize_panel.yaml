@@ -24,6 +24,14 @@ step_strategy: fine          # Feature elimination: geometric, linear, fine (def
 retune_trials: 20            # Optuna trials per evaluation point (default: 20)
 
 # ==============================================================================
+# Correlation-Aware Pruning
+# ==============================================================================
+
+corr_aware: true             # Enable correlation-aware redundancy pruning (default: true)
+corr_threshold: 0.80         # Correlation threshold for pruning redundant features (default: 0.80)
+corr_method: spearman        # Correlation method: spearman or pearson (default: spearman)
+
+# ==============================================================================
 # HPC Parallelization (only used with --hpc flag)
 # ==============================================================================
 

@@ -783,6 +783,9 @@ def optimize_panel(ctx, config, **kwargs):
         "outdir",
         "n_jobs",
         "retune_trials",
+        "corr_aware",
+        "corr_threshold",
+        "corr_method",
     ]:
         if kwargs.get(key) is None and key in config_params:
             kwargs[key] = config_params[key]
