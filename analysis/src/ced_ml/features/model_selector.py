@@ -15,7 +15,7 @@ import warnings
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectFromModel, SelectorMixin
-from sklearn.utils.validation import check_is_fitted, validate_data
+from sklearn.utils.validation import check_array, check_is_fitted
 
 from ..data.schema import ModelName
 
@@ -134,7 +134,7 @@ class ModelSpecificSelector(SelectorMixin, BaseEstimator):
         -------
         self
         """
-        X = validate_data(self, X, accept_sparse=False, ensure_min_features=1)
+        X = check_array(X, accept_sparse=False, ensure_min_features=1)
 
         # Store feature names if available (pandas DataFrame)
         if hasattr(X, "columns"):

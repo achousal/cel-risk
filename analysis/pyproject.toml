@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ced-ml"
 version = "1.0.0"
 description = "Machine learning pipeline for incident Celiac Disease risk prediction from proteomics"
-readme = "../README.md"
+
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
@@ -29,7 +29,7 @@ dependencies = [
     "numpy>=2.0.0",
     "pandas>=2.2.0",
     "pyarrow>=17.0.0",
-    "scikit-learn>=1.5.0",
+    "scikit-learn>=1.6.0",
     "xgboost>=2.0.0",
     "optuna>=4.0.0",
     "plotly>=5.0.0",
@@ -60,6 +60,9 @@ ced = "ced_ml.cli.main:cli"
 Homepage = "https://github.com/elahi-lab/CeliacRiskML"
 Documentation = "https://github.com/elahi-lab/CeliacRiskML/blob/main/README.md"
 Repository = "https://github.com/elahi-lab/CeliacRiskML"
+
+[tool.setuptools]
+readme = {file = "../README.md"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
