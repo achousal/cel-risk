@@ -53,7 +53,7 @@ For HPC job submission with LSF (`bsub`):
 cd CeliacRisks/
 bash analysis/scripts/hpc_setup.sh
 
-source venv/bin/activate  # Required if using venv
+source analysis/venv/bin/activate  # Required if using venv
 
 # 2. Edit HPC config with your HPC project allocation
 nano analysis/configs/pipeline_hpc.yaml

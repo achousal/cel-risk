@@ -11,7 +11,7 @@ test_size: 0.25
 holdout_size: 0.30  # Only used when mode=holdout
 
 # Repeated splits
-n_splits: 2  # Single split for 1-hour multi-objective run
+n_splits: 5  # Single split for 1-hour multi-objective run
 seed_start: 0
 
 # Prevalent case handling

@@ -23,7 +23,7 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/achousal/CeliacRiskML.git
+git clone https://github.com/achousal/CeliacRisks.git
 ```
 
 ### Local
