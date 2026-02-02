@@ -417,10 +417,12 @@ def save_nested_rfecv_results(
         "n_folds": len(result.fold_results),
         "consensus_panel_size": len(result.consensus_panel),
         "mean_optimal_size": float(result.mean_optimal_size),
-        "std_optimal_size": float(np.std(result.optimal_sizes)) if result.optimal_sizes else 0.0,
+        "std_optimal_size": (float(np.std(result.optimal_sizes)) if result.optimal_sizes else 0.0),
         "optimal_sizes_per_fold": [int(x) for x in result.optimal_sizes],
-        "mean_val_auroc": float(np.mean(result.fold_val_aurocs)) if result.fold_val_aurocs else 0.0,
-        "std_val_auroc": float(np.std(result.fold_val_aurocs)) if result.fold_val_aurocs else 0.0,
+        "mean_val_auroc": (
+            float(np.mean(result.fold_val_aurocs)) if result.fold_val_aurocs else 0.0
+        ),
+        "std_val_auroc": (float(np.std(result.fold_val_aurocs)) if result.fold_val_aurocs else 0.0),
         "val_aurocs_per_fold": [float(x) for x in result.fold_val_aurocs],
         "consensus_threshold": 0.80,
         "timestamp": datetime.now().isoformat(),

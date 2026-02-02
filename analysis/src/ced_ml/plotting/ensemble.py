@@ -349,7 +349,14 @@ def plot_aggregated_weights(
         ha = "left" if m >= 0 else "right"
         x_pos = m + s + offset if m >= 0 else m - s - offset
         n_splits_with_model = sum(1 for cd in coefs_per_split.values() if sorted_names[i] in cd)
-        ax.text(x_pos, i, f"{m:.3f} (n={n_splits_with_model})", va="center", ha=ha, fontsize=9)
+        ax.text(
+            x_pos,
+            i,
+            f"{m:.3f} (n={n_splits_with_model})",
+            va="center",
+            ha=ha,
+            fontsize=9,
+        )
 
     # Title - use subtitle if provided, otherwise show n_splits
     n_splits = len(coefs_per_split)

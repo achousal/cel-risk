@@ -28,7 +28,13 @@ import pandas as pd
 import pytest
 import yaml
 from ced_ml.cli.main import cli
-from ced_ml.data.schema import CONTROL_LABEL, ID_COL, INCIDENT_LABEL, PREVALENT_LABEL, TARGET_COL
+from ced_ml.data.schema import (
+    CONTROL_LABEL,
+    ID_COL,
+    INCIDENT_LABEL,
+    PREVALENT_LABEL,
+    TARGET_COL,
+)
 from click.testing import CliRunner
 
 
@@ -96,7 +102,11 @@ def minimal_config(tmp_path):
             "k_grid": [3],
             "stability_thresh": 0.5,
         },
-        "calibration": {"enabled": True, "method": "isotonic", "strategy": "oof_posthoc"},
+        "calibration": {
+            "enabled": True,
+            "method": "isotonic",
+            "strategy": "oof_posthoc",
+        },
         "thresholds": {"objective": "youden", "fixed_spec": 0.95},
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
     }

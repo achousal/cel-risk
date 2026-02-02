@@ -309,7 +309,10 @@ def plot_learning_curve(
     # Set x-axis ticks and labels to training sizes
     ax.set_xticks(train_sizes)
     ax.set_xticklabels(
-        [str(int(size)) for size in train_sizes], rotation=45, ha="right", fontsize=FONT_LEGEND
+        [str(int(size)) for size in train_sizes],
+        rotation=45,
+        ha="right",
+        fontsize=FONT_LEGEND,
     )
 
     ax.legend(loc="best", fontsize=FONT_LEGEND)

@@ -242,7 +242,7 @@ def compute_holdout_metrics(
         "precision_holdout_at_thr_primary": float(m_primary.precision),
         "recall_holdout_at_thr_primary": float(m_primary.sensitivity),
         "specificity_holdout_at_thr_primary": float(m_primary.specificity),
-        "fixed_spec_value": float(fixed_spec_value) if fixed_spec_value is not None else np.nan,
+        "fixed_spec_value": (float(fixed_spec_value) if fixed_spec_value is not None else np.nan),
         "thr_maxF1": float(thr_f1),
         "f1_holdout_at_thr_maxF1": float(m_f1.f1),
         "precision_holdout_at_thr_maxF1": float(m_f1.precision),

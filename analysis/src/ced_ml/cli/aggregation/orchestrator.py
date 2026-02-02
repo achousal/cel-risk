@@ -383,7 +383,7 @@ def build_aggregation_metadata(
             "n_features_analyzed": (
                 len(feature_stability_df) if not feature_stability_df.empty else 0
             ),
-            "n_stable_features": len(stable_features_df) if not stable_features_df.empty else 0,
+            "n_stable_features": (len(stable_features_df) if not stable_features_df.empty else 0),
             "top_10_features": (
                 stable_features_df["protein"].head(10).tolist()
                 if not stable_features_df.empty
@@ -391,7 +391,9 @@ def build_aggregation_metadata(
             ),
         },
         "feature_reports": {
-            "n_proteins_in_reports": len(agg_feature_report) if not agg_feature_report.empty else 0,
+            "n_proteins_in_reports": (
+                len(agg_feature_report) if not agg_feature_report.empty else 0
+            ),
             "n_splits_with_reports": (
                 all_feature_reports["split_seed"].nunique() if not all_feature_reports.empty else 0
             ),
@@ -456,5 +458,5 @@ def build_return_summary(
         "n_splits": n_splits,
         "models": all_models,
         "per_model": per_model_summary,
-        "n_stable_features": len(stable_features_df) if not stable_features_df.empty else 0,
+        "n_stable_features": (len(stable_features_df) if not stable_features_df.empty else 0),
     }

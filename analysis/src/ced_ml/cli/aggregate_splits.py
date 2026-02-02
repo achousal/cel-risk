@@ -205,7 +205,7 @@ def run_aggregate_splits_with_config(
     params = {
         "results_dir": str(config.results_dir),
         "stability_threshold": config.min_stability,
-        "plot_formats": [config.plot_format] if hasattr(config, "plot_format") else ["png"],
+        "plot_formats": ([config.plot_format] if hasattr(config, "plot_format") else ["png"]),
         "target_specificity": 0.95,
         "n_boot": 500,
         "verbose": 0,

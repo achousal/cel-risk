@@ -22,7 +22,13 @@ import pandas as pd
 import pytest
 import yaml
 from ced_ml.cli.main import cli
-from ced_ml.data.schema import CONTROL_LABEL, ID_COL, INCIDENT_LABEL, PREVALENT_LABEL, TARGET_COL
+from ced_ml.data.schema import (
+    CONTROL_LABEL,
+    ID_COL,
+    INCIDENT_LABEL,
+    PREVALENT_LABEL,
+    TARGET_COL,
+)
 from click.testing import CliRunner
 
 
@@ -613,7 +619,11 @@ class TestCalibrationStrategyComparison:
 
     @pytest.mark.slow
     def test_calibration_vs_no_calibration(
-        self, calibration_proteomics_data, oof_posthoc_config, no_calibration_config, tmp_path
+        self,
+        calibration_proteomics_data,
+        oof_posthoc_config,
+        no_calibration_config,
+        tmp_path,
     ):
         """
         Test: Calibrated vs uncalibrated models both train successfully.

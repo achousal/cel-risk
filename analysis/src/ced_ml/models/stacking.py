@@ -797,7 +797,11 @@ def collect_split_predictions(
         else:
             # Validate that this model's indices match the reference model
             _validate_indices_match(
-                indices, reference_model, current_idx, model_name, f"{split_name} predictions"
+                indices,
+                reference_model,
+                current_idx,
+                model_name,
+                f"{split_name} predictions",
             )
 
         logger.info(f"Loaded {split_name} predictions for {model_name}")
@@ -1009,7 +1013,7 @@ def save_ensemble_results(
             if results.get("y_val", []) is not None
             else None
         ),
-        "n_test_samples": len(results.get("y_test", [])) if "y_test" in results else None,
+        "n_test_samples": (len(results.get("y_test", [])) if "y_test" in results else None),
         "test_prevalence": (
             float(np.mean(results.get("y_test", [])))
             if results.get("y_test", []) is not None

@@ -1103,7 +1103,9 @@ class TestEnsembleAggregationSupport:
 
     def test_generate_model_comparison_report(self, tmp_path):
         """Test model comparison report generation."""
-        from ced_ml.cli.aggregation.plot_generator import generate_model_comparison_report
+        from ced_ml.cli.aggregation.plot_generator import (
+            generate_model_comparison_report,
+        )
 
         test_metrics = {
             "LR_EN": {"AUROC": 0.85, "PR_AUC": 0.12, "Brier": 0.08},
@@ -1142,7 +1144,9 @@ class TestEnsembleAggregationSupport:
 
     def test_generate_model_comparison_report_sorted_by_auroc(self, tmp_path):
         """Test that model comparison report is sorted by test AUROC."""
-        from ced_ml.cli.aggregation.plot_generator import generate_model_comparison_report
+        from ced_ml.cli.aggregation.plot_generator import (
+            generate_model_comparison_report,
+        )
 
         test_metrics = {
             "RF": {"AUROC": 0.82},
@@ -1159,7 +1163,9 @@ class TestEnsembleAggregationSupport:
 
     def test_generate_model_comparison_report_empty(self, tmp_path):
         """Test model comparison report with empty metrics."""
-        from ced_ml.cli.aggregation.plot_generator import generate_model_comparison_report
+        from ced_ml.cli.aggregation.plot_generator import (
+            generate_model_comparison_report,
+        )
 
         result = generate_model_comparison_report({}, {}, {}, tmp_path)
         assert result.empty

@@ -19,7 +19,13 @@ import pandas as pd
 import pytest
 import yaml
 from ced_ml.cli.main import cli
-from ced_ml.data.schema import CONTROL_LABEL, ID_COL, INCIDENT_LABEL, PREVALENT_LABEL, TARGET_COL
+from ced_ml.data.schema import (
+    CONTROL_LABEL,
+    ID_COL,
+    INCIDENT_LABEL,
+    PREVALENT_LABEL,
+    TARGET_COL,
+)
 from click.testing import CliRunner
 
 # ==================== Fixtures ====================

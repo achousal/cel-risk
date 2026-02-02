@@ -567,7 +567,11 @@ class ResultsWriter:
         return str(path)
 
     def save_final_test_panel(
-        self, panel_proteins: list[str], scenario: str, model: str, metadata: dict[str, Any] = None
+        self,
+        panel_proteins: list[str],
+        scenario: str,
+        model: str,
+        metadata: dict[str, Any] = None,
     ) -> str:
         """
         Save final test panel (proteins used in final model) to panels/{model}__final_test_panel.json.

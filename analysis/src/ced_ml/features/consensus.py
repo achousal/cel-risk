@@ -613,7 +613,13 @@ def save_consensus_results(
     panel_df["rank"] = range(1, len(panel_df) + 1)
 
     # Add all consensus metrics for final panel proteins
-    for col in ["consensus_score", "n_models_present", "agreement_strength", "rank_std", "rank_cv"]:
+    for col in [
+        "consensus_score",
+        "n_models_present",
+        "agreement_strength",
+        "rank_std",
+        "rank_cv",
+    ]:
         if col in result.consensus_ranking.columns:
             col_map = dict(
                 zip(
@@ -659,7 +665,12 @@ def save_consensus_results(
 
         # Select columns to save, handling missing uncertainty metrics gracefully
         base_cols = ["protein", "panel_rank", "consensus_score"]
-        optional_cols = ["n_models_present", "agreement_strength", "rank_std", "rank_cv"]
+        optional_cols = [
+            "n_models_present",
+            "agreement_strength",
+            "rank_std",
+            "rank_cv",
+        ]
 
         cols_to_save = base_cols.copy()
         # Add optional uncertainty columns if they exist

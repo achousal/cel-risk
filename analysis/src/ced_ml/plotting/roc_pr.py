@@ -142,7 +142,12 @@ def plot_roc_curve(
 
             if not skip_ci_band:
                 ax.fill_between(
-                    base_fpr, tpr_lo, tpr_hi, color=COLOR_PRIMARY, alpha=ALPHA_CI, label="95% CI"
+                    base_fpr,
+                    tpr_lo,
+                    tpr_hi,
+                    color=COLOR_PRIMARY,
+                    alpha=ALPHA_CI,
+                    label="95% CI",
                 )
             ax.fill_between(
                 base_fpr,
@@ -162,11 +167,23 @@ def plot_roc_curve(
         else:
             fpr, tpr, _ = roc_curve(y, p)
             auc = roc_auc_score(y, p)
-            ax.plot(fpr, tpr, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AUC = {auc:.3f}")
+            ax.plot(
+                fpr,
+                tpr,
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
+                label=f"AUC = {auc:.3f}",
+            )
     else:
         fpr, tpr, _ = roc_curve(y, p)
         auc = roc_auc_score(y, p)
-        ax.plot(fpr, tpr, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AUC = {auc:.3f}")
+        ax.plot(
+            fpr,
+            tpr,
+            color=COLOR_PRIMARY,
+            linewidth=LW_PRIMARY,
+            label=f"AUC = {auc:.3f}",
+        )
 
     if metrics_at_thresholds is not None:
         # Collect marker coordinates for overlap detection
@@ -374,7 +391,11 @@ def plot_pr_curve(
         precision, recall, _ = precision_recall_curve(y, p)
         ap = average_precision_score(y, p)
         ax.plot(
-            recall, precision, color=COLOR_PRIMARY, linewidth=LW_PRIMARY, label=f"AP = {ap:.3f}"
+            recall,
+            precision,
+            color=COLOR_PRIMARY,
+            linewidth=LW_PRIMARY,
+            label=f"AP = {ap:.3f}",
         )
 
     ax.set_xlabel("Recall (Sensitivity)")

@@ -510,12 +510,20 @@ def _get_lr_params_optuna(config: TrainingConfig, model_name: str = "LR_EN") -> 
             l1_values = config.lr.l1_ratio
             l1_low = min(l1_values) if l1_values else defaults["l1_ratio"]["low"]
             l1_high = max(l1_values) if l1_values else defaults["l1_ratio"]["high"]
-        params["clf__l1_ratio"] = {"type": "float", "low": l1_low, "high": l1_high, "log": False}
+        params["clf__l1_ratio"] = {
+            "type": "float",
+            "low": l1_low,
+            "high": l1_high,
+            "log": False,
+        }
 
     # Class weights (categorical)
     class_weight_options = _parse_class_weight_options(config.lr.class_weight_options)
     if class_weight_options and len(class_weight_options) > 1:
-        params["clf__class_weight"] = {"type": "categorical", "choices": class_weight_options}
+        params["clf__class_weight"] = {
+            "type": "categorical",
+            "choices": class_weight_options,
+        }
 
     return params
 
@@ -529,7 +537,12 @@ def _get_svm_params_optuna(config: TrainingConfig) -> dict[str, dict]:
         c_low, c_high = config.svm.optuna_C
     else:
         c_low, c_high = config.svm.C_min, config.svm.C_max
-    params["clf__estimator__C"] = {"type": "float", "low": c_low, "high": c_high, "log": True}
+    params["clf__estimator__C"] = {
+        "type": "float",
+        "low": c_low,
+        "high": c_high,
+        "log": True,
+    }
 
     # Class weights (categorical)
     class_weight_options = _parse_class_weight_options(config.svm.class_weight_options)
@@ -557,19 +570,34 @@ def _get_rf_params_optuna(config: TrainingConfig) -> dict[str, dict]:
         # Widen the range slightly beyond grid bounds
         low = max(50, low - 50)
         high = high + 100
-    params["clf__n_estimators"] = {"type": "int", "low": low, "high": high, "log": False}
+    params["clf__n_estimators"] = {
+        "type": "int",
+        "low": low,
+        "high": high,
+        "log": False,
+    }
 
     # max_depth - handle None in grid (unlimited depth)
     if config.rf.optuna_max_depth is not None:
         low, high = config.rf.optuna_max_depth
-        params["clf__max_depth"] = {"type": "int", "low": low, "high": high, "log": False}
+        params["clf__max_depth"] = {
+            "type": "int",
+            "low": low,
+            "high": high,
+            "log": False,
+        }
     else:
         # Check if grid contains only numeric values
         grid = [v for v in config.rf.max_depth_grid if v is not None]
         if grid:
             low = min(grid)
             high = max(grid) + 10  # Widen range
-            params["clf__max_depth"] = {"type": "int", "low": low, "high": high, "log": False}
+            params["clf__max_depth"] = {
+                "type": "int",
+                "low": low,
+                "high": high,
+                "log": False,
+            }
         else:
             # All None or empty - use categorical with None
             params["clf__max_depth"] = {
@@ -584,7 +612,12 @@ def _get_rf_params_optuna(config: TrainingConfig) -> dict[str, dict]:
         grid = config.rf.min_samples_split_grid
         low = min(grid) if grid else defaults["min_samples_split"]["low"]
         high = max(grid) + 10 if grid else defaults["min_samples_split"]["high"]
-    params["clf__min_samples_split"] = {"type": "int", "low": low, "high": high, "log": False}
+    params["clf__min_samples_split"] = {
+        "type": "int",
+        "low": low,
+        "high": high,
+        "log": False,
+    }
 
     # min_samples_leaf
     if config.rf.optuna_min_samples_leaf is not None:
@@ -593,12 +626,22 @@ def _get_rf_params_optuna(config: TrainingConfig) -> dict[str, dict]:
         grid = config.rf.min_samples_leaf_grid
         low = min(grid) if grid else defaults["min_samples_leaf"]["low"]
         high = max(grid) + 6 if grid else defaults["min_samples_leaf"]["high"]
-    params["clf__min_samples_leaf"] = {"type": "int", "low": low, "high": high, "log": False}
+    params["clf__min_samples_leaf"] = {
+        "type": "int",
+        "low": low,
+        "high": high,
+        "log": False,
+    }
 
     # max_features - handle mixed string/float grid
     if config.rf.optuna_max_features is not None:
         low, high = config.rf.optuna_max_features
-        params["clf__max_features"] = {"type": "float", "low": low, "high": high, "log": False}
+        params["clf__max_features"] = {
+            "type": "float",
+            "low": low,
+            "high": high,
+            "log": False,
+        }
     else:
         # Check if grid has only numeric values
         grid = config.rf.max_features_grid
@@ -607,7 +650,12 @@ def _get_rf_params_optuna(config: TrainingConfig) -> dict[str, dict]:
             # All numeric - use float range
             low = min(numeric_vals)
             high = min(1.0, max(numeric_vals) + 0.2)  # Cap at 1.0
-            params["clf__max_features"] = {"type": "float", "low": low, "high": high, "log": False}
+            params["clf__max_features"] = {
+                "type": "float",
+                "low": low,
+                "high": high,
+                "log": False,
+            }
         else:
             # Mixed or string values - use categorical
             params["clf__max_features"] = {"type": "categorical", "choices": grid}
@@ -615,7 +663,10 @@ def _get_rf_params_optuna(config: TrainingConfig) -> dict[str, dict]:
     # Class weights (categorical)
     class_weight_options = _parse_class_weight_options(config.rf.class_weight_options)
     if class_weight_options and len(class_weight_options) > 1:
-        params["clf__class_weight"] = {"type": "categorical", "choices": class_weight_options}
+        params["clf__class_weight"] = {
+            "type": "categorical",
+            "choices": class_weight_options,
+        }
 
     return params
 
@@ -632,7 +683,12 @@ def _get_xgb_params_optuna(config: TrainingConfig, xgb_spw: float | None = None)
         grid = config.xgboost.n_estimators_grid
         low = max(50, min(grid) - 50) if grid else defaults["n_estimators"]["low"]
         high = max(grid) + 200 if grid else defaults["n_estimators"]["high"]
-    params["clf__n_estimators"] = {"type": "int", "low": low, "high": high, "log": False}
+    params["clf__n_estimators"] = {
+        "type": "int",
+        "low": low,
+        "high": high,
+        "log": False,
+    }
 
     # max_depth
     if config.xgboost.optuna_max_depth is not None:
@@ -650,7 +706,12 @@ def _get_xgb_params_optuna(config: TrainingConfig, xgb_spw: float | None = None)
         # Use wider range than grid for better exploration
         low = defaults["learning_rate"]["low"]
         high = defaults["learning_rate"]["high"]
-    params["clf__learning_rate"] = {"type": "float", "low": low, "high": high, "log": True}
+    params["clf__learning_rate"] = {
+        "type": "float",
+        "low": low,
+        "high": high,
+        "log": True,
+    }
 
     # min_child_weight - LOG SCALE
     if config.xgboost.optuna_min_child_weight is not None:
@@ -658,7 +719,12 @@ def _get_xgb_params_optuna(config: TrainingConfig, xgb_spw: float | None = None)
     else:
         low = defaults["min_child_weight"]["low"]
         high = defaults["min_child_weight"]["high"]
-    params["clf__min_child_weight"] = {"type": "float", "low": low, "high": high, "log": True}
+    params["clf__min_child_weight"] = {
+        "type": "float",
+        "low": low,
+        "high": high,
+        "log": True,
+    }
 
     # gamma
     if config.xgboost.optuna_gamma is not None:
@@ -682,7 +748,12 @@ def _get_xgb_params_optuna(config: TrainingConfig, xgb_spw: float | None = None)
     else:
         low = defaults["colsample_bytree"]["low"]
         high = defaults["colsample_bytree"]["high"]
-    params["clf__colsample_bytree"] = {"type": "float", "low": low, "high": high, "log": False}
+    params["clf__colsample_bytree"] = {
+        "type": "float",
+        "low": low,
+        "high": high,
+        "log": False,
+    }
 
     # reg_alpha (L1 regularization) - LOG SCALE
     if config.xgboost.optuna_reg_alpha is not None:

@@ -99,14 +99,18 @@ def plot_pareto_curve(
     # Percentile bootstrap CI bounds (preferred); fall back to normal approx
     ci_lower = np.array(
         [
-            p.get("auroc_val_ci_low", p["auroc_val"] - Z_CRITICAL_005 * p.get("auroc_val_std", 0.0))
+            p.get(
+                "auroc_val_ci_low",
+                p["auroc_val"] - Z_CRITICAL_005 * p.get("auroc_val_std", 0.0),
+            )
             for p in curve
         ]
     )
     ci_upper = np.array(
         [
             p.get(
-                "auroc_val_ci_high", p["auroc_val"] + Z_CRITICAL_005 * p.get("auroc_val_std", 0.0)
+                "auroc_val_ci_high",
+                p["auroc_val"] + Z_CRITICAL_005 * p.get("auroc_val_std", 0.0),
             )
             for p in curve
         ]
@@ -208,7 +212,12 @@ def plot_pareto_curve(
                     xytext=(10, -15),
                     fontsize=8,
                     color=colors[i % len(colors)],
-                    bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 2},
+                    bbox={
+                        "facecolor": "white",
+                        "alpha": 0.8,
+                        "edgecolor": "none",
+                        "pad": 2,
+                    },
                 )
 
     # Mark knee point
@@ -245,12 +254,24 @@ def plot_pareto_curve(
                 fontsize=8,
                 fontweight="bold",
                 color=COLOR_TERTIARY,
-                bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 2},
+                bbox={
+                    "facecolor": "white",
+                    "alpha": 0.8,
+                    "edgecolor": "none",
+                    "pad": 2,
+                },
             )
 
     # Add statistical comparison annotations for adjacent recommended sizes
     _add_comparison_annotations(
-        ax, sizes, aurocs_val, aurocs_val_std, ci_lower, ci_upper, recommended, thresholds_to_show
+        ax,
+        sizes,
+        aurocs_val,
+        aurocs_val_std,
+        ci_lower,
+        ci_upper,
+        recommended,
+        thresholds_to_show,
     )
 
     # Styling

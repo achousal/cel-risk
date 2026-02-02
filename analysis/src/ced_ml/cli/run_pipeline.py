@@ -13,7 +13,10 @@ from typing import Any
 
 from ced_ml.cli.aggregate_splits import run_aggregate_splits
 from ced_ml.cli.consensus_panel import run_consensus_panel
-from ced_ml.cli.optimize_panel import discover_models_by_run_id, run_optimize_panel_aggregated
+from ced_ml.cli.optimize_panel import (
+    discover_models_by_run_id,
+    run_optimize_panel_aggregated,
+)
 from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
@@ -238,7 +241,10 @@ def _discover_input_file(
     # 1. Check pipeline configs (most likely source)
     for pipeline_config in ["configs/pipeline_local.yaml", "configs/pipeline_hpc.yaml"]:
         # Try both from root and from analysis/
-        for base in [defaults["project_root"], defaults.get("analysis", root / "analysis")]:
+        for base in [
+            defaults["project_root"],
+            defaults.get("analysis", root / "analysis"),
+        ]:
             pipeline_path = base / pipeline_config
             if pipeline_path.exists():
                 try:

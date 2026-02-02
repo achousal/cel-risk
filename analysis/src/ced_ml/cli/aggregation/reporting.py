@@ -146,7 +146,13 @@ def aggregate_feature_reports(
     agg_df = agg_df.sort_values("selection_freq_mean", ascending=False).reset_index(drop=True)
     agg_df["rank"] = range(1, len(agg_df) + 1)
 
-    col_order = ["rank", "protein", "selection_freq_mean", "selection_freq_std", "n_splits"]
+    col_order = [
+        "rank",
+        "protein",
+        "selection_freq_mean",
+        "selection_freq_std",
+        "n_splits",
+    ]
     if "effect_size_mean" in agg_df.columns:
         col_order.extend(["effect_size_mean", "effect_size_std"])
     if "p_value_mean" in agg_df.columns:

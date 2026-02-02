@@ -410,7 +410,14 @@ def _binned_logits(
     bin_idx = np.clip(bin_idx, 0, len(bins) - 2)
 
     # Compute per-bin statistics with bootstrap CI
-    xs_list, ys_list, ys_lo_list, ys_hi_list, ys_sd_list, sizes_list = [], [], [], [], [], []
+    xs_list, ys_list, ys_lo_list, ys_hi_list, ys_sd_list, sizes_list = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
     eps = 1e-7
 
     for i in range(len(bins) - 1):
@@ -770,7 +777,13 @@ def _plot_logit_calibration_panel(
 
             # Plot line connecting bin centers
             ax.plot(
-                bx, by, "-", color=COLOR_PRIMARY, linewidth=LW_PRIMARY, alpha=ALPHA_LINE, zorder=5
+                bx,
+                by,
+                "-",
+                color=COLOR_PRIMARY,
+                linewidth=LW_PRIMARY,
+                alpha=ALPHA_LINE,
+                zorder=5,
             )
 
             # Compute marker sizes: use same sqrt scaling as probability plot

@@ -159,7 +159,9 @@ def main():
 
         run_command(tune_cmd, "Hyperparameter tuning")
     else:
-        logger.info("Skipping hyperparameter tuning (using existing: %s)", args.hyperparams_path)
+        logger.info(
+            "Skipping hyperparameter tuning (using existing: %s)", args.hyperparams_path
+        )
 
     # Verify hyperparams exist
     if not args.hyperparams_path.exists():

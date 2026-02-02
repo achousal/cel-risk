@@ -357,14 +357,21 @@ def plot_pareto_frontier(
             xytext=(10, 10),
             textcoords="offset points",
             fontsize=10,
-            bbox={"boxstyle": "round,pad=0.5", "fc": "yellow", "alpha": 0.7, "edgecolor": "black"},
+            bbox={
+                "boxstyle": "round,pad=0.5",
+                "fc": "yellow",
+                "alpha": 0.7,
+                "edgecolor": "black",
+            },
             arrowprops={"arrowstyle": "->", "color": "black", "lw": 1},
         )
 
     ax.set_xlabel("AUROC", fontsize=FONT_LABEL, fontweight="bold")
     ax.set_ylabel("Brier Score", fontsize=FONT_LABEL, fontweight="bold")
     ax.set_title(
-        "Multi-Objective Optimization: Pareto Frontier", fontsize=FONT_TITLE, fontweight="bold"
+        "Multi-Objective Optimization: Pareto Frontier",
+        fontsize=FONT_TITLE,
+        fontweight="bold",
     )
     ax.legend(loc="best", framealpha=0.9)
     ax.grid(alpha=GRID_ALPHA, linestyle="--")

@@ -148,7 +148,12 @@ def build_plot_metadata(
     if n_train is not None:
         size_parts.append(
             format_split_info(
-                "Train", n_train, n_train_controls, n_train_incident, n_train_prevalent, n_train_pos
+                "Train",
+                n_train,
+                n_train_controls,
+                n_train_incident,
+                n_train_prevalent,
+                n_train_pos,
             )
         )
 
@@ -162,7 +167,12 @@ def build_plot_metadata(
     if n_test is not None:
         size_parts.append(
             format_split_info(
-                "Test", n_test, n_test_controls, n_test_incident, n_test_prevalent, n_test_pos
+                "Test",
+                n_test,
+                n_test_controls,
+                n_test_incident,
+                n_test_prevalent,
+                n_test_pos,
             )
         )
 

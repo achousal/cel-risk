@@ -138,7 +138,10 @@ def decision_curve_analysis(
 
     if thresholds is None:
         thresholds = generate_dca_thresholds(
-            min_thr=min_threshold, max_thr=max_threshold, step=threshold_step, prevalence=prevalence
+            min_thr=min_threshold,
+            max_thr=max_threshold,
+            step=threshold_step,
+            prevalence=prevalence,
         )
 
     observed_prevalence = np.mean(y)
@@ -232,7 +235,10 @@ def threshold_dca_zero_crossing(
 
     if thresholds is None:
         thresholds = generate_dca_thresholds(
-            min_thr=min_threshold, max_thr=max_threshold, step=threshold_step, prevalence=prevalence
+            min_thr=min_threshold,
+            max_thr=max_threshold,
+            step=threshold_step,
+            prevalence=prevalence,
         )
 
     dca_df = decision_curve_analysis(

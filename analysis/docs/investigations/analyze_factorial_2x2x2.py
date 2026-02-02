@@ -524,7 +524,9 @@ def plot_score_distributions(
 
     for ax, col in zip(axes, score_cols, strict=False):
         # Aggregate across seeds
-        agg = df.groupby(["n_cases", "ratio", "prevalent_frac"])[col].mean().reset_index()
+        agg = (
+            df.groupby(["n_cases", "ratio", "prevalent_frac"])[col].mean().reset_index()
+        )
 
         # Create cell labels
         agg["cell"] = agg.apply(
@@ -755,7 +757,9 @@ def main():
     int_all.to_csv(out_dir / "interactions.csv", index=False)
 
     # Feature importance overlap analysis
-    fi_path = args.feature_importances or args.results.parent / "feature_importances.csv"
+    fi_path = (
+        args.feature_importances or args.results.parent / "feature_importances.csv"
+    )
     if fi_path.exists():
         logger.info("Loading feature importances from %s", fi_path)
         fi_df = pd.read_csv(fi_path)

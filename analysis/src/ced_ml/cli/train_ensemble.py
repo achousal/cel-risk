@@ -225,7 +225,10 @@ def discover_base_models_for_run(
         for model_dir in sorted(run_path.glob("*/")):
             model_name = model_dir.name
 
-            if model_name.startswith(".") or model_name in ("investigations", "consensus"):
+            if model_name.startswith(".") or model_name in (
+                "investigations",
+                "consensus",
+            ):
                 continue
             if skip_ensemble and model_name == "ENSEMBLE":
                 continue
@@ -338,7 +341,12 @@ def run_train_ensemble(
     # Determine base models
     if base_models is None:
         # Default base models (config.ensemble was removed in recent refactor)
-        base_models = [ModelName.LR_EN, ModelName.RF, ModelName.XGBoost, ModelName.LinSVM_cal]
+        base_models = [
+            ModelName.LR_EN,
+            ModelName.RF,
+            ModelName.XGBoost,
+            ModelName.LinSVM_cal,
+        ]
 
     logger.info(f"Results directory: {results_path}")
     logger.info(f"Base models: {base_models}")
@@ -679,7 +687,10 @@ def run_train_ensemble(
             from ced_ml.metrics.thresholds import compute_threshold_bundle
             from ced_ml.plotting.calibration import plot_calibration_curve
             from ced_ml.plotting.dca import plot_dca_curve
-            from ced_ml.plotting.ensemble import plot_meta_learner_weights, plot_model_comparison
+            from ced_ml.plotting.ensemble import (
+                plot_meta_learner_weights,
+                plot_model_comparison,
+            )
             from ced_ml.plotting.oof import plot_oof_combined
             from ced_ml.plotting.risk_dist import plot_risk_distribution
             from ced_ml.plotting.roc_pr import plot_pr_curve, plot_roc_curve
@@ -953,9 +964,11 @@ def run_train_ensemble(
             else:
                 # With regularization: set C and l1_ratio
                 meta_lr_params["C"] = meta_c
-                meta_lr_params["l1_ratio"] = {"l1": 1.0, "l2": 0.0, "elasticnet": 0.5}.get(
-                    meta_penalty, 0.0
-                )
+                meta_lr_params["l1_ratio"] = {
+                    "l1": 1.0,
+                    "l2": 0.0,
+                    "elasticnet": 0.5,
+                }.get(meta_penalty, 0.0)
 
             meta_pipeline = Pipeline(
                 [

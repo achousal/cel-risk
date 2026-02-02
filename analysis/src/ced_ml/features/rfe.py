@@ -777,7 +777,11 @@ def recursive_feature_elimination(
                 logger.info(f"  Running {cv_folds}-fold CV for size {len(current_proteins)}...")
                 cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
                 oof_probs = cross_val_predict(
-                    clone(pipeline), X_train_subset, y_train, cv=cv, method="predict_proba"
+                    clone(pipeline),
+                    X_train_subset,
+                    y_train,
+                    cv=cv,
+                    method="predict_proba",
                 )[:, 1]
                 auroc_cv = auroc(y_train, oof_probs)
                 prauc_cv = prauc(y_train, oof_probs)

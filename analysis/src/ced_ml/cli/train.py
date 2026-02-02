@@ -84,7 +84,11 @@ from ced_ml.plotting import (
 from ced_ml.plotting.dca import plot_dca_curve
 from ced_ml.plotting.learning_curve import save_learning_curve_csv
 from ced_ml.utils.logging import auto_log_path, log_section, setup_logger
-from ced_ml.utils.metadata import build_oof_metadata, build_plot_metadata, count_category_breakdown
+from ced_ml.utils.metadata import (
+    build_oof_metadata,
+    build_plot_metadata,
+    count_category_breakdown,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1080,7 +1084,7 @@ def run_train(
             ),
             "n_proteins": len(fixed_panel_proteins) if fixed_panel_proteins else None,
         },
-        "config": config.model_dump() if hasattr(config, "model_dump") else config.dict(),
+        "config": (config.model_dump() if hasattr(config, "model_dump") else config.dict()),
         "seed": seed,
         "versions": {
             "sklearn": sklearn.__version__,
@@ -1191,7 +1195,8 @@ def run_train(
                                 f"Loading existing Optuna study from storage: {config.optuna.study_name}"
                             )
                             study = optuna.load_study(
-                                study_name=config.optuna.study_name, storage=config.optuna.storage
+                                study_name=config.optuna.study_name,
+                                storage=config.optuna.storage,
                             )
                             study_loaded = True
                             logger.info(
@@ -1220,7 +1225,9 @@ def run_train(
 
                         xgb_spw = None
                         if config.model == ModelName.XGBoost:
-                            from ced_ml.models.registry import compute_scale_pos_weight_from_y
+                            from ced_ml.models.registry import (
+                                compute_scale_pos_weight_from_y,
+                            )
 
                             # Check if user specified explicit value via scale_pos_weight_grid
                             spw_grid = getattr(config.xgboost, "scale_pos_weight_grid", None)
@@ -1231,7 +1238,12 @@ def run_train(
                                 xgb_spw = compute_scale_pos_weight_from_y(y_train)
 
                         optuna_search = _build_hyperparameter_search(
-                            optuna_pipeline, config.model, config, seed, xgb_spw, grid_rng=None
+                            optuna_pipeline,
+                            config.model,
+                            config,
+                            seed,
+                            xgb_spw,
+                            grid_rng=None,
                         )
 
                         if optuna_search is not None:
@@ -1250,7 +1262,9 @@ def run_train(
                     if study is not None:
                         # Use optuna_plot_format if available, otherwise fall back to plot_format
                         optuna_fmt = getattr(
-                            config.output, "optuna_plot_format", config.output.plot_format
+                            config.output,
+                            "optuna_plot_format",
+                            config.output.plot_format,
                         )
                         save_optuna_plots(
                             study=study,
@@ -1270,7 +1284,9 @@ def run_train(
                             and not study_loaded
                             and "optuna_search" in locals()
                         ):
-                            from ced_ml.plotting.optuna_plots import plot_pareto_frontier
+                            from ced_ml.plotting.optuna_plots import (
+                                plot_pareto_frontier,
+                            )
 
                             try:
                                 plot_pareto_frontier(
@@ -1595,7 +1611,7 @@ def run_train(
             cv_folds=config.cv.folds,
             cv_repeats=config.cv.repeats,
             cv_scoring=config.cv.scoring,
-            n_features=len(final_selected_proteins) if final_selected_proteins else None,
+            n_features=(len(final_selected_proteins) if final_selected_proteins else None),
             feature_method=config.features.feature_selection_strategy,
             n_train=len(y_train),
             n_val=len(y_val),
@@ -1615,7 +1631,7 @@ def run_train(
             split_mode="development",
             optuna_enabled=config.optuna.enabled,
             n_trials=config.optuna.n_trials if config.optuna.enabled else None,
-            n_iter=get_model_n_iter(config.model, config) if not config.optuna.enabled else None,
+            n_iter=(get_model_n_iter(config.model, config) if not config.optuna.enabled else None),
             threshold_objective=config.thresholds.objective,
             prevalence_adjusted=True,
         )
@@ -1765,7 +1781,7 @@ def run_train(
             n_train_controls=train_breakdown.get("controls"),
             n_train_incident=train_breakdown.get("incident"),
             n_train_prevalent=train_breakdown.get("prevalent"),
-            n_features=len(final_selected_proteins) if final_selected_proteins else None,
+            n_features=(len(final_selected_proteins) if final_selected_proteins else None),
             feature_method=config.features.feature_selection_strategy,
             cv_scoring=config.cv.scoring,
         )
@@ -1932,7 +1948,7 @@ def run_train(
                 cv_folds=min(config.cv.folds, 5),  # Matches actual CV used in learning curve
                 cv_repeats=1,  # Learning curve doesn't use repeats
                 cv_scoring=config.cv.scoring,
-                n_features=len(final_selected_proteins) if final_selected_proteins else None,
+                n_features=(len(final_selected_proteins) if final_selected_proteins else None),
                 feature_method=config.features.feature_selection_strategy,
                 n_train=len(y_train),
                 n_train_pos=int(y_train.sum()),

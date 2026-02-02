@@ -105,7 +105,9 @@ class TestResolveResultsDirFromRunId:
         """Test that requesting a nonexistent model raises FileNotFoundError."""
         results_root, run_dir = mock_results_dir
 
-        with pytest.raises(FileNotFoundError, match="Results directory not found for model"):
+        with pytest.raises(
+            FileNotFoundError, match="Results directory not found for model"
+        ):
             resolve_results_dir_from_run_id(
                 run_id="20260131_232604", model="NONEXISTENT", return_all_models=False
             )

@@ -579,7 +579,7 @@ def build_models(
             subsample=sub,
             colsample_bytree=col,
             scale_pos_weight=spw,
-            reg_alpha=config.xgboost.reg_alpha_grid[0] if config.xgboost.reg_alpha_grid else 0.0,
+            reg_alpha=(config.xgboost.reg_alpha_grid[0] if config.xgboost.reg_alpha_grid else 0.0),
             reg_lambda=(
                 config.xgboost.reg_lambda_grid[0] if config.xgboost.reg_lambda_grid else 1.0
             ),

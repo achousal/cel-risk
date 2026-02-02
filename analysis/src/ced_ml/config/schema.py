@@ -177,7 +177,9 @@ class FeatureConfig(BaseModel):
         ),
     )
     rfe_cv_folds: int = Field(
-        default=3, ge=2, description="Internal CV folds for RFECV (within each outer fold)"
+        default=3,
+        ge=2,
+        description="Internal CV folds for RFECV (within each outer fold)",
     )
     rfe_kbest_prefilter: bool = Field(
         default=True,
@@ -327,7 +329,8 @@ class RFConfig(BaseModel):
         default=None, description="(min, max) for min_samples_leaf, e.g. (1, 10)"
     )
     optuna_max_features: tuple[float, float] | None = Field(
-        default=None, description="(min, max) fraction for max_features, e.g. (0.1, 1.0)"
+        default=None,
+        description="(min, max) fraction for max_features, e.g. (0.1, 1.0)",
     )
 
     # Fixed parameters
@@ -365,10 +368,12 @@ class XGBoostConfig(BaseModel):
         default=None, description="(min, max) for max_depth, e.g. (2, 12)"
     )
     optuna_learning_rate: tuple[float, float] | None = Field(
-        default=None, description="(min, max) for learning_rate (log-scale), e.g. (0.001, 0.3)"
+        default=None,
+        description="(min, max) for learning_rate (log-scale), e.g. (0.001, 0.3)",
     )
     optuna_min_child_weight: tuple[float, float] | None = Field(
-        default=None, description="(min, max) for min_child_weight (log-scale), e.g. (0.1, 10)"
+        default=None,
+        description="(min, max) for min_child_weight (log-scale), e.g. (0.1, 10)",
     )
     optuna_gamma: tuple[float, float] | None = Field(
         default=None, description="(min, max) for gamma, e.g. (0.0, 1.0)"
@@ -380,10 +385,12 @@ class XGBoostConfig(BaseModel):
         default=None, description="(min, max) for colsample_bytree, e.g. (0.5, 1.0)"
     )
     optuna_reg_alpha: tuple[float, float] | None = Field(
-        default=None, description="(min, max) for reg_alpha (log-scale), e.g. (1e-8, 1.0)"
+        default=None,
+        description="(min, max) for reg_alpha (log-scale), e.g. (1e-8, 1.0)",
     )
     optuna_reg_lambda: tuple[float, float] | None = Field(
-        default=None, description="(min, max) for reg_lambda (log-scale), e.g. (1e-8, 10.0)"
+        default=None,
+        description="(min, max) for reg_lambda (log-scale), e.g. (1e-8, 10.0)",
     )
 
     # Fixed parameters

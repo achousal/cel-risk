@@ -411,7 +411,10 @@ def test_save_final_test_panel(results_writer):
     }
 
     path = results_writer.save_final_test_panel(
-        panel_proteins, scenario="IncidentPlusPrevalent", model="LR_EN", metadata=metadata
+        panel_proteins,
+        scenario="IncidentPlusPrevalent",
+        model="LR_EN",
+        metadata=metadata,
     )
 
     assert os.path.exists(path)

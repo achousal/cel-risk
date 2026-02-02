@@ -477,7 +477,11 @@ def test_oof_predictions_tracks_selected_proteins(toy_data, minimal_config):
             (
                 "clf",
                 LogisticRegression(
-                    penalty="elasticnet", solver="saga", C=0.1, random_state=42, max_iter=100
+                    penalty="elasticnet",
+                    solver="saga",
+                    C=0.1,
+                    random_state=42,
+                    max_iter=100,
                 ),
             ),
         ]

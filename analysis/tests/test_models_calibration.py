@@ -413,7 +413,10 @@ def test_calibration_with_perfect_separation():
 
     # Perfectly separable data
     X_train = np.vstack(
-        [rng.standard_normal((50, 2)) - 3, rng.standard_normal((50, 2)) + 3]  # Class 0  # Class 1
+        [
+            rng.standard_normal((50, 2)) - 3,
+            rng.standard_normal((50, 2)) + 3,
+        ]  # Class 0  # Class 1
     )
     y_train = np.array([0] * 50 + [1] * 50)
 

@@ -488,7 +488,8 @@ class TestSingleClassGuards:
         y_pred = np.array([0.1, 0.2, 0.3, 0.4])
 
         with pytest.warns(
-            UserWarning, match="Alpha \\(sensitivity at specificity\\) requires both classes"
+            UserWarning,
+            match="Alpha \\(sensitivity at specificity\\) requires both classes",
         ):
             result = alpha_sensitivity_at_specificity(y_true, y_pred)
         assert np.isnan(result)
@@ -499,7 +500,8 @@ class TestSingleClassGuards:
         y_pred = np.array([0.6, 0.7, 0.8, 0.9])
 
         with pytest.warns(
-            UserWarning, match="Alpha \\(sensitivity at specificity\\) requires both classes"
+            UserWarning,
+            match="Alpha \\(sensitivity at specificity\\) requires both classes",
         ):
             result = alpha_sensitivity_at_specificity(y_true, y_pred)
         assert np.isnan(result)
@@ -586,7 +588,8 @@ class TestStrictMode:
         y_pred = np.array([0.1, 0.2, 0.3, 0.4])
 
         with pytest.raises(
-            ValueError, match="Alpha \\(sensitivity at specificity\\) requires both classes"
+            ValueError,
+            match="Alpha \\(sensitivity at specificity\\) requires both classes",
         ):
             alpha_sensitivity_at_specificity(y_true, y_pred, strict=True)
 
@@ -596,7 +599,8 @@ class TestStrictMode:
         y_pred = np.array([0.1, 0.2, 0.3, 0.4])
 
         with pytest.warns(
-            UserWarning, match="Alpha \\(sensitivity at specificity\\) requires both classes"
+            UserWarning,
+            match="Alpha \\(sensitivity at specificity\\) requires both classes",
         ):
             result = alpha_sensitivity_at_specificity(y_true, y_pred, strict=False)
         assert np.isnan(result)

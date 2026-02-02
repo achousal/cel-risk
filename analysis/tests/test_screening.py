@@ -64,7 +64,12 @@ def test_mann_whitney_screen_basic(sample_data):
 
     assert len(selected) == 10
     assert len(stats) == len(protein_cols)  # All proteins tested
-    assert list(stats.columns) == ["protein", "p_value", "effect_size", "nonmissing_frac"]
+    assert list(stats.columns) == [
+        "protein",
+        "p_value",
+        "effect_size",
+        "nonmissing_frac",
+    ]
 
     # Top proteins should be the discriminative ones (0-19)
     top_indices = [int(p.split("_")[1]) for p in selected]

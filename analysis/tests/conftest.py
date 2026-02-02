@@ -69,7 +69,12 @@ class MockCalibrationConfig:
     """Mock calibration config for tests."""
 
     def __init__(
-        self, enabled=True, method="isotonic", strategy="oof_posthoc", per_model=None, cv=3
+        self,
+        enabled=True,
+        method="isotonic",
+        strategy="oof_posthoc",
+        per_model=None,
+        cv=3,
     ):
         self.enabled = enabled
         self.method = method

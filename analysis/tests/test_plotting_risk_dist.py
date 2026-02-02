@@ -535,7 +535,13 @@ class TestThresholdLineVisibility:
             "spec_target_threshold": 1.0000000001,  # Edge case from max(p) + eps
             "youden_threshold": 0.5,
             "target_spec": 0.95,
-            "spec_target": {"sensitivity": 0.8, "precision": 0.75, "fp": 10, "tp": 4, "fn": 1},
+            "spec_target": {
+                "sensitivity": 0.8,
+                "precision": 0.75,
+                "fp": 10,
+                "tp": 4,
+                "fn": 1,
+            },
         }
 
         out_path = tmp_path / "threshold_above_one.png"

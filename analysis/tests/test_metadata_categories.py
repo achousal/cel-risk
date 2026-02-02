@@ -195,7 +195,12 @@ class TestAggregatedMetadata:
         sample_cats = {
             "test": {"controls": 1800, "incident": 36, "prevalent": 30, "total": 1866},
             "val": {"controls": 1900, "incident": 38, "prevalent": 32, "total": 1970},
-            "train_oof": {"controls": 3750, "incident": 74, "prevalent": 76, "total": 3900},
+            "train_oof": {
+                "controls": 3750,
+                "incident": 74,
+                "prevalent": 76,
+                "total": 3900,
+            },
         }
 
         meta = build_aggregated_metadata(

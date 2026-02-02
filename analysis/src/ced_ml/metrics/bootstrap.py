@@ -112,7 +112,10 @@ def stratified_bootstrap_ci(
         return (np.nan, np.nan)
 
     # Compute 95% CI using percentile method
-    return (float(np.percentile(vals, CI_LOWER_PCT)), float(np.percentile(vals, CI_UPPER_PCT)))
+    return (
+        float(np.percentile(vals, CI_LOWER_PCT)),
+        float(np.percentile(vals, CI_UPPER_PCT)),
+    )
 
 
 def stratified_bootstrap_diff_ci(

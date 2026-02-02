@@ -42,7 +42,10 @@ from ced_ml.features.rfe import (
     recursive_feature_elimination,
     save_rfe_results,
 )
-from ced_ml.features.stability import compute_selection_frequencies, rank_proteins_by_frequency
+from ced_ml.features.stability import (
+    compute_selection_frequencies,
+    rank_proteins_by_frequency,
+)
 from ced_ml.plotting.panel_curve import plot_feature_ranking, plot_pareto_curve
 
 
@@ -531,7 +534,11 @@ def discover_models_by_run_id(
         model_name = model_dir.name
 
         # Skip hidden/special directories and ensemble models
-        if model_name.startswith(".") or model_name in ("investigations", "ENSEMBLE", "consensus"):
+        if model_name.startswith(".") or model_name in (
+            "investigations",
+            "ENSEMBLE",
+            "consensus",
+        ):
             continue
 
         # Apply model filter if specified

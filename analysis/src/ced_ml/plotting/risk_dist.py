@@ -425,7 +425,12 @@ def plot_risk_distribution(
         m = metrics_at_thresholds.get("dca") if metrics_at_thresholds else None
 
         line_handle = Line2D(
-            [0], [0], color=COLOR_SECONDARY, linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
+            [0],
+            [0],
+            color=COLOR_SECONDARY,
+            linestyle="--",
+            linewidth=LW_PRIMARY,
+            alpha=0.7,
         )
         threshold_handles.append(line_handle)
 
@@ -484,7 +489,11 @@ def plot_risk_distribution(
                 x_range = np.linspace(0, 1, 200)
                 density = kde(x_range)
                 ax_incident.plot(
-                    x_range, density, color=COLOR_TERTIARY, linewidth=LW_PRIMARY, alpha=0.8
+                    x_range,
+                    density,
+                    color=COLOR_TERTIARY,
+                    linewidth=LW_PRIMARY,
+                    alpha=0.8,
                 )
                 ax_incident.fill_between(x_range, density, alpha=0.3, color=COLOR_TERTIARY)
             except Exception:
@@ -563,7 +572,11 @@ def plot_risk_distribution(
                 x_range = np.linspace(0, 1, 200)
                 density = kde(x_range)
                 ax_prevalent.plot(
-                    x_range, density, color=COLOR_SECONDARY, linewidth=LW_PRIMARY, alpha=0.8
+                    x_range,
+                    density,
+                    color=COLOR_SECONDARY,
+                    linewidth=LW_PRIMARY,
+                    alpha=0.8,
                 )
                 ax_prevalent.fill_between(x_range, density, alpha=0.3, color=COLOR_SECONDARY)
             except Exception:

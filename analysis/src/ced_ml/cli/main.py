@@ -330,7 +330,10 @@ def aggregate_splits(ctx, **kwargs):
         ced aggregate-splits --run-id 20260127_115115 --model LR_EN
         ced aggregate-splits --run-id 20260127_115115  # All models
     """
-    from ced_ml.cli.aggregate_splits import resolve_results_dir_from_run_id, run_aggregate_splits
+    from ced_ml.cli.aggregate_splits import (
+        resolve_results_dir_from_run_id,
+        run_aggregate_splits,
+    )
 
     # Validate mutually exclusive options
     results_dir = kwargs.get("results_dir")
@@ -720,7 +723,10 @@ def optimize_panel(ctx, config, **kwargs):
     import json
     from pathlib import Path
 
-    from ced_ml.cli.optimize_panel import discover_models_by_run_id, run_optimize_panel_aggregated
+    from ced_ml.cli.optimize_panel import (
+        discover_models_by_run_id,
+        run_optimize_panel_aggregated,
+    )
 
     # Load config file: use provided path, or auto-detect default if it exists
     config_params = {}
@@ -1489,7 +1495,9 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     enable_ensemble = _pick(kwargs.get("ensemble"), "ensemble", _PIPELINE_DEFAULTS["ensemble"])
     enable_consensus = _pick(kwargs.get("consensus"), "consensus", _PIPELINE_DEFAULTS["consensus"])
     enable_optimize_panel = _pick(
-        kwargs.get("optimize_panel"), "optimize_panel", _PIPELINE_DEFAULTS["optimize_panel"]
+        kwargs.get("optimize_panel"),
+        "optimize_panel",
+        _PIPELINE_DEFAULTS["optimize_panel"],
     )
     # Collect remaining CLI args
     cli_args = {}
