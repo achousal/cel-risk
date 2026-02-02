@@ -36,12 +36,8 @@ conda activate ced_ml
 # 3. Verify installation
 ced --help
 
-# 4. Run smoke test (auto-discovers data, trains default models)
+# 4. Run pipeline (auto-discovers data, trains default models)
 ced run-pipeline
-
-# 5. Or use the legacy bash wrapper
-cd analysis/
-./run_local.sh
 ```
 
 ### HPC Production
@@ -91,8 +87,8 @@ pip install -e ".[dev]"
 ced --help
 ced --version
 
-# Run local pipeline
-./run_local.sh
+# Run pipeline
+ced run-pipeline
 ```
 
 **Advantages**:

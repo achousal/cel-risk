@@ -20,6 +20,12 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# NumPy compatibility: trapezoid was introduced in 2.0 (replaces trapz)
+if hasattr(np, "trapezoid"):
+    trapezoid = np.trapezoid
+else:
+    trapezoid = np.trapz  # Fallback for numpy < 2.0
+
 
 # =============================================================================
 # Core DCA Computations
@@ -417,12 +423,12 @@ def compute_dca_summary(
     nb_all = dca_df["net_benefit_all"].values
 
     if len(thresholds) > 1:
-        summary["integrated_nb_model"] = float(np.trapezoid(nb_model, thresholds))
-        summary["integrated_nb_all"] = float(np.trapezoid(nb_all, thresholds))
+        summary["integrated_nb_model"] = float(trapezoid(nb_model, thresholds))
+        summary["integrated_nb_all"] = float(trapezoid(nb_all, thresholds))
 
         # Net benefit improvement over treat-all
         nb_improvement = nb_model - nb_all
-        summary["integrated_nb_improvement"] = float(np.trapezoid(nb_improvement, thresholds))
+        summary["integrated_nb_improvement"] = float(trapezoid(nb_improvement, thresholds))
 
     # Net benefit at key clinical thresholds
     report_points = report_points or [0.005, 0.01, 0.02, 0.05]

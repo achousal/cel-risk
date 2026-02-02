@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ced-ml"
 version = "1.0.0"
 description = "Machine learning pipeline for incident Celiac Disease risk prediction from proteomics"
-readme = {file = "../README.md"}
+
 
 requires-python = ">=3.10"
 license = {text = "MIT"}

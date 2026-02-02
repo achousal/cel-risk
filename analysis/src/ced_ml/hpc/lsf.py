@@ -438,7 +438,7 @@ def submit_hpc_pipeline(
     # Submit post-processing job (aggregation + ensemble) with dependency on ALL training jobs
     pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
     post_job_name = f"CeD_{run_id}_post"
-    dependency_expr = f"done(CeD_{run_id}_*_s*)"
+    dependency_expr = " && ".join(f"done({jid})" for jid in training_job_ids)
 
     post_command = _build_postprocessing_command(
         config_file=config_file.resolve(),
@@ -466,6 +466,7 @@ def submit_hpc_pipeline(
 
     # Submit panel optimization jobs: M x S seed jobs + M aggregation jobs
     panel_job_ids = []
+    panel_agg_job_ids: list[str] = []
     if enable_optimize_panel:
         n_panel_seed_jobs = len(models) * len(split_seeds)
         pipeline_logger.info(
@@ -475,10 +476,13 @@ def submit_hpc_pipeline(
         )
 
         # Phase 1: Per-seed RFE jobs (M x S, parallel, depend on post-processing)
+        panel_seed_ids_by_model: dict[str, list[str]] = {m: [] for m in models}
         for model in models:
             for seed in split_seeds:
                 seed_job_name = f"CeD_{run_id}_panel_{model}_s{seed}"
-                seed_dependency = f"done({post_job_name})"
+                seed_dependency = (
+                    f"done({post_job_id})" if post_job_id else f"done({post_job_name})"
+                )
 
                 seed_command = _build_panel_optimization_command(
                     run_id=run_id,
@@ -497,6 +501,7 @@ def submit_hpc_pipeline(
                 if seed_job_id:
                     pipeline_logger.info(f"  Panel seed ({model} s{seed}): Job {seed_job_id}")
                     panel_job_ids.append(seed_job_id)
+                    panel_seed_ids_by_model[model].append(seed_job_id)
                 elif dry_run:
                     pipeline_logger.info(
                         f"  [DRY RUN] Panel seed ({model} s{seed}): {seed_job_name}"
@@ -508,7 +513,11 @@ def submit_hpc_pipeline(
         # Phase 2: Per-model aggregation jobs (M, depend on all seed jobs for that model)
         for model in models:
             agg_job_name = f"CeD_{run_id}_panel_{model}_agg"
-            agg_dependency = f"done(CeD_{run_id}_panel_{model}_s*)"
+            model_seed_ids = panel_seed_ids_by_model[model]
+            if model_seed_ids:
+                agg_dependency = " && ".join(f"done({jid})" for jid in model_seed_ids)
+            else:
+                agg_dependency = f"done(CeD_{run_id}_panel_{model}_s*)"
 
             agg_command = _build_panel_optimization_command(
                 run_id=run_id,
@@ -526,6 +535,7 @@ def submit_hpc_pipeline(
             if agg_job_id:
                 pipeline_logger.info(f"  Panel aggregation ({model}): Job {agg_job_id}")
                 panel_job_ids.append(agg_job_id)
+                panel_agg_job_ids.append(agg_job_id)
             elif dry_run:
                 pipeline_logger.info(f"  [DRY RUN] Panel aggregation ({model}): {agg_job_name}")
                 panel_job_ids.append(f"DRYRUN_{agg_job_name}")
@@ -540,12 +550,14 @@ def submit_hpc_pipeline(
 
         # Consensus depends on post-processing (aggregation) AND panel optimization jobs
         # (if enabled)
-        if enable_optimize_panel and panel_job_ids:
+        post_dep = f"done({post_job_id})" if post_job_id else f"done({post_job_name})"
+        if enable_optimize_panel and panel_agg_job_ids:
             # Wait for both post-processing and all panel aggregation jobs
-            consensus_dependency = f"done({post_job_name}) && done(CeD_{run_id}_panel_*_agg)"
+            agg_deps = " && ".join(f"done({jid})" for jid in panel_agg_job_ids)
+            consensus_dependency = f"{post_dep} && {agg_deps}"
         else:
             # Only wait for post-processing (aggregation must be done)
-            consensus_dependency = f"done({post_job_name})"
+            consensus_dependency = post_dep
 
         consensus_command = _build_consensus_panel_command(run_id=run_id)
 
