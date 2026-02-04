@@ -57,7 +57,7 @@ def mann_whitney_screen(
     - Proteins with <min_n_per_group samples in either class are excluded
     - Missing values are ignored (test uses only non-missing observations)
     - Ties in p-value are broken by effect_size (descending)
-    - Uses asymptotic method when available (scipy >= 1.4.0)
+    - Uses asymptotic method for faster computation
 
     Notes (top_n=0 behavior)
     ------------------------
@@ -94,15 +94,7 @@ def mann_whitney_screen(
 
         # Compute Mann-Whitney U test
         try:
-            # Try asymptotic method (faster, available in scipy >= 1.4.0)
             _, p_mw = stats.mannwhitneyu(x1, x0, alternative="two-sided", method="asymptotic")
-        except TypeError:
-            # Fallback for older scipy versions (no 'method' parameter)
-            try:
-                _, p_mw = stats.mannwhitneyu(x1, x0, alternative="two-sided")
-            except (ValueError, RuntimeError) as e:
-                logger.warning(f"Mann-Whitney test failed for {p}: {type(e).__name__}: {e}")
-                p_mw = np.nan
         except (ValueError, RuntimeError) as e:
             logger.warning(f"Mann-Whitney test failed for {p}: {type(e).__name__}: {e}")
             p_mw = np.nan
@@ -368,107 +360,3 @@ def screen_proteins(
         logger.warning(f"Only {n_selected} proteins available (requested top_n={top_n})")
 
     return selected, stats, False
-
-
-def variance_missingness_prefilter(
-    X_train: pd.DataFrame,
-    protein_cols: list[str],
-    min_nonmissing: float = 0.95,
-    min_var: float = 1e-6,
-    strict: bool = True,
-) -> tuple[list[str], pd.DataFrame]:
-    """
-    Pre-filter proteins by missingness and variance.
-
-    Removes proteins with excessive missing values or near-zero variance.
-    This is a data quality filter applied before statistical screening.
-
-    Parameters
-    ----------
-    X_train : pd.DataFrame
-        Training features with protein columns
-    protein_cols : List[str]
-        Protein column names to filter
-    min_nonmissing : float, default=0.95
-        Minimum fraction of non-missing values required
-    min_var : float, default=1e-6
-        Minimum variance required (computed on non-missing values)
-    strict : bool, default=True
-        If True, raise ValueError if all proteins fail
-        If False, disable filter and return all proteins with warning
-
-    Returns
-    -------
-    kept_proteins : List[str]
-        Proteins passing both filters
-    filter_report : pd.DataFrame
-        Per-protein filter results with columns:
-        - protein: protein name
-        - nonmissing_frac: fraction of non-missing values
-        - passed_nonmissing: bool, passed missingness threshold
-        - variance_train: variance (if computed)
-        - passed_variance: bool, passed variance threshold
-
-    Raises
-    ------
-    ValueError
-        If strict=True and all proteins fail either filter
-
-    Notes
-    -----
-    - Variance is computed only on proteins passing missingness filter
-    - If all proteins fail, behavior depends on strict flag:
-        - strict=True: raises ValueError
-        - strict=False: returns all proteins with warning
-    """
-    if len(protein_cols) == 0:
-        return protein_cols, pd.DataFrame()
-
-    Xm = X_train[protein_cols]
-    nonmiss = Xm.notna().mean(axis=0)
-
-    # Filter by missingness
-    prot_ok = nonmiss[nonmiss >= min_nonmissing].index.tolist()
-
-    if len(prot_ok) == 0:
-        msg = (
-            f"All {len(protein_cols)} proteins failed non-missing filter "
-            f"(min_nonmissing={min_nonmissing})."
-        )
-        if strict:
-            raise ValueError(msg)
-        # Non-strict: return all proteins with report
-        report = pd.DataFrame(
-            {
-                "protein": protein_cols,
-                "nonmissing_frac": nonmiss.reindex(protein_cols).values,
-                "passed_nonmissing": [False] * len(protein_cols),
-                "variance_train": np.nan,
-                "passed_variance": [False] * len(protein_cols),
-            }
-        )
-        return protein_cols, report
-
-    # Filter by variance (only proteins that passed missingness)
-    var = pd.Series(np.nanvar(X_train[prot_ok].to_numpy(dtype=float), axis=0), index=prot_ok)
-    prot_keep = var[var >= min_var].index.tolist()
-
-    if len(prot_keep) == 0:
-        msg = f"All {len(prot_ok)} proteins failed variance filter (min_var={min_var})."
-        if strict:
-            raise ValueError(msg)
-        # Non-strict: return proteins that passed missingness
-        prot_keep = prot_ok
-
-    # Build report
-    report = pd.DataFrame(
-        {
-            "protein": protein_cols,
-            "nonmissing_frac": nonmiss.reindex(protein_cols).values,
-        }
-    )
-    report["passed_nonmissing"] = report["protein"].isin(prot_ok)
-    report["variance_train"] = var.reindex(report["protein"]).values
-    report["passed_variance"] = report["protein"].isin(prot_keep)
-
-    return prot_keep, report

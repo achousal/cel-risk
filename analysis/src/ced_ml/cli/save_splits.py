@@ -1,7 +1,4 @@
-"""
-CLI implementation for save-splits command.
-
-Uses refactored data I/O and split generation modules.
+"""CLI implementation for save-splits command.
 """
 
 import logging
@@ -12,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from ced_ml.config.loader import load_splits_config, save_config
-from ced_ml.config.validation import validate_splits_config
+from ced_ml.config.validation import check_prevalent_in_eval, validate_splits_config
 
 # Import row filtering logic from data layer
 from ced_ml.data.filters import apply_row_filters
@@ -480,6 +477,24 @@ def _generate_repeated_splits(
         logger.info(
             f"  Final Test:  {len(idx_test):,} samples ({int(y_test.sum())} cases, {y_test.mean()*100:.3f}%)"
         )
+
+        # Validate prevalent cases didn't leak into evaluation sets
+        if config.prevalent_train_only and PREVALENT_LABEL in positives:
+            prevalent_mask = df_work[TARGET_COL] == PREVALENT_LABEL
+            prevalent_idx = df_work.index[prevalent_mask].tolist()
+            if len(idx_val) > 0:
+                check_prevalent_in_eval(
+                    eval_idx=idx_val.tolist(),
+                    prevalent_idx=prevalent_idx,
+                    split_name="validation",
+                    strictness="error",
+                )
+            check_prevalent_in_eval(
+                eval_idx=idx_test.tolist(),
+                prevalent_idx=prevalent_idx,
+                split_name="test",
+                strictness="error",
+            )
 
         # Convert dev-local indices to global indices if in holdout mode
         if dev_to_global_map is not None:

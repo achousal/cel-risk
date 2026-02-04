@@ -1,25 +1,32 @@
 """
-ResultsWriter: Structured output directory management and results serialization.
+ResultsWriter facade: Structured output directory management and results serialization.
 
 Provides:
 - OutputDirectories: Directory structure creation and path management
-- ResultsWriter: High-level API for saving metrics, predictions, reports
+- AggregatedOutputDirectories: Aggregated output directory structure
+- ResultsWriter: High-level facade API for saving metrics, predictions, reports
 
 Design:
 - Centralized path management (no scattered os.path.join calls)
 - Type-safe output directory structure
 - Consistent file naming conventions
-- Atomic writes where feasible
+- Delegation to specialized writer modules (metrics, predictions, features, artifacts, diagnostics)
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import joblib
 import pandas as pd
+
+from ced_ml.evaluation.writers import (
+    ArtifactsWriter,
+    DiagnosticsWriter,
+    FeatureWriter,
+    MetricsWriter,
+    PredictionsWriter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -247,15 +254,19 @@ class AggregatedOutputDirectories:
 
 class ResultsWriter:
     """
-    High-level API for writing training results.
+    Facade API for writing training results (delegates to specialized writers).
 
     Handles:
     - Metrics (val_metrics.csv, test_metrics.csv, cv_repeat_metrics.csv)
-    - Predictions (test/val/train_oof)
+    - Predictions (test/val/train_oof/controls)
     - Cross-validation artifacts (best params, selected proteins)
     - Reports (features, panels, subgroups)
     - Model artifacts (joblib serialization)
     - Run settings (JSON configuration)
+    - Diagnostics (calibration curves, learning curves, split traces)
+
+    Design: Delegates to focused writer modules (MetricsWriter, PredictionsWriter, etc.)
+    for improved modularity and maintainability.
 
     Usage:
         writer = ResultsWriter(output_dirs)
@@ -265,12 +276,17 @@ class ResultsWriter:
 
     def __init__(self, output_dirs: OutputDirectories):
         """
-        Initialize ResultsWriter.
+        Initialize ResultsWriter with specialized writer modules.
 
         Args:
             output_dirs: OutputDirectories instance
         """
         self.dirs = output_dirs
+        self._metrics_writer = MetricsWriter(output_dirs)
+        self._predictions_writer = PredictionsWriter(output_dirs)
+        self._feature_writer = FeatureWriter(output_dirs)
+        self._artifacts_writer = ArtifactsWriter(output_dirs)
+        self._diagnostics_writer = DiagnosticsWriter(output_dirs)
 
     # ========== Settings and Configuration ==========
 
@@ -284,11 +300,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        path = self.dirs.get_path("core", "run_settings.json")
-        with open(path, "w") as f:
-            json.dump(settings, f, indent=2, sort_keys=True)
-        logger.info(f"Saved run settings: {path}")
-        return str(path)
+        return self._artifacts_writer.save_run_settings(settings)
 
     # ========== Metrics ==========
 
@@ -304,20 +316,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame([metrics])
-        df.insert(0, "scenario", scenario)
-        df.insert(1, "model", model)
-
-        path = self.dirs.get_path("core", "val_metrics.csv")
-
-        # Append mode: add to existing file or create new
-        if Path(path).exists():
-            df.to_csv(path, mode="a", header=False, index=False)
-        else:
-            df.to_csv(path, index=False)
-
-        logger.info(f"Saved validation metrics: {path}")
-        return str(path)
+        return self._metrics_writer.save_val_metrics(metrics, scenario, model)
 
     def save_test_metrics(self, metrics: dict[str, Any], scenario: str, model: str) -> str:
         """
@@ -331,20 +330,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame([metrics])
-        df.insert(0, "scenario", scenario)
-        df.insert(1, "model", model)
-
-        path = self.dirs.get_path("core", "test_metrics.csv")
-
-        # Append mode: add to existing file or create new
-        if Path(path).exists():
-            df.to_csv(path, mode="a", header=False, index=False)
-        else:
-            df.to_csv(path, index=False)
-
-        logger.info(f"Saved test metrics: {path}")
-        return str(path)
+        return self._metrics_writer.save_test_metrics(metrics, scenario, model)
 
     def save_cv_repeat_metrics(
         self, cv_results: list[dict[str, Any]], scenario: str, model: str
@@ -360,23 +346,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame(cv_results)
-        # Only insert columns if not already present (caller may have added them)
-        if "scenario" not in df.columns:
-            df.insert(0, "scenario", scenario)
-        if "model" not in df.columns:
-            df.insert(1, "model", model)
-
-        path = self.dirs.get_path("cv", "cv_repeat_metrics.csv")
-
-        # Append mode: add to existing file or create new
-        if Path(path).exists():
-            df.to_csv(path, mode="a", header=False, index=False)
-        else:
-            df.to_csv(path, index=False)
-
-        logger.info(f"Saved CV repeat metrics: {path}")
-        return str(path)
+        return self._metrics_writer.save_cv_repeat_metrics(cv_results, scenario, model)
 
     def save_bootstrap_ci_metrics(self, metrics: dict[str, Any], scenario: str, model: str) -> str:
         """
@@ -390,14 +360,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame([metrics])
-        df.insert(0, "scenario", scenario)
-        df.insert(1, "model", model)
-
-        path = self.dirs.get_path("core", "test_bootstrap_ci.csv")
-        df.to_csv(path, index=False)
-        logger.info(f"Saved bootstrap CI metrics: {path}")
-        return str(path)
+        return self._metrics_writer.save_bootstrap_ci_metrics(metrics, scenario, model)
 
     # ========== Cross-Validation Artifacts ==========
 
@@ -412,13 +375,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame(best_params)
-        df.insert(0, "scenario", scenario)
-
-        path = self.dirs.get_path("cv", "best_params_per_split.csv")
-        df.to_csv(path, index=False)
-        logger.info(f"Saved best params per split: {path}")
-        return str(path)
+        return self._artifacts_writer.save_best_params_per_split(best_params, scenario)
 
     def save_selected_proteins_per_split(
         self, selected_proteins: list[dict[str, Any]], scenario: str
@@ -433,13 +390,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        df = pd.DataFrame(selected_proteins)
-        df.insert(0, "scenario", scenario)
-
-        path = self.dirs.get_path("cv", "selected_proteins_per_outer_split.csv")
-        df.to_csv(path, index=False)
-        logger.info(f"Saved selected proteins per split: {path}")
-        return str(path)
+        return self._artifacts_writer.save_selected_proteins_per_split(selected_proteins, scenario)
 
     # ========== Predictions ==========
 
@@ -454,11 +405,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"test_preds__{model}.csv"
-        path = self.dirs.get_path("preds_test", filename)
-        predictions_df.to_csv(path, index=False)
-        logger.info(f"Saved test predictions: {path}")
-        return str(path)
+        return self._predictions_writer.save_test_predictions(predictions_df, model)
 
     def save_val_predictions(self, predictions_df: pd.DataFrame, model: str) -> str:
         """
@@ -471,11 +418,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"val_preds__{model}.csv"
-        path = self.dirs.get_path("preds_val", filename)
-        predictions_df.to_csv(path, index=False)
-        logger.info(f"Saved validation predictions: {path}")
-        return str(path)
+        return self._predictions_writer.save_val_predictions(predictions_df, model)
 
     def save_train_oof_predictions(self, predictions_df: pd.DataFrame, model: str) -> str:
         """
@@ -488,11 +431,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"train_oof__{model}.csv"
-        path = self.dirs.get_path("preds_train_oof", filename)
-        predictions_df.to_csv(path, index=False)
-        logger.info(f"Saved train OOF predictions: {path}")
-        return str(path)
+        return self._predictions_writer.save_train_oof_predictions(predictions_df, model)
 
     def save_controls_predictions(self, predictions_df: pd.DataFrame, model: str) -> str:
         """
@@ -505,11 +444,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"controls_risk__{model}__oof_mean.csv"
-        path = self.dirs.get_path("preds_controls", filename)
-        predictions_df.to_csv(path, index=False)
-        logger.info(f"Saved controls predictions: {path}")
-        return str(path)
+        return self._predictions_writer.save_controls_predictions(predictions_df, model)
 
     # ========== Reports ==========
 
@@ -524,11 +459,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"{model}__feature_report_train.csv"
-        path = self.dirs.get_path("panels_features", filename)
-        report_df.to_csv(path, index=False)
-        logger.info(f"Saved feature report: {path}")
-        return str(path)
+        return self._feature_writer.save_feature_report(report_df, model)
 
     def save_stable_panel_report(self, panel_df: pd.DataFrame, panel_type: str = "KBest") -> str:
         """
@@ -541,11 +472,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"stable_panel__{panel_type}.csv"
-        path = self.dirs.get_path("panels_stable", filename)
-        panel_df.to_csv(path, index=False)
-        logger.info(f"Saved stable panel report: {path}")
-        return str(path)
+        return self._feature_writer.save_stable_panel_report(panel_df, panel_type)
 
     def save_panel_manifest(self, manifest: dict[str, Any], model: str, panel_size: int) -> str:
         """
@@ -559,12 +486,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"{model}__N{panel_size}__panel_manifest.json"
-        path = self.dirs.get_path("panels_sizes", filename)
-        with open(path, "w") as f:
-            json.dump(manifest, f, indent=2, sort_keys=True)
-        logger.info(f"Saved panel manifest: {path}")
-        return str(path)
+        return self._feature_writer.save_panel_manifest(manifest, model, panel_size)
 
     def save_final_test_panel(
         self,
@@ -585,19 +507,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        manifest = {
-            "scenario": scenario,
-            "model": model,
-            "panel_size": len(panel_proteins),
-            "proteins": sorted(panel_proteins),
-            "metadata": metadata or {},
-        }
-        filename = f"{model}__final_test_panel.json"
-        path = self.dirs.get_path("panels_sizes", filename)
-        with open(path, "w") as f:
-            json.dump(manifest, f, indent=2, sort_keys=True)
-        logger.info(f"Saved final test panel: {path}")
-        return str(path)
+        return self._feature_writer.save_final_test_panel(panel_proteins, scenario, model, metadata)
 
     def save_subgroup_metrics(self, subgroup_df: pd.DataFrame, model: str) -> str:
         """
@@ -610,11 +520,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"{model}__test_subgroup_metrics.csv"
-        path = self.dirs.get_path("panels_subgroups", filename)
-        subgroup_df.to_csv(path, index=False)
-        logger.info(f"Saved subgroup metrics: {path}")
-        return str(path)
+        return self._feature_writer.save_subgroup_metrics(subgroup_df, model)
 
     # ========== Model Artifacts ==========
 
@@ -636,23 +542,7 @@ class ResultsWriter:
         Raises:
             IOError: If serialization fails
         """
-        bundle = {
-            "model": model,
-            "metadata": metadata,
-            "scenario": scenario,
-            "model_name": model_name,
-        }
-
-        filename = f"{model_name}__final_model.joblib"
-        path = self.dirs.get_path("core", filename)
-
-        try:
-            joblib.dump(bundle, path, compress=3)
-            logger.info(f"Saved model artifact: {path}")
-            return str(path)
-        except Exception as e:
-            logger.error(f"Failed to save model artifact: {e}")
-            raise OSError(f"Model serialization failed: {e}") from e
+        return self._artifacts_writer.save_model_artifact(model, metadata, scenario, model_name)
 
     def load_model_artifact(self, model_name: str) -> dict[str, Any]:
         """
@@ -668,19 +558,7 @@ class ResultsWriter:
             FileNotFoundError: If artifact does not exist
             IOError: If deserialization fails
         """
-        filename = f"{model_name}__final_model.joblib"
-        path = self.dirs.get_path("core", filename)
-
-        if not Path(path).exists():
-            raise FileNotFoundError(f"Model artifact not found: {path}")
-
-        try:
-            bundle = joblib.load(path)
-            logger.info(f"Loaded model artifact: {path}")
-            return bundle
-        except Exception as e:
-            logger.error(f"Failed to load model artifact: {e}")
-            raise OSError(f"Model deserialization failed: {e}") from e
+        return self._artifacts_writer.load_model_artifact(model_name)
 
     # ========== Diagnostics ==========
 
@@ -695,11 +573,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"{model}__calibration.csv"
-        path = self.dirs.get_path("diag_calibration", filename)
-        calibration_df.to_csv(path, index=False)
-        logger.debug(f"Saved calibration curve: {path}")
-        return str(path)
+        return self._diagnostics_writer.save_calibration_curve(calibration_df, model)
 
     def save_learning_curve(self, learning_curve_df: pd.DataFrame, model: str) -> str:
         """
@@ -712,11 +586,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = f"{model}__learning_curve.csv"
-        path = self.dirs.get_path("diag_learning", filename)
-        learning_curve_df.to_csv(path, index=False)
-        logger.debug(f"Saved learning curve: {path}")
-        return str(path)
+        return self._diagnostics_writer.save_learning_curve(learning_curve_df, model)
 
     def save_split_trace(self, split_trace_df: pd.DataFrame) -> str:
         """
@@ -728,11 +598,7 @@ class ResultsWriter:
         Returns:
             Path to saved file
         """
-        filename = "train_test_split_trace.csv"
-        path = self.dirs.get_path("diag_splits", filename)
-        split_trace_df.to_csv(path, index=False)
-        logger.debug(f"Saved split trace: {path}")
-        return str(path)
+        return self._diagnostics_writer.save_split_trace(split_trace_df)
 
     # ========== Utility Methods ==========
 

@@ -3,7 +3,7 @@
 import logging
 
 import pytest
-from ced_ml.cli.aggregation.discovery import (
+from ced_ml.cli.discovery import (
     discover_ensemble_dirs,
     discover_split_dirs,
 )

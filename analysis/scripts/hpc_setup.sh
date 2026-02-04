@@ -16,7 +16,7 @@
 #   - ~2 GB disk space for virtual environment
 #
 # Note: For local development, you can also use conda (see SETUP_README.md)
-#       This script creates a venv which is required for my_run_hpc.sh
+#       This script creates a venv for use with 'ced run-pipeline --hpc'
 #
 # Author: Andres Chousal
 # Date: 2026-01-20

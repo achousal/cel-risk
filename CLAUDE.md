@@ -2,11 +2,11 @@
 
 **Project**: Machine Learning Pipeline for Incident Celiac Disease Risk Prediction
 **Version**: 1.0.0
-**Updated**: 2026-01-30
+**Updated**: 2026-02-03
 **Primary Package**: ced-ml
 **Python**: 3.10+
 **Project Owner**: Andres Chousal (Chowell Lab)
-**Status**: Production-ready with stacking ensemble, OOF-posthoc calibration, temporal validation, panel optimization, and cross-model consensus
+**Status**: Production-ready with stacking ensemble, OOF-posthoc calibration, temporal validation, panel optimization, cross-model consensus, and permutation significance testing
 
 ## Dataset
 
@@ -62,10 +62,14 @@ ced optimize-panel --run-id 20260127_115115
 
 # Cross-model consensus panel
 ced consensus-panel --run-id 20260127_115115
+
+# Test model significance (permutation testing)
+ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
 ```
 
 **Customize via configs**:
 - `configs/training_config.yaml` - Models, CV, feature selection
+- `configs/output_config.yaml` - Artifact and plot generation controls
 - `configs/pipeline_local.yaml` - Execution settings
 
 ### 3. Feature Selection
@@ -93,10 +97,11 @@ ced train-ensemble --run-id 20260127_115115
 
 **Config hierarchy** (lower overrides higher):
 1. `configs/training_config.yaml` (model settings, feature selection)
-2. `configs/splits_config.yaml` (CV split settings)
-3. `configs/pipeline_local.yaml` or `pipeline_hpc.yaml` (execution settings)
-4. Environment variables (e.g., `RUN_MODELS`, `DRY_RUN`)
-5. CLI flags (e.g., `--model`, `--split-seed`)
+2. `configs/output_config.yaml` (artifact and plot generation controls)
+3. `configs/splits_config.yaml` (CV split settings)
+4. `configs/pipeline_local.yaml` or `pipeline_hpc.yaml` (execution settings)
+5. Environment variables (e.g., `RUN_MODELS`, `DRY_RUN`)
+6. CLI flags (e.g., `--model`, `--split-seed`)
 
 ## CLI Reference
 
@@ -112,6 +117,7 @@ For complete CLI documentation, see [analysis/docs/reference/CLI_REFERENCE.md](a
 | `ced optimize-panel` | `cli/optimize_panel.py` | Panel optimization (aggregated RFE) |
 | `ced consensus-panel` | `cli/consensus_panel.py` | Cross-model consensus panel (RRA) |
 | `ced aggregate-splits` | `cli/aggregate_splits.py` | Results aggregation |
+| `ced permutation-test` | `cli/permutation_test.py` | Label permutation testing for model significance |
 | `ced eval-holdout` | `cli/eval_holdout.py` | Holdout evaluation |
 | `ced config` | `cli/config_tools.py` | Config validation and diff |
 | `ced convert-to-parquet` | `cli/main.py` | Convert CSV to Parquet format |
@@ -133,9 +139,10 @@ For detailed architecture with code pointers, see [docs/ARCHITECTURE.md](analysi
 | Layer | Modules | Purpose |
 |-------|---------|---------|
 | Data | `io`, `splits`, `persistence`, `filters`, `schema`, `columns` | Data loading, split generation, column resolution |
-| Features | `screening`, `kbest`, `stability`, `corr_prune`, `panels`, `rfe`, `nested_rfe`, `consensus` | Feature selection and cross-model consensus |
+| Features | `screening`, `kbest`, `stability`, `corr_prune`, `panels`, `rfe`, `nested_rfe`, `consensus`, `importance`, `grouped_importance`, `drop_column` | Feature selection, importance, and cross-model consensus |
 | Models | `registry`, `hyperparams`, `optuna_search`, `training`, `calibration`, `prevalence`, `stacking` | Model training, hyperparameter optimization, and ensemble learning |
 | Metrics | `discrimination`, `thresholds`, `dca`, `bootstrap` | Performance metrics |
+| Significance | `permutation_test` | Label permutation testing for model significance |
 | Evaluation | `predict`, `reports`, `holdout` | Prediction and reporting |
 | Plotting | `roc_pr`, `calibration`, `risk_dist`, `dca`, `learning_curve`, `oof`, `optuna_plots`, `panel_curve`, `ensemble` | Visualization |
 
@@ -145,7 +152,7 @@ For output structure details, see [docs/reference/ARTIFACTS.md](analysis/docs/re
 
 ## Key Architecture Decisions
 
-The [docs/adr/](analysis/docs/adr/) directory contains 15 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
+The [docs/adr/](analysis/docs/adr/) directory contains 16 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
 
 **Stage 1: Data Preparation**
 - [ADR-001](analysis/docs/adr/ADR-001-split-strategy.md): 50/25/25 train/val/test split strategy
@@ -170,5 +177,8 @@ The [docs/adr/](analysis/docs/adr/) directory contains 15 Architecture Decision 
 **Stage 5: Evaluation & Thresholds**
 - [ADR-011](analysis/docs/adr/ADR-011-threshold-on-val.md): Threshold optimization on validation set
 - [ADR-012](analysis/docs/adr/ADR-012-fixed-spec-95.md): Fixed specificity 0.95 for high-specificity screening
+
+**Stage 6: Significance Testing**
+- [ADR-016](analysis/docs/adr/ADR-016-permutation-testing.md): Label permutation testing for model significance
 
 ---

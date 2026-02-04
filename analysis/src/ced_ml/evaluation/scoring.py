@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER
+from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_CALIB_SLOPE
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +49,9 @@ def compute_selection_score(
 
     Args:
         metrics: Dictionary with metric values. Expected keys:
-            - 'AUROC': Area under ROC curve [0, 1]
-            - 'Brier': Brier score [0, 1], lower is better
-            - 'calib_slope': Calibration slope, ideally ~1.0
-            Keys are case-insensitive and support variants:
-            - AUROC variants: 'AUROC', 'auroc', 'auc', 'roc_auc'
-            - Brier variants: 'Brier', 'brier', 'brier_score'
-            - Slope variants: 'calib_slope', 'calibration_slope', 'slope'
+            - 'auroc': Area under ROC curve [0, 1]
+            - 'brier_score': Brier score [0, 1], lower is better
+            - 'calibration_slope': Calibration slope, ideally ~1.0
         weights: Optional custom weights for score components.
             Default: {'auroc': 0.50, 'brier': 0.30, 'slope': 0.20}
             Weights should sum to 1.0 for interpretable scores.
@@ -66,17 +62,17 @@ def compute_selection_score(
 
     Examples:
         >>> # Perfect model
-        >>> metrics = {'AUROC': 1.0, 'Brier': 0.0, 'calib_slope': 1.0}
+        >>> metrics = {'auroc': 1.0, 'brier_score': 0.0, 'calibration_slope': 1.0}
         >>> compute_selection_score(metrics)
         1.0
 
         >>> # Random model (AUROC=0.5, Brier=0.25, perfect calibration)
-        >>> metrics = {'AUROC': 0.5, 'Brier': 0.25, 'calib_slope': 1.0}
+        >>> metrics = {'auroc': 0.5, 'brier_score': 0.25, 'calibration_slope': 1.0}
         >>> round(compute_selection_score(metrics), 3)
         0.475
 
         >>> # Custom weights emphasizing AUROC
-        >>> metrics = {'AUROC': 0.9, 'Brier': 0.1, 'calib_slope': 1.0}
+        >>> metrics = {'auroc': 0.9, 'brier_score': 0.1, 'calibration_slope': 1.0}
         >>> weights = {'auroc': 0.7, 'brier': 0.2, 'slope': 0.1}
         >>> round(compute_selection_score(metrics, weights), 3)
         0.91
@@ -89,22 +85,10 @@ def compute_selection_score(
         logger.warning("Empty weights provided, using defaults")
         weights = DEFAULT_WEIGHTS.copy()
 
-    # Extract metrics using canonical keys (with fallback for legacy keys)
-    auroc = metrics.get(METRIC_AUROC) or _extract_metric(
-        metrics,
-        ["AUROC", "auroc", "auc", "roc_auc", "ROC_AUC"],
-        default=0.5,
-    )
-    brier = metrics.get(METRIC_BRIER) or _extract_metric(
-        metrics,
-        ["Brier", "brier", "brier_score", "Brier_score"],
-        default=0.25,
-    )
-    slope = _extract_metric(
-        metrics,
-        ["calib_slope", "calibration_slope", "slope", "Slope"],
-        default=1.0,
-    )
+    # Extract metrics using canonical keys
+    auroc = metrics.get(METRIC_AUROC, 0.5)
+    brier = metrics.get(METRIC_BRIER, 0.25)
+    slope = metrics.get(METRIC_CALIB_SLOPE, 1.0)
 
     # Validate metric values
     if not _is_valid_metric(auroc):
@@ -158,30 +142,6 @@ def compute_selection_score(
     return float(score)
 
 
-def _extract_metric(
-    metrics: dict[str, Any],
-    keys: list[str],
-    default: float,
-) -> float:
-    """
-    Extract metric value from dictionary with flexible key matching.
-
-    Args:
-        metrics: Dictionary of metrics
-        keys: List of possible key names (checked in order)
-        default: Default value if no key found
-
-    Returns:
-        Metric value or default
-    """
-    for key in keys:
-        if key in metrics:
-            value = metrics[key]
-            if value is not None:
-                return float(value)
-    return default
-
-
 def _is_valid_metric(value: Any) -> bool:
     """
     Check if a metric value is valid (finite number).
@@ -213,7 +173,7 @@ def compute_selection_scores_for_models(
 
     Args:
         model_metrics: Dictionary mapping model names to their metrics dicts.
-            Example: {'LR_EN': {'AUROC': 0.85, 'Brier': 0.12, ...}, ...}
+            Example: {'LR_EN': {'auroc': 0.85, 'brier_score': 0.12, ...}, ...}
         weights: Optional custom weights (passed to compute_selection_score)
 
     Returns:
@@ -221,8 +181,8 @@ def compute_selection_scores_for_models(
 
     Examples:
         >>> model_metrics = {
-        ...     'LR_EN': {'AUROC': 0.85, 'Brier': 0.10, 'calib_slope': 1.05},
-        ...     'RF': {'AUROC': 0.82, 'Brier': 0.12, 'calib_slope': 0.90},
+        ...     'LR_EN': {'auroc': 0.85, 'brier_score': 0.10, 'calibration_slope': 1.05},
+        ...     'RF': {'auroc': 0.82, 'brier_score': 0.12, 'calibration_slope': 0.90},
         ... }
         >>> scores = compute_selection_scores_for_models(model_metrics)
         >>> sorted(scores.keys())
@@ -250,8 +210,8 @@ def rank_models_by_selection_score(
 
     Examples:
         >>> model_metrics = {
-        ...     'LR_EN': {'AUROC': 0.85, 'Brier': 0.10, 'calib_slope': 1.0},
-        ...     'RF': {'AUROC': 0.80, 'Brier': 0.15, 'calib_slope': 0.9},
+        ...     'LR_EN': {'auroc': 0.85, 'brier_score': 0.10, 'calibration_slope': 1.0},
+        ...     'RF': {'auroc': 0.80, 'brier_score': 0.15, 'calibration_slope': 0.9},
         ... }
         >>> ranking = rank_models_by_selection_score(model_metrics)
         >>> ranking[0][0]  # Best model

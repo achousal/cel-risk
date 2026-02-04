@@ -30,7 +30,8 @@ def _safe_metric(metric_fn: Callable, y: np.ndarray, p: np.ndarray) -> float:
     """
     try:
         return metric_fn(y, p)
-    except Exception:
+    except Exception as e:
+        logger.debug("Metric computation failed: %s", e)
         return np.nan
 
 

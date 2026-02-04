@@ -8,24 +8,9 @@ from ced_ml.features.screening_cache import get_screening_cache
 
 
 @pytest.fixture
-def sample_data():
-    """Generate sample data for screening tests."""
-    rng = np.random.default_rng(42)
-    n_samples = 100
-    n_proteins = 50
-
-    # Create DataFrame with protein columns
-    X = pd.DataFrame(
-        rng.normal(0, 1, (n_samples, n_proteins)),
-        columns=[f"protein_{i}" for i in range(n_proteins)],
-    )
-
-    # Create binary labels
-    y = rng.choice([0, 1], size=n_samples, p=[0.8, 0.2])
-
-    protein_cols = list(X.columns)
-
-    return X, y, protein_cols
+def sample_data(sample_data_screening):
+    """Alias for sample_data_screening from conftest for backward compatibility."""
+    return sample_data_screening
 
 
 @pytest.fixture

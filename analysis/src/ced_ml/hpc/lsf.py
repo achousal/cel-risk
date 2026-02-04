@@ -55,7 +55,7 @@ def detect_environment(base_dir: Path) -> EnvironmentInfo:
 
     try:
         project_root = get_project_root()
-    except Exception:
+    except (ValueError, RuntimeError, OSError):
         if (base_dir / "analysis").exists():
             project_root = base_dir
         elif base_dir.name == "analysis":
@@ -264,7 +264,7 @@ def _build_postprocessing_command(
 ) -> str:
     """Build post-processing commands (aggregation and ensemble training only).
 
-    Panel optimization and consensus are now handled by separate parallel jobs.
+    Panel optimization and consensus are handled by separate parallel jobs.
 
     Returns a multi-line bash script fragment that runs each step sequentially.
     """
@@ -328,6 +328,48 @@ def _build_consensus_panel_command(
     return f"ced consensus-panel --run-id {run_id}"
 
 
+def _build_permutation_test_command(
+    *,
+    run_id: str,
+    model: str,
+    split_seed: int = 0,
+    n_perms: int = 200,
+    random_state: int = 42,
+) -> str:
+    """Build permutation test command for HPC job array.
+
+    Uses $LSB_JOBINDEX for LSF or $SLURM_ARRAY_TASK_ID for Slurm.
+
+    Args:
+        run_id: Run identifier.
+        model: Model name.
+        split_seed: Split seed to use.
+        n_perms: Total number of permutations (for reference, not used in command).
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        A bash command string that uses the job array index for --perm-index.
+    """
+    # Support both LSF ($LSB_JOBINDEX) and Slurm ($SLURM_ARRAY_TASK_ID)
+    cmd = f"""# Detect job array index (LSF or Slurm)
+if [ -n "${{LSB_JOBINDEX:-}}" ]; then
+    PERM_INDEX=$LSB_JOBINDEX
+elif [ -n "${{SLURM_ARRAY_TASK_ID:-}}" ]; then
+    PERM_INDEX=$SLURM_ARRAY_TASK_ID
+else
+    echo "Error: Not running in a job array context (no LSB_JOBINDEX or SLURM_ARRAY_TASK_ID)"
+    exit 1
+fi
+
+ced permutation-test \\
+  --run-id {run_id} \\
+  --model {model} \\
+  --split-seed {split_seed} \\
+  --perm-index $PERM_INDEX \\
+  --random-state {random_state}"""
+    return cmd
+
+
 def submit_hpc_pipeline(
     *,
     config_file: Path,
@@ -354,8 +396,6 @@ def submit_hpc_pipeline(
     3. Panel seed jobs (M x S jobs: one per model per seed, depends on post-processing)
     4. Panel aggregation jobs (M jobs: one per model, depends on that model's seed jobs)
     5. Consensus panel job (depends on post-processing + panel aggregation)
-
-    Performance: 4× speedup vs previous per-split parallelization (with 4 models)
 
     Args:
         config_file: Path to training config YAML.

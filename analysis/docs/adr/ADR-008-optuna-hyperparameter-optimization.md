@@ -9,7 +9,7 @@
 - **Config-driven:** `OptunaConfig.enabled` toggles Optuna vs RandomizedSearchCV
 - **Optional dependency:** `pip install ced-ml[optuna]`
 - **Sklearn-compatible:** `OptunaSearchCV` mimics `RandomizedSearchCV` API
-- **Graceful fallback:** Falls back to RandomizedSearchCV if Optuna unavailable
+
 
 **Default:** TPE sampler + MedianPruner
 
@@ -30,10 +30,6 @@
 
 | Alternative | Rejected Because |
 |-------------|------------------|
-| Replace RandomizedSearchCV entirely | Some users don't want dependency |
-| scikit-optimize | Less maintained, no pruning |
-| Hyperopt | Optuna has better API, pruning |
-| Ray Tune | Heavy dependency, overkill |
 | Grid search only | Exponentially expensive |
 
 ## Consequences

@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import numpy as np
-import pandas as pd
 import pytest
 from ced_ml.features.kbest import ScreeningTransformer
 from sklearn.base import clone
@@ -13,20 +11,9 @@ from sklearn.pipeline import Pipeline
 
 
 @pytest.fixture
-def toy_data():
-    """Small dataset with clear signal for screening."""
-    rng = np.random.default_rng(42)
-    n = 200
-    n_proteins = 30
-    y = np.array([0] * 170 + [1] * 30)
-    X = pd.DataFrame(
-        rng.normal(0, 1, (n, n_proteins)),
-        columns=[f"prot_{i}_resid" for i in range(n_proteins)],
-    )
-    # Inject signal in first 5 proteins
-    X.iloc[170:, :5] += 2.0
-    protein_cols = list(X.columns)
-    return X, y, protein_cols
+def toy_data(toy_data_screening):
+    """Alias for toy_data_screening from conftest for backward compatibility."""
+    return toy_data_screening
 
 
 def _count_screening_fits(X, y, protein_cols, n_splits, n_repeats=1):

@@ -457,51 +457,6 @@ def get_data_stats(df: pd.DataFrame) -> dict[str, Any]:
     return stats
 
 
-def log_data_summary(df: pd.DataFrame) -> None:
-    """
-    Log summary of loaded data to logger.
-
-    Args:
-        df: DataFrame to summarize
-    """
-    stats = get_data_stats(df)
-    logger.info("Data summary:")
-    logger.info(f"  Rows: {stats['n_rows']:,}")
-    logger.info(f"  Columns: {stats['n_cols']:,}")
-    logger.info(f"  Proteins: {stats.get('n_proteins', 0):,}")
-
-    if "outcome_counts" in stats:
-        logger.info("  Outcome distribution:")
-        for label, count in sorted(stats["outcome_counts"].items()):
-            logger.info(f"    {label}: {count:,}")
-
-    if "missing_metadata" in stats:
-        logger.info("  Missing metadata:")
-        for col, count in stats["missing_metadata"].items():
-            logger.info(f"    {col}: {count:,} ({100*count/stats['n_rows']:.1f}%)")
-
-
-# Convenience function matching legacy behavior
-def load_data(infile: str) -> pd.DataFrame:
-    """
-    Load proteomics CSV with default settings (backward compatibility).
-
-    This function matches the behavior of legacy code:
-    - Uses usecols filter for proteomics schema
-    - Sets low_memory=False for consistent dtype inference
-
-    Args:
-        infile: Path to CSV file
-
-    Returns:
-        DataFrame with selected columns
-
-    Example:
-        >>> df = load_data("data/celiac_proteomics.csv")
-    """
-    return read_proteomics_csv(infile, low_memory=False)
-
-
 def convert_csv_to_parquet(
     csv_path: str,
     parquet_path: str | None = None,

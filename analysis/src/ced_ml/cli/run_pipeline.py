@@ -21,7 +21,8 @@ from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
 from ced_ml.data.schema import ModelName
-from ced_ml.utils.logging import auto_log_path, setup_logger
+from ced_ml.utils.logging import setup_command_logger, setup_logger
+from ced_ml.utils.paths import get_analysis_dir, get_project_root
 
 
 def _ensure_splits_exist(
@@ -120,8 +121,11 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
         else:
             # Fallback: use project root
             base_dir = project_root
-    except Exception:
+    except Exception as e:
         # Ultimate fallback: assume config is in configs/ and go up two levels
+        logging.getLogger(__name__).debug(
+            "Could not determine project root, using config parent: %s", e
+        )
         base_dir = config_path.parent.parent
 
     result: dict[str, Any] = {}
@@ -346,7 +350,9 @@ def _run_hpc_mode(
 
     # Load HPC config (returns HPCConfig schema)
     if hpc_config_file is None:
-        hpc_config_file = Path("configs/pipeline_hpc.yaml")
+        hpc_config_file = resolve_pipeline_config_path(hpc=True)
+        if hpc_config_file is None:
+            hpc_config_file = Path("configs/pipeline_hpc.yaml")
     hpc_config = load_hpc_config(hpc_config_file)
 
     # Load pipeline config for paths and other settings (returns dict with paths/configs/pipeline sections)
@@ -362,7 +368,7 @@ def _run_hpc_mode(
     if outdir is None:
         outdir = pipeline_config.get("results_dir")
         if outdir is None:
-            outdir = (hpc_config_file.parent.parent / "results").resolve()
+            outdir = (get_project_root() / "results").resolve()
     else:
         outdir = outdir.resolve()
 
@@ -380,7 +386,7 @@ def _run_hpc_mode(
 
     logs_dir = pipeline_config.get("logs_dir")
     if logs_dir is None:
-        logs_dir = (hpc_config_file.parent.parent / "logs").resolve()
+        logs_dir = (get_project_root() / "logs").resolve()
 
     # Generate run_id
     if run_id is None:
@@ -633,13 +639,16 @@ def run_pipeline(
 
     # Auto-file-logging: use explicit log_file if provided, otherwise auto-generate
     if log_file is None:
-        log_file = auto_log_path(
+        logger = setup_command_logger(
             command="run-pipeline",
+            log_level=log_level,
             outdir=outdir,
             run_id=run_id,
+            logger_name="ced_ml.pipeline",
         )
-    logger = setup_logger("ced_ml.pipeline", level=log_level, log_file=log_file)
-    logger.info(f"Logging to file: {log_file}")
+    else:
+        logger = setup_logger("ced_ml.pipeline", level=log_level, log_file=log_file)
+        logger.info(f"Logging to file: {log_file}")
 
     pipeline_t0 = time.monotonic()
     step_timings: list[tuple[str, float]] = []
@@ -818,10 +827,10 @@ def run_pipeline(
 
         t0 = time.monotonic()
         # Auto-discover models with aggregated results
-        results_root = outdir
+        results_dir = outdir
         model_dirs = discover_models_by_run_id(
             run_id=shared_run_id,
-            results_root=results_root,
+            results_dir=results_dir,
             model_filter=None,
         )
 
@@ -829,9 +838,7 @@ def run_pipeline(
             logger.info(f"\nOptimizing panel for {model_name}")
 
             # Load rfe_tune_spaces from optimize_panel.yaml if available
-            _op_config_path = (
-                Path(__file__).parent.parent.parent.parent / "configs" / "optimize_panel.yaml"
-            )
+            _op_config_path = get_analysis_dir() / "configs" / "optimize_panel.yaml"
             _op_rfe_spaces = None
             _op_cfg = {}
             if _op_config_path.exists():
@@ -872,9 +879,7 @@ def run_pipeline(
         # Load consensus config for parameters (corr_threshold, stability_threshold, etc.)
         from ced_ml.config.loader import load_yaml
 
-        consensus_config_path = (
-            Path(__file__).parent.parent.parent.parent / "configs" / "consensus_panel.yaml"
-        )
+        consensus_config_path = get_analysis_dir() / "configs" / "consensus_panel.yaml"
         consensus_cfg = {}
         if consensus_config_path.exists():
             consensus_cfg = load_yaml(consensus_config_path)

@@ -10,12 +10,11 @@
 ---
 
 **Core features:**
-- Multi-model ensemble with stacking (RF, XGBoost, SVM, Logistic Regression)
-- Five feature selection strategies (hybrid stability, nested RFECV, post-hoc RFE, cross-model consensus, fixed panel)
 - Nested cross-validation with Bayesian hyperparameter optimization
-- Unbiased calibration (OOF-posthoc strategy)
-- Clinical decision curve analysis
+- Five feature selection strategies (hybrid stability, nested RFECV, post-hoc RFE, cross-model consensus, fixed panel)
+- Permutation testing for statistical significance of predictive performance
 - Cross-model consensus panel generation via Robust Rank Aggregation
+- Multi-model ensemble with stacking (RF, XGBoost, SVM, Logistic Regression)
 - HPC-ready (LSF/Slurm) with full provenance tracking
 
 ---
@@ -95,6 +94,7 @@ bjobs -w | grep CeD_
 | `ced aggregate-splits` | Aggregate results across splits with bootstrap CIs |
 | `ced optimize-panel` | Find minimal protein panel for a single model |
 | `ced consensus-panel` | Cross-model consensus panel via Robust Rank Aggregation |
+| `ced permutation-test` | Test statistical significance via label permutation |
 | `ced eval-holdout` | Evaluate on held-out test set |
 | `ced config` | Validate or diff config files |
 | `ced convert-to-parquet` | Convert CSV to Parquet format |
@@ -113,23 +113,9 @@ All commands use YAML configs in `analysis/configs/`:
 
 ---
 
-## Key Capabilities
-
-### ML Pipeline
-- **Models**: Logistic Regression (ElasticNet), Random Forest, XGBoost, Linear SVM
-- **Ensemble**: Out-of-fold stacking with L2 meta-learner
-- **Feature Selection**: Five strategies optimized for different use cases
-  - Hybrid stability (default, ~30 min)
-  - Nested RFECV (scientific discovery, ~22 hrs)
-  - Post-hoc RFE (single-model deployment, ~10 min)
-  - Cross-model consensus via RRA (robust deployment, ~15 min)
-  - Fixed panel validation (regulatory, ~30 min)
-- **Hyperparameter Tuning**: Optuna Bayesian optimization or grid search
-- **Temporal Validation**: Chronological splits to prevent future data leakage
-
 ### Evaluation
 - **Discrimination**: AUROC, PR-AUC with bootstrap CIs
-- **Calibration**: Brier score, slope/intercept, calibration curves (OOF-posthoc)
+- **Calibration**: AUROC, Brier score, slope/intercept, calibration curves (OOF-posthoc)
 - **Clinical Utility**: Decision curve analysis with auto-configured threshold ranges
 - **Visualizations**: ROC/PR curves, calibration plots, risk distributions, DCA plots
 

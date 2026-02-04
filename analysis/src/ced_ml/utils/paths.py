@@ -1,10 +1,7 @@
 """
 Path utilities for standardized file/directory operations.
 
-This module provides:
-
-1. Directory management (ensure_dir)
-2. Path resolution for CLI commands
+This module provides path resolution for CLI commands.
 
 **IMPORTANT**: All CLI commands must be run from the project root (CeliacRisks/).
 
@@ -24,18 +21,6 @@ Path resolution:
 """
 
 from pathlib import Path
-
-# ============================================================================
-# Directory Management Utilities (legacy compatibility)
-# ============================================================================
-
-
-def ensure_dir(path: str | Path) -> Path:
-    """Create directory if it doesn't exist, return Path object."""
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 # ============================================================================
 # Path Resolution (must run from project root)

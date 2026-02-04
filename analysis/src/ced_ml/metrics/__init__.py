@@ -25,6 +25,17 @@ from ced_ml.metrics.discrimination import (
     prauc,
     youden_j,
 )
+from ced_ml.metrics.threshold_strategy import (
+    FixedPPVThreshold,
+    FixedSensitivityThreshold,
+    FixedSpecificityThreshold,
+    MaxF1Threshold,
+    MaxFBetaThreshold,
+    ThresholdStrategy,
+    YoudensJThreshold,
+    get_threshold_strategy,
+    get_threshold_strategy_from_params,
+)
 from ced_ml.metrics.thresholds import (
     BinaryMetrics,
     ThresholdBundle,
@@ -79,4 +90,14 @@ __all__ = [
     # Bootstrap confidence intervals
     "stratified_bootstrap_ci",
     "stratified_bootstrap_diff_ci",
+    # Threshold strategies (Strategy pattern)
+    "ThresholdStrategy",
+    "MaxF1Threshold",
+    "MaxFBetaThreshold",
+    "YoudensJThreshold",
+    "FixedSpecificityThreshold",
+    "FixedSensitivityThreshold",
+    "FixedPPVThreshold",
+    "get_threshold_strategy",
+    "get_threshold_strategy_from_params",
 ]

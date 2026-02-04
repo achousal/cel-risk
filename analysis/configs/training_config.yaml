@@ -225,28 +225,4 @@ dca:
   dca_threshold_step: 0.001
   dca_report_points: [0.01, 0.05, 0.10, 0.20]
 
-# Outputs
-output:
-  save_train_preds: true
-  save_train_oof: true
-  save_val_preds: true
-  save_test_preds: true
-  save_calibration: true
-  calib_bins: 6
-  save_feature_importance: true
-  feature_reports: true
-  plot_format: png  # Options: png, pdf, svg
-  plot_dpi: 300
-  save_plots: true
-  max_plot_splits: 1  # 0 = no limit; N = only first N splits get plots
-
-  # Individual plot type controls
-  plot_roc: true
-  plot_pr: true
-  plot_calibration: true
-  plot_risk_distribution: true
-  plot_dca: true
-  plot_learning_curve: true
-  plot_oof_combined: true
-  plot_optuna: true
-  optuna_plot_format: html  # Options: html (HPC-safe), png, pdf (require Kaleido/Chrome)
+# Outputs: See configs/output_config.yaml for all artifact and plot controls

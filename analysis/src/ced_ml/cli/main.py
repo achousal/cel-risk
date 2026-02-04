@@ -330,9 +330,12 @@ def aggregate_splits(ctx, **kwargs):
         ced aggregate-splits --run-id 20260127_115115 --model LR_EN
         ced aggregate-splits --run-id 20260127_115115  # All models
     """
-    from ced_ml.cli.aggregate_splits import (
-        resolve_results_dir_from_run_id,
-        run_aggregate_splits,
+
+    from ced_ml.cli.aggregate_splits import run_aggregate_splits
+    from ced_ml.cli.discovery import (
+        discover_models_for_run,
+        get_run_path,
+        resolve_run_id,
     )
 
     # Validate mutually exclusive options
@@ -361,21 +364,26 @@ def aggregate_splits(ctx, **kwargs):
     # Auto-detect results_dir from run_id
     if run_id:
         try:
-            # Check if we should aggregate all models or just one
-            return_all = model is None
+            # Resolve run_id and get run path
+            run_id = resolve_run_id(run_id)
+            run_path = get_run_path(run_id)
 
-            model_dirs = resolve_results_dir_from_run_id(
-                run_id=run_id, model=model, return_all_models=return_all
-            )
-
-            # If return_all_models=False, we get a string; convert to dict for uniform handling
-            if isinstance(model_dirs, str):
-                # Single model case (either --model was specified or only one model exists)
-                # Extract model name from path: results/run_{id}/{model}/
-                from pathlib import Path
-
-                model_name = Path(model_dirs).name
-                model_dirs = {model_name: model_dirs}
+            # Discover models
+            if model:
+                # Validate specific model exists
+                model_path = run_path / model
+                if not model_path.exists():
+                    raise FileNotFoundError(
+                        f"Results directory not found for model {model}, run {run_id}.\n"
+                        f"Tried: {model_path}"
+                    )
+                model_dirs = {model: str(model_path)}
+            else:
+                # Find all models
+                models = discover_models_for_run(run_id, skip_ensemble=False)
+                if not models:
+                    raise FileNotFoundError(f"No models found for run {run_id}")
+                model_dirs = {m: str(run_path / m) for m in models}
 
             # Display what we found
             if len(model_dirs) == 1:
@@ -491,8 +499,14 @@ def eval_holdout(ctx, **kwargs):
 @click.option(
     "--split-seed",
     type=int,
-    default=0,
-    help="Split seed for identifying model outputs",
+    default=None,
+    help="Single split seed (default: auto-detect all from --run-id)",
+)
+@click.option(
+    "--split-seeds",
+    type=str,
+    default=None,
+    help="Comma-separated list of split seeds (e.g., '72,73,74'). Overrides --split-seed.",
 )
 @click.option(
     "--outdir",
@@ -513,54 +527,109 @@ def eval_holdout(ctx, **kwargs):
     help="Meta-learner regularization strength (inverse)",
 )
 @click.pass_context
-def train_ensemble(ctx, config, base_models, **kwargs):
+def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
     """Train stacking ensemble from base model OOF predictions.
 
     This command collects out-of-fold (OOF) predictions from previously trained
     base models and trains a meta-learner (Logistic Regression) to combine them.
 
     AUTO-DETECTION MODE (recommended):
-        Use --run-id to automatically discover results directory and base models:
+        Use --run-id to automatically discover results directory, base models,
+        and split seeds:
+            ced train-ensemble --run-id 20260127_115115
+
+    EXPLICIT SPLITS:
+        Specify which splits to train:
+            ced train-ensemble --run-id 20260127_115115 --split-seeds 72,73,74
             ced train-ensemble --run-id 20260127_115115 --split-seed 0
 
     MANUAL MODE:
         Explicitly specify results directory and base models:
-            ced train-ensemble --results-dir results/ --base-models LR_EN,RF,XGBoost
+            ced train-ensemble --results-dir results/ --base-models LR_EN,RF,XGBoost --split-seed 0
 
     Requirements:
         - Base models must be trained first using 'ced train'
-        - OOF predictions must exist in results_dir/{model}/split_{seed}/preds/
+        - OOF predictions must exist in results_dir/{model}/splits/split_seed{N}/preds/
 
     Examples:
-        # Auto-detect from run-id (simplest)
-        ced train-ensemble --run-id 20260127_115115 --split-seed 0
+        # Auto-detect everything from run-id (simplest, trains ALL splits)
+        ced train-ensemble --run-id 20260127_115115
 
-        # Manual specification
-        ced train-ensemble --results-dir results/ --base-models LR_EN,RF,XGBoost
+        # Train specific splits
+        ced train-ensemble --run-id 20260127_115115 --split-seeds 72,73,74,75
+
+        # Train single split
+        ced train-ensemble --run-id 20260127_115115 --split-seed 0
 
         # With config file
         ced train-ensemble --config configs/training_config.yaml --run-id 20260127_115115
     """
+    from ced_ml.cli.discovery import discover_split_seeds_for_run
     from ced_ml.cli.train_ensemble import run_train_ensemble
+
+    run_id = kwargs.get("run_id")
+
+    # Determine split seeds to process
+    seeds_to_train: list[int] = []
+
+    if split_seeds:
+        # Explicit list provided
+        seeds_to_train = [int(s.strip()) for s in split_seeds.split(",")]
+    elif split_seed is not None:
+        # Single seed provided
+        seeds_to_train = [split_seed]
+    elif run_id:
+        # Auto-discover from run_id
+        try:
+            seeds_to_train = discover_split_seeds_for_run(
+                run_id=run_id,
+                results_dir=kwargs.get("results_dir"),
+                skip_ensemble=True,
+            )
+            click.echo(f"Auto-discovered {len(seeds_to_train)} split seed(s): {seeds_to_train}")
+        except FileNotFoundError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+    else:
+        # No run_id and no seeds - require explicit seed
+        click.echo(
+            "Error: Either --run-id (for auto-detection) or --split-seed must be provided.",
+            err=True,
+        )
+        ctx.exit(1)
 
     # Parse base models from comma-separated string
     base_model_list = None
     if base_models:
         base_model_list = [m.strip() for m in base_models.split(",")]
 
-    try:
-        run_train_ensemble(
-            config_file=config,
-            base_models=base_model_list,
-            **kwargs,
-            log_level=ctx.obj.get("log_level"),
-        )
-    except FileNotFoundError as e:
-        click.echo(f"Error: {e}", err=True)
-        ctx.exit(1)
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        ctx.exit(1)
+    # Train ensemble for each split seed
+    n_seeds = len(seeds_to_train)
+    for i, seed in enumerate(seeds_to_train, 1):
+        if n_seeds > 1:
+            click.echo(f"\n{'='*70}")
+            click.echo(f"Training ensemble for split_seed={seed} ({i}/{n_seeds})")
+            click.echo(f"{'='*70}\n")
+
+        try:
+            run_train_ensemble(
+                config_file=config,
+                base_models=base_model_list,
+                split_seed=seed,
+                **kwargs,
+                log_level=ctx.obj.get("log_level"),
+            )
+        except FileNotFoundError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+
+    if n_seeds > 1:
+        click.echo(f"\n{'='*70}")
+        click.echo(f"Ensemble training complete for all {n_seeds} split(s)")
+        click.echo(f"{'='*70}\n")
 
 
 @cli.command("optimize-panel")
@@ -826,14 +895,12 @@ def optimize_panel(ctx, config, **kwargs):
         run_id = kwargs["run_id"]
         seed = kwargs["split_seed"]
 
-        results_root_env = os.environ.get("CED_RESULTS_DIR")
-        results_root = (
-            Path(results_root_env) if results_root_env else get_project_root() / "results"
-        )
+        results_dir_env = os.environ.get("CED_RESULTS_DIR")
+        results_dir = Path(results_dir_env) if results_dir_env else get_project_root() / "results"
 
         model_dirs = discover_models_by_run_id(
             run_id=run_id,
-            results_root=results_root,
+            results_dir=results_dir,
             model_filter=kwargs.get("model"),
         )
 
@@ -909,7 +976,12 @@ def optimize_panel(ctx, config, **kwargs):
         import os
         from pathlib import Path
 
-        from ced_ml.hpc.lsf import detect_environment, load_hpc_config, submit_job
+        from ced_ml.hpc.lsf import (
+            build_job_script,
+            detect_environment,
+            load_hpc_config,
+            submit_job,
+        )
         from ced_ml.utils.paths import get_project_root
 
         # Only --run-id mode is supported for HPC (not --results-dir)
@@ -924,28 +996,33 @@ def optimize_panel(ctx, config, **kwargs):
         # Load HPC config
         hpc_config_path = kwargs.get("hpc_config")
         if not hpc_config_path:
-            default_hpc_config = get_project_root() / "configs" / "pipeline_hpc.yaml"
-            if default_hpc_config.exists():
-                hpc_config_path = str(default_hpc_config)
+            root = get_project_root()
+            candidates = [
+                root / "configs" / "pipeline_hpc.yaml",
+                root / "analysis" / "configs" / "pipeline_hpc.yaml",
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    hpc_config_path = str(candidate)
+                    break
             else:
                 raise click.UsageError(
-                    "HPC mode requires --hpc-config or configs/pipeline_hpc.yaml to exist."
+                    "HPC mode requires --hpc-config or configs/pipeline_hpc.yaml to exist. "
+                    "Searched: configs/ and analysis/configs/"
                 )
 
-        hpc_config = load_hpc_config(hpc_config_path)
-        env_info = detect_environment()
+        hpc_config = load_hpc_config(Path(hpc_config_path))
+        env_info = detect_environment(get_project_root())
 
         # Discover models to submit jobs for
-        results_root_env = os.environ.get("CED_RESULTS_DIR")
-        results_root = (
-            Path(results_root_env) if results_root_env else get_project_root() / "results"
-        )
+        results_dir_env = os.environ.get("CED_RESULTS_DIR")
+        results_dir = Path(results_dir_env) if results_dir_env else get_project_root() / "results"
 
         from ced_ml.cli.optimize_panel import discover_models_by_run_id
 
         model_dirs = discover_models_by_run_id(
             run_id=run_id,
-            results_root=results_root,
+            results_dir=results_dir,
             model_filter=kwargs.get("model"),
         )
 
@@ -953,45 +1030,57 @@ def optimize_panel(ctx, config, **kwargs):
             if kwargs.get("model"):
                 raise click.ClickException(
                     f"No models matching '{kwargs['model']}' found with run_id={run_id} "
-                    f"and aggregated results in {results_root}"
+                    f"and aggregated results in {results_dir}"
                 )
             else:
                 raise click.ClickException(
-                    f"No models found with run_id={run_id} and aggregated results in {results_root}"
+                    f"No models found with run_id={run_id} and aggregated results in {results_dir}"
                 )
 
         click.echo(f"\nSubmitting {len(model_dirs)} panel optimization job(s) to HPC:")
         for model_name in model_dirs.keys():
             click.echo(f"  - {model_name}")
 
+        # Build bsub parameters from config + environment
+        default_resources = hpc_config.get_resources("default")
+        root = get_project_root()
+        log_dir = root / "logs" / "hpc"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        bsub_params = {
+            "project": hpc_config.project,
+            "env_activation": env_info.activation_cmd,
+            "log_dir": log_dir,
+            **default_resources,
+        }
+
         # Build and submit jobs for each model
+        from ced_ml.hpc.lsf import _build_panel_optimization_command
+
         submitted_jobs = []
         for model_name in model_dirs.keys():
-            from ced_ml.hpc.lsf import _build_panel_optimization_command
-
             cmd = _build_panel_optimization_command(run_id=run_id, model=model_name)
-
             job_name = f"opt_panel_{model_name}_{run_id}"
 
-            if dry_run_flag:
-                click.echo(f"\n[DRY RUN] Would submit job: {job_name}")
-                click.echo(f"  Command: {cmd}")
-                continue
-
-            job_id = submit_job(
-                command=cmd,
+            script = build_job_script(
                 job_name=job_name,
-                config=hpc_config,
-                env_info=env_info,
-                dependency_ids=None,
+                command=cmd,
+                **bsub_params,
             )
 
-            submitted_jobs.append((model_name, job_id))
-            click.echo(f"  Submitted {model_name}: job_id={job_id}")
+            job_id = submit_job(script, dry_run=dry_run_flag)
+
+            if job_id:
+                submitted_jobs.append((model_name, job_id))
+                click.echo(f"  Submitted {model_name}: job_id={job_id}")
+            elif dry_run_flag:
+                click.echo(f"  [DRY RUN] {model_name}: {job_name}")
+            else:
+                click.echo(f"  {model_name}: Submission failed", err=True)
 
         if dry_run_flag:
             click.echo("\n[DRY RUN] No jobs were actually submitted.")
-        else:
+        elif submitted_jobs:
             click.echo(f"\nSuccessfully submitted {len(submitted_jobs)} job(s)")
             click.echo("Monitor with: bjobs")
 
@@ -1006,17 +1095,17 @@ def optimize_panel(ctx, config, **kwargs):
 
         from ced_ml.utils.paths import get_project_root
 
-        results_root_env = os.environ.get("CED_RESULTS_DIR")
-        if results_root_env:
-            results_root = Path(results_root_env)
+        results_dir_env = os.environ.get("CED_RESULTS_DIR")
+        if results_dir_env:
+            results_dir = Path(results_dir_env)
         else:
-            results_root = get_project_root() / "results"
+            results_dir = get_project_root() / "results"
 
-        click.echo(f"Auto-discovering models for run_id={run_id} in {results_root}")
+        click.echo(f"Auto-discovering models for run_id={run_id} in {results_dir}")
 
         model_dirs = discover_models_by_run_id(
             run_id=run_id,
-            results_root=results_root,
+            results_dir=results_dir,
             model_filter=kwargs.get("model"),
         )
 
@@ -1024,11 +1113,11 @@ def optimize_panel(ctx, config, **kwargs):
             if kwargs.get("model"):
                 raise click.ClickException(
                     f"No models matching '{kwargs['model']}' found with run_id={run_id} "
-                    f"and aggregated results in {results_root}"
+                    f"and aggregated results in {results_dir}"
                 )
             else:
                 raise click.ClickException(
-                    f"No models found with run_id={run_id} and aggregated results in {results_root}"
+                    f"No models found with run_id={run_id} and aggregated results in {results_dir}"
                 )
 
         click.echo(f"Found {len(model_dirs)} model(s) with aggregated results:")
@@ -1305,6 +1394,234 @@ def consensus_panel(ctx, config, **kwargs):
         rfe_weight=kwargs.get("rfe_weight") or 0.5,
         rra_method=kwargs.get("rra_method") or "geometric_mean",
         outdir=kwargs.get("outdir"),
+        log_level=ctx.obj.get("log_level"),
+    )
+
+
+@cli.command("permutation-test")
+@click.option(
+    "--run-id",
+    type=str,
+    required=True,
+    help="Run ID to test (e.g., 20260127_115115)",
+)
+@click.option(
+    "--model",
+    type=str,
+    default=None,
+    help="Specific model to test (default: all base models)",
+)
+@click.option(
+    "--split-seed",
+    type=int,
+    default=0,
+    help="Split seed to use (default: 0)",
+)
+@click.option(
+    "--n-perms",
+    type=int,
+    default=200,
+    help="Number of permutations (default: 200)",
+)
+@click.option(
+    "--perm-index",
+    type=int,
+    default=None,
+    help="Single permutation index for HPC job arrays (optional)",
+)
+@click.option(
+    "--metric",
+    type=str,
+    default="auroc",
+    help="Metric to use (default: auroc, only auroc supported per ADR-007)",
+)
+@click.option(
+    "--n-jobs",
+    type=int,
+    default=1,
+    help="Parallel jobs for in-process parallelization (default: 1)",
+)
+@click.option(
+    "--outdir",
+    type=click.Path(),
+    default=None,
+    help="Output directory (default: {run_dir}/{model}/significance/)",
+)
+@click.option(
+    "--random-state",
+    type=int,
+    default=42,
+    help="Random seed for reproducibility (default: 42)",
+)
+@click.option(
+    "--hpc",
+    is_flag=True,
+    help="Submit as HPC job array (LSF/Slurm)",
+)
+@click.option(
+    "--hpc-config",
+    type=click.Path(exists=True),
+    help="HPC config file (default: configs/pipeline_hpc.yaml)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview HPC job submission without executing (--hpc mode only)",
+)
+@click.pass_context
+def permutation_test(ctx, **kwargs):
+    """Test model significance via label permutation testing.
+
+    Tests the null hypothesis that model performance is no better than chance
+    by comparing observed AUROC against a null distribution from B label permutations.
+
+    For each permutation, the full pipeline (screening, feature selection,
+    hyperparameter optimization) is re-run on permuted labels to obtain a
+    valid null distribution without data leakage.
+
+    WORKFLOW:
+        1. Train models: ced train --run-id <RUN_ID>
+        2. Test significance: ced permutation-test --run-id <RUN_ID>
+
+    MODES:
+        Local parallel: Runs all permutations locally with n_jobs parallelism
+        HPC mode (--hpc): Submits job array to LSF/Slurm cluster
+
+    Examples:
+
+        # Test all models locally with 4 parallel jobs
+        ced permutation-test --run-id 20260127_115115 --n-jobs 4
+
+        # Test specific model
+        ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
+
+        # Submit as HPC job array (recommended for large n_perms)
+        ced permutation-test --run-id 20260127_115115 --model LR_EN --hpc
+
+        # Preview HPC submission without executing
+        ced permutation-test --run-id 20260127_115115 --model LR_EN --hpc --dry-run
+
+    Output (in results/run_{RUN_ID}/{MODEL}/significance/):
+        - permutation_test_results.csv: Summary metrics
+        - null_distribution.csv: Full null distributions
+        - perm_{i}.joblib: Individual permutation results (HPC mode)
+
+    Interpretation:
+        p < 0.05: Strong evidence of generalization above chance
+        p < 0.10: Marginal evidence
+        p >= 0.10: No evidence above chance
+    """
+    from pathlib import Path
+
+    # HPC mode: submit job array
+    hpc_flag = kwargs.get("hpc", False)
+    dry_run_flag = kwargs.get("dry_run", False)
+
+    if hpc_flag:
+        from ced_ml.hpc.lsf import (
+            build_job_script,
+            detect_environment,
+            load_hpc_config,
+            submit_job,
+        )
+        from ced_ml.utils.paths import get_project_root
+
+        run_id = kwargs["run_id"]
+        model = kwargs.get("model")
+        n_perms = kwargs["n_perms"]
+
+        if not model:
+            raise click.UsageError(
+                "HPC mode (--hpc) requires --model. " "Submit separate jobs for each model."
+            )
+
+        # Load HPC config
+        hpc_config_path = kwargs.get("hpc_config")
+        if not hpc_config_path:
+            root = get_project_root()
+            candidates = [
+                root / "configs" / "pipeline_hpc.yaml",
+                root / "analysis" / "configs" / "pipeline_hpc.yaml",
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    hpc_config_path = str(candidate)
+                    break
+            else:
+                raise click.UsageError(
+                    "HPC mode requires --hpc-config or configs/pipeline_hpc.yaml to exist. "
+                    "Searched: configs/ and analysis/configs/"
+                )
+
+        hpc_config = load_hpc_config(Path(hpc_config_path))
+        env_info = detect_environment(get_project_root())
+
+        # Build bsub parameters
+        default_resources = hpc_config.get_resources("default")
+        root = get_project_root()
+        log_dir = root / "logs" / "hpc"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        bsub_params = {
+            "project": hpc_config.project,
+            "env_activation": env_info.activation_cmd,
+            "log_dir": log_dir,
+            **default_resources,
+        }
+
+        # Build permutation test command for job array
+        from ced_ml.hpc.lsf import _build_permutation_test_command
+
+        cmd = _build_permutation_test_command(
+            run_id=run_id,
+            model=model,
+            split_seed=kwargs["split_seed"],
+            n_perms=n_perms,
+            random_state=kwargs["random_state"],
+        )
+
+        # Job array name: perm_<model>_<run_id>[0-N]
+        job_name = f"perm_{model}_{run_id}[0-{n_perms - 1}]"
+
+        script = build_job_script(
+            job_name=job_name,
+            command=cmd,
+            **bsub_params,
+        )
+
+        click.echo(f"\nSubmitting permutation test job array for {model}:")
+        click.echo(f"  Run ID: {run_id}")
+        click.echo(f"  Model: {model}")
+        click.echo(f"  Permutations: {n_perms}")
+        click.echo(f"  Job array: {job_name}")
+
+        job_id = submit_job(script, dry_run=dry_run_flag)
+
+        if job_id:
+            click.echo(f"  Submitted: job_id={job_id}")
+            click.echo(f"\nMonitor with: bjobs -J 'perm_{model}_{run_id}*'")
+            click.echo(
+                f"After completion, run aggregation:\n"
+                f"  ced permutation-test --run-id {run_id} --model {model}"
+            )
+        elif dry_run_flag:
+            click.echo("  [DRY RUN] Job not submitted")
+
+        return
+
+    # Local mode: run permutation test directly
+    from ced_ml.cli.permutation_test import run_permutation_test_cli
+
+    run_permutation_test_cli(
+        run_id=kwargs["run_id"],
+        model=kwargs.get("model"),
+        split_seed=kwargs["split_seed"],
+        n_perms=kwargs["n_perms"],
+        perm_index=kwargs.get("perm_index"),
+        metric=kwargs["metric"],
+        n_jobs=kwargs["n_jobs"],
+        outdir=kwargs.get("outdir"),
+        random_state=kwargs["random_state"],
         log_level=ctx.obj.get("log_level"),
     )
 

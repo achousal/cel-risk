@@ -93,11 +93,12 @@ open htmlcov/index.html
 ### HPC Testing
 
 ```bash
-# Test HPC script generation (dry run)
+# Test HPC pipeline execution (dry run mode)
 cd analysis/
-DRY_RUN=1 ./run_hpc.sh
+ced run-pipeline --hpc --dry-run
 
-# Validate LSF submission files
+# Validate generated submission scripts
+ls -la hpc_jobs/
 cat hpc_jobs/CeD_*.lsf
 ```
 
@@ -402,15 +403,18 @@ pytest tests/ --cov=ced_ml --cov-report=xml --cov-fail-under=80
 ### HPC Validation
 
 ```bash
-# Test HPC script generation locally
+# Test HPC submission workflow locally (dry run)
 cd analysis/
-DRY_RUN=1 ./run_hpc.sh
+ced run-pipeline --hpc --dry-run --models LR_EN --split-seeds 0
 
-# Submit single-split validation job
-bsub < hpc_jobs/CeD_LR_EN_split0.lsf
+# Submit jobs to HPC scheduler
+ced run-pipeline --hpc --models LR_EN --split-seeds 0,1,2
 
 # Monitor job status
 bjobs -w | grep CeD_
+
+# Check job output logs
+ls -la logs/hpc/
 ```
 
 ---

@@ -18,15 +18,6 @@ Stratified by `incident_CeD` to preserve class balance.
 - Need held-out VAL for calibration verification
 - Limited sample size (148 incident cases) precludes 4-way split
 
-## Alternatives
-
-| Alternative | Rejected Because |
-|-------------|------------------|
-| 2-way (75/25) | Threshold on TEST → leakage |
-| 2-way + nested threshold | Unstable estimates, no VAL for calibration |
-| 4-way split | Insufficient samples (148 cases) |
-| 70/15/15 | Unstable VAL/TEST metrics |
-
 ## Consequences
 
 | Positive | Negative |

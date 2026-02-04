@@ -12,8 +12,6 @@ from .calibration import (
     CalibrationMetrics,
     OOFCalibratedModel,
     OOFCalibrator,
-    PrevalenceAdjustedModel,
-    adjust_probabilities_for_prevalence,
     apply_oof_calibrator,
     calib_intercept_metric,
     calib_slope_metric,
@@ -26,6 +24,14 @@ from .calibration import (
 )
 from .hyperparams import (
     get_param_distributions,
+)
+from .nested_cv import (
+    get_model_n_iter,
+    oof_predictions_with_nested_cv,
+)
+from .prevalence import (
+    PrevalenceAdjustedModel,
+    adjust_probabilities_for_prevalence,
 )
 from .prevalence import (
     PrevalenceAdjustedModel as PrevalenceModel,
@@ -44,7 +50,7 @@ from .registry import (
     parse_class_weight_options,
 )
 from .training import (
-    oof_predictions_with_nested_cv,
+    oof_predictions_with_nested_cv as _oof_predictions_with_nested_cv_compat,
 )
 
 __all__ = [
@@ -77,6 +83,7 @@ __all__ = [
     "compute_scale_pos_weight_from_y",
     # Hyperparams
     "get_param_distributions",
-    # Training
+    # Nested CV (training)
+    "get_model_n_iter",
     "oof_predictions_with_nested_cv",
 ]

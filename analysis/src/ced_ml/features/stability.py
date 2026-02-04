@@ -14,7 +14,6 @@ Design:
 import json
 import logging
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -68,71 +67,6 @@ def compute_selection_frequencies(
             counts[protein] = counts.get(protein, 0) + 1
 
     return {protein: count / n_splits for protein, count in counts.items()}
-
-
-def build_frequency_panel(
-    selection_frequencies: dict[str, float],
-    rule: str = "topN",
-    top_n: int = 100,
-    freq_threshold: float = 0.75,
-) -> pd.DataFrame:
-    """Build protein panel from selection frequencies using specified rule.
-
-    Args:
-        selection_frequencies: Dict mapping protein -> frequency
-        rule: Selection rule ("topN" or "freq_ge_tau")
-        top_n: Maximum panel size (used if rule="topN")
-        freq_threshold: Minimum frequency (used if rule="freq_ge_tau")
-
-    Returns:
-        DataFrame with columns [protein, selection_freq, rank]
-        Sorted by (selection_freq DESC, protein ASC)
-
-    Raises:
-        ValueError: If top_n <= 0, freq_threshold not in [0, 1], or invalid rule
-
-    Example:
-        >>> freqs = {'PROT_A': 0.90, 'PROT_B': 0.80, 'PROT_C': 0.70}
-        >>> build_frequency_panel(freqs, rule="freq_ge_tau", freq_threshold=0.75)
-           protein  selection_freq  rank
-        0  PROT_A            0.90     1
-        1  PROT_B            0.80     2
-    """
-    # Input validation
-    if rule not in ("topN", "freq_ge_tau"):
-        raise ValueError(f"Unknown panel rule: {rule}. Expected 'topN' or 'freq_ge_tau'.")
-
-    if rule == "topN" and top_n <= 0:
-        raise ValueError(f"top_n must be > 0, got {top_n}")
-
-    if rule == "freq_ge_tau" and not (0 <= freq_threshold <= 1):
-        raise ValueError(f"freq_threshold must be in [0, 1], got {freq_threshold}")
-
-    if not selection_frequencies:
-        return pd.DataFrame(columns=["protein", "selection_freq", "rank"])
-
-    # Build initial panel with all proteins
-    df = pd.DataFrame(
-        [
-            {"protein": protein, "selection_freq": freq}
-            for protein, freq in selection_frequencies.items()
-        ]
-    )
-
-    # Sort by frequency (descending), then protein name (ascending)
-    df = df.sort_values(["selection_freq", "protein"], ascending=[False, True]).reset_index(
-        drop=True
-    )
-
-    df["rank"] = np.arange(1, len(df) + 1, dtype=int)
-
-    # Apply selection rule
-    if rule == "freq_ge_tau":
-        df = df[df["selection_freq"] >= freq_threshold].copy().reset_index(drop=True)
-    else:  # rule == "topN"
-        df = df.head(top_n).copy()
-
-    return df
 
 
 def extract_stable_panel(
