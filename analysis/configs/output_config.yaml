@@ -1,0 +1,66 @@
+# Output Configuration
+# Controls all artifact creation, plotting, and file saving behavior
+# Used by: ced train, ced train-ensemble, ced aggregate-splits, ced optimize-panel, ced consensus-panel
+
+# Artifact saving controls
+artifacts:
+  # Prediction artifacts
+  save_train_preds: true       # Save training set predictions (large files, usually not needed)
+  save_train_oof: true          # Save out-of-fold training predictions (for ensemble stacking)
+  save_val_preds: true          # Save validation set predictions
+  save_test_preds: true         # Save test set predictions
+
+  # Calibration artifacts
+  save_calibration: true        # Save calibration curves and diagnostics
+  calib_bins: 6                 # Number of bins for calibration plots (2-20)
+
+  # Feature artifacts
+  save_feature_importance: true # Save feature importance scores
+  feature_reports: true         # Generate detailed feature selection reports
+
+  # Optuna artifacts (if Optuna hyperparameter optimization is enabled)
+  save_optuna_study: true       # Save Optuna study object (.pkl)
+  save_optuna_trials: true      # Save Optuna trials as CSV
+
+# Plot generation controls
+plots:
+  # Master plot control
+  save_plots: true              # Master switch for all plotting (set false to disable all)
+  max_plot_splits: 1            # 0 = no limit; N = only first N splits get plots (applies to training and ensemble aggregation)
+
+  # Plot formatting
+  plot_format: png              # Options: png, pdf, svg
+  plot_dpi: 300                 # DPI for raster formats (100-600 recommended)
+
+  # Individual plot type controls
+  # Standard evaluation plots
+  plot_roc: true                # ROC curves (train/val/test)
+  plot_pr: true                 # Precision-Recall curves
+  plot_calibration: true        # Calibration reliability diagrams
+  plot_risk_distribution: true  # Risk score distributions by outcome
+  plot_dca: true                # Decision curve analysis
+
+  # Training and optimization plots
+  plot_learning_curve: true     # Learning curves (sample size vs performance)
+  plot_oof_combined: true       # Combined out-of-fold predictions across CV folds
+  plot_optuna: true             # Optuna hyperparameter optimization plots
+  optuna_plot_format: html      # Options: html (HPC-safe), png, pdf (require Kaleido/Chrome)
+
+  # Ensemble-specific plots
+  plot_ensemble_weights: true   # Stacking ensemble meta-learner coefficients
+  plot_ensemble_comparison: true # Ensemble vs base model performance comparison
+  plot_base_correlations: true  # Base model prediction correlations (for stacking)
+
+# Aggregation-specific output controls (used by ced aggregate-splits)
+aggregation:
+  save_pooled_preds: true       # Save median/mean pooled predictions across splits
+  save_summary_csv: true        # Save summary statistics tables
+  save_thresholds: true         # Save threshold information to CSV
+  save_individual: false        # Save individual split results alongside aggregated
+
+# Panel optimization output controls (used by ced optimize-panel, ced consensus-panel)
+panels:
+  save_panel_csv: true          # Save optimized panel feature list
+  save_rfe_curve: true          # Save RFE elimination curve (panel size vs AUROC)
+  save_stability_ranks: true    # Save feature stability rankings
+  save_consensus_ranks: true    # Save cross-model consensus rankings (RRA)

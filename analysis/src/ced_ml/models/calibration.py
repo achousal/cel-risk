@@ -2,12 +2,11 @@
 Calibration wrappers and utilities.
 
 This module provides:
-- Prevalence-adjusted probability calibration
 - Calibration metrics (intercept, slope, ECE)
 - sklearn CalibratedClassifierCV wrapper utilities
+- OOF (out-of-fold) calibration
 
-Note: Prevalence adjustment functions are imported from prevalence.py
-      to avoid code duplication and ensure consistency.
+Note: Prevalence adjustment functions are in prevalence.py
 """
 
 import logging
@@ -22,21 +21,14 @@ from ced_ml.utils.math_utils import logit
 
 from ..data.schema import ModelName
 
-# Import prevalence adjustment utilities from canonical module
-from .prevalence import (
-    PrevalenceAdjustedModel,
-    adjust_probabilities_for_prevalence,
-)
-
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CalibrationMetrics",
     "calibration_intercept_slope",
     "calib_intercept_metric",
     "calib_slope_metric",
     "expected_calibration_error",
-    "adjust_probabilities_for_prevalence",  # Re-exported for backward compatibility
-    "PrevalenceAdjustedModel",  # Re-exported for backward compatibility
     "get_calibrated_estimator_param_name",
     "get_calibrated_cv_param_name",
     "maybe_calibrate_estimator",
@@ -166,10 +158,6 @@ def expected_calibration_error(y_true: np.ndarray, y_pred: np.ndarray, n_bins: i
             ece += np.abs(avg_pred - avg_true) * prop_in_bin
 
     return float(ece)
-
-
-# Note: adjust_probabilities_for_prevalence and PrevalenceAdjustedModel
-# are now imported from prevalence.py (see top of file) to avoid code duplication
 
 
 def get_calibrated_estimator_param_name() -> str:

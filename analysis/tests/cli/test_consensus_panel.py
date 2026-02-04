@@ -95,7 +95,7 @@ class TestDiscoverModelsWithAggregatedResults:
         """Discovers all base models with aggregated stability results."""
         discovered = discover_models_with_aggregated_results(
             run_id="20260127_115115",
-            results_root=mock_aggregated_structure,
+            results_dir=mock_aggregated_structure,
         )
 
         # Should find LR_EN and RF (have stability results)
@@ -110,7 +110,7 @@ class TestDiscoverModelsWithAggregatedResults:
         """ENSEMBLE is skipped by default."""
         discovered = discover_models_with_aggregated_results(
             run_id="20260127_115115",
-            results_root=mock_aggregated_structure,
+            results_dir=mock_aggregated_structure,
             skip_ensemble=True,
         )
 
@@ -120,7 +120,7 @@ class TestDiscoverModelsWithAggregatedResults:
         """ENSEMBLE can be included if requested."""
         discovered = discover_models_with_aggregated_results(
             run_id="20260127_115115",
-            results_root=mock_aggregated_structure,
+            results_dir=mock_aggregated_structure,
             skip_ensemble=False,
         )
 
@@ -130,7 +130,7 @@ class TestDiscoverModelsWithAggregatedResults:
         """Model filter limits discovery to specific model."""
         discovered = discover_models_with_aggregated_results(
             run_id="20260127_115115",
-            results_root=mock_aggregated_structure,
+            results_dir=mock_aggregated_structure,
             model_filter="LR_EN",
         )
 
@@ -141,7 +141,7 @@ class TestDiscoverModelsWithAggregatedResults:
         """Returns paths to aggregated directories."""
         discovered = discover_models_with_aggregated_results(
             run_id="20260127_115115",
-            results_root=mock_aggregated_structure,
+            results_dir=mock_aggregated_structure,
         )
 
         expected_lr = mock_aggregated_structure / "run_20260127_115115" / "LR_EN" / "aggregated"
@@ -152,7 +152,7 @@ class TestDiscoverModelsWithAggregatedResults:
         with pytest.raises(FileNotFoundError, match="No results found for run"):
             discover_models_with_aggregated_results(
                 run_id="NONEXISTENT",
-                results_root=mock_aggregated_structure,
+                results_dir=mock_aggregated_structure,
             )
 
 

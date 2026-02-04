@@ -30,12 +30,15 @@ UNCERTAINTY METRICS:
     - rank_cv: Coefficient of variation (std/mean) - lower = more stable ranking
 """
 
-import json
 import logging
 from pathlib import Path
 
 import pandas as pd
 
+from ced_ml.cli.discovery import (
+    auto_detect_data_paths,
+    discover_models_with_aggregated_results,
+)
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file
 from ced_ml.features.consensus import (
@@ -43,68 +46,6 @@ from ced_ml.features.consensus import (
     build_consensus_panel,
     save_consensus_results,
 )
-
-
-def discover_models_with_aggregated_results(
-    run_id: str,
-    results_root: Path,
-    model_filter: str | None = None,
-    skip_ensemble: bool = True,
-) -> dict[str, Path]:
-    """Discover models with aggregated stability results for a run_id.
-
-    Args:
-        run_id: Run ID to search for (e.g., "20260127_115115").
-        results_root: Root results directory.
-        model_filter: Optional model name to filter by.
-        skip_ensemble: If True, skip ENSEMBLE models (default: True).
-
-    Returns:
-        Dict mapping model_name -> Path to aggregated directory.
-
-    Raises:
-        FileNotFoundError: If no valid models found.
-    """
-    model_dirs = {}
-
-    # New layout: results/run_{RUN_ID}/{MODEL}/aggregated/
-    run_dir = results_root / f"run_{run_id}"
-    if not run_dir.exists():
-        raise FileNotFoundError(
-            f"No results found for run {run_id}.\n" f"Searched in: {results_root}"
-        )
-
-    for model_dir in sorted(run_dir.glob("*/")):
-        model_name = model_dir.name
-
-        # Skip hidden/special directories
-        if model_name.startswith(".") or model_name in ("investigations", "consensus"):
-            continue
-
-        # Skip ENSEMBLE if requested
-        if skip_ensemble and model_name == "ENSEMBLE":
-            continue
-
-        # Apply filter if specified
-        if model_filter and model_name != model_filter:
-            continue
-
-        # Check for aggregated results with feature stability
-        aggregated_dir = model_dir / "aggregated"
-        stability_file = aggregated_dir / "panels" / "feature_stability_summary.csv"
-
-        if not stability_file.exists():
-            continue
-
-        model_dirs[model_name] = aggregated_dir
-
-    if not model_dirs:
-        raise FileNotFoundError(
-            f"No models with aggregated stability results found for run {run_id}.\n"
-            f"Run 'ced aggregate-splits' first to generate aggregated results."
-        )
-
-    return model_dirs
 
 
 def load_model_stability(
@@ -154,75 +95,36 @@ def load_model_rfe_ranking(
 
     Returns:
         Dict mapping protein -> elimination_order, or None if not available.
-    """
-    # Try aggregated RFE results first
-    rfe_file = aggregated_dir / "optimize_panel" / "feature_ranking_aggregated.csv"
 
-    if not rfe_file.exists():
-        # Try non-aggregated path
-        rfe_file = aggregated_dir / "optimize_panel" / "feature_ranking.csv"
+    Raises:
+        FileNotFoundError: If feature_ranking_aggregated.csv exists but is malformed.
+    """
+    rfe_file = aggregated_dir / "optimize_panel" / "feature_ranking_aggregated.csv"
 
     if not rfe_file.exists():
         return None
 
     try:
         df = pd.read_csv(rfe_file)
-        if "protein" in df.columns and "elimination_order" in df.columns:
-            return dict(zip(df["protein"], df["elimination_order"], strict=False))
-    except Exception:
-        pass
-
-    return None
-
-
-def auto_detect_data_paths(
-    run_id: str,
-    results_root: Path,
-) -> tuple[str | None, str | None]:
-    """Auto-detect infile and split_dir from run metadata.
-
-    Args:
-        run_id: Run ID to search for.
-        results_root: Root results directory.
-
-    Returns:
-        Tuple of (infile, split_dir) or (None, None) if not found.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    # Find shared run_metadata.json at run level: results_root/run_{id}/run_metadata.json
-    run_dir = results_root / f"run_{run_id}"
-    metadata_file = run_dir / "run_metadata.json"
-    logger.debug(f"Checking for metadata: {metadata_file}")
-
-    if metadata_file.exists():
-        logger.debug(f"Found metadata file: {metadata_file}")
-        try:
-            with open(metadata_file) as f:
-                metadata = json.load(f)
-
-            # Shared metadata format: look in first model's entry
-            models_meta = metadata.get("models", {})
-            if models_meta:
-                first_model_meta = next(iter(models_meta.values()))
-                infile = first_model_meta.get("infile")
-                split_dir_path = first_model_meta.get("split_dir")
-            else:
-                # Fallback to flat format
-                infile = metadata.get("infile")
-                split_dir_path = metadata.get("split_dir")
-
-            logger.debug(f"Metadata infile: {infile}, split_dir: {split_dir_path}")
-
-            if infile and split_dir_path:
-                return infile, split_dir_path
-        except Exception as e:
-            logger.debug(f"Error reading metadata: {e}")
-
-    logger.debug("No run_metadata.json found, returning None")
-    return None, None
+        if "protein" not in df.columns or "elimination_order" not in df.columns:
+            raise FileNotFoundError(
+                f"Malformed RFE ranking file: {rfe_file}\n"
+                f"Required columns: 'protein', 'elimination_order'\n"
+                f"Found columns: {list(df.columns)}\n"
+                f"Run 'ced optimize-panel' to generate aggregated RFE results."
+            )
+        return dict(zip(df["protein"], df["elimination_order"], strict=False))
+    except pd.errors.EmptyDataError as e:
+        raise FileNotFoundError(
+            f"Empty RFE ranking file: {rfe_file}\n"
+            f"Run 'ced optimize-panel' to generate aggregated RFE results."
+        ) from e
+    except Exception as e:
+        raise FileNotFoundError(
+            f"Failed to load RFE ranking file: {rfe_file}\n"
+            f"Error: {e}\n"
+            f"Run 'ced optimize-panel' to generate aggregated RFE results."
+        ) from e
 
 
 def run_consensus_panel(
@@ -259,23 +161,19 @@ def run_consensus_panel(
         ValueError: If insufficient models or proteins.
     """
     # Setup logging
-    from ced_ml.utils.logging import auto_log_path, setup_logger
+    from ced_ml.utils.logging import setup_command_logger
 
     if log_level is None:
         log_level = logging.INFO
 
     # Auto-file-logging
-    log_file = auto_log_path(
+    logger = setup_command_logger(
         command="consensus-panel",
+        log_level=log_level,
         outdir=outdir or "results",
         run_id=run_id,
+        logger_name=f"ced_ml.consensus_panel.{run_id}",
     )
-    logger = setup_logger(
-        f"ced_ml.consensus_panel.{run_id}",
-        level=log_level,
-        log_file=log_file,
-    )
-    logger.info(f"Logging to file: {log_file}")
     logger.info(f"Consensus panel generation started for run_id={run_id}")
 
     # Determine results root (CED_RESULTS_DIR env var for testability)
@@ -283,20 +181,20 @@ def run_consensus_panel(
 
     from ced_ml.utils.paths import get_project_root
 
-    results_root_env = os.environ.get("CED_RESULTS_DIR")
-    if results_root_env:
-        results_root = Path(results_root_env)
+    results_dir_env = os.environ.get("CED_RESULTS_DIR")
+    if results_dir_env:
+        results_dir = Path(results_dir_env)
     else:
-        results_root = get_project_root() / "results"
+        results_dir = get_project_root() / "results"
 
-    if not results_root.exists():
-        raise FileNotFoundError(f"Results directory not found: {results_root}")
+    if not results_dir.exists():
+        raise FileNotFoundError(f"Results directory not found: {results_dir}")
 
     # Discover models with aggregated results
     logger.info("Discovering models with aggregated stability results...")
     model_dirs = discover_models_with_aggregated_results(
         run_id=run_id,
-        results_root=results_root,
+        results_dir=results_dir,
         skip_ensemble=True,
     )
 
@@ -304,7 +202,7 @@ def run_consensus_panel(
 
     # Auto-detect data paths if not provided
     if not infile or not split_dir:
-        auto_infile, auto_split_dir = auto_detect_data_paths(run_id, results_root)
+        auto_infile, auto_split_dir = auto_detect_data_paths(run_id, results_dir)
         if not infile:
             infile = auto_infile
         if not split_dir:
@@ -313,14 +211,14 @@ def run_consensus_panel(
     if not infile:
         raise ValueError(
             f"Could not auto-detect input file for run_id={run_id}.\n"
-            f"Searched in: {results_root}\n"
+            f"Searched in: {results_dir}\n"
             f"Found models: {list(model_dirs.keys())}\n"
             f"Please provide --infile explicitly."
         )
     if not split_dir:
         raise ValueError(
             f"Could not auto-detect split directory for run_id={run_id}.\n"
-            f"Searched in: {results_root}\n"
+            f"Searched in: {results_dir}\n"
             f"Found models: {list(model_dirs.keys())}\n"
             f"Please provide --split-dir explicitly."
         )
@@ -395,10 +293,12 @@ def run_consensus_panel(
     train_file = split_path / f"train_idx_{scenario}_seed{representative_seed}.csv"
 
     if not train_file.exists():
-        train_file = split_path / f"train_idx_seed{representative_seed}.csv"
-
-    if not train_file.exists():
-        raise FileNotFoundError(f"Train indices not found: {train_file}")
+        raise FileNotFoundError(
+            f"Train indices not found: {train_file}\n"
+            f"Expected scenario-specific format: train_idx_{{scenario}}_seed{{N}}.csv\n"
+            f"Scenario: {scenario}, Seed: {representative_seed}\n"
+            f"Run 'ced save-splits' to generate splits with the modern format."
+        )
 
     train_idx = pd.read_csv(train_file).squeeze().values
     df_train = df.iloc[train_idx].copy()
@@ -420,7 +320,7 @@ def run_consensus_panel(
 
     # Save results
     if outdir is None:
-        outdir = results_root / f"run_{run_id}" / "consensus"
+        outdir = results_dir / f"run_{run_id}" / "consensus"
     else:
         outdir = Path(outdir)
 
@@ -480,8 +380,6 @@ def run_consensus_panel(
 
     print("\nNext step: Validate with new split seed:")
     print(f"  ced train --model LR_EN --fixed-panel {outdir}/final_panel.txt --split-seed 10")
-
-    print(f"\nLog file: {log_file}")
     print(f"{'='*60}\n")
 
     logger.info("Consensus panel generation completed successfully")

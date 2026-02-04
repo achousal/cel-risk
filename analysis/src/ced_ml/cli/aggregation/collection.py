@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ced_ml.data.io_helpers import read_feature_report, read_metrics, read_predictions
+
 
 def collect_ensemble_predictions(
     ensemble_dirs: list[Path],
@@ -62,7 +64,7 @@ def collect_ensemble_predictions(
 
         for csv_path in csv_files:
             try:
-                df = pd.read_csv(csv_path)
+                df = read_predictions(csv_path)
                 df["split_seed"] = seed
                 df["source_file"] = csv_path.name
                 df["model"] = "ENSEMBLE"
@@ -75,57 +77,6 @@ def collect_ensemble_predictions(
         return pd.DataFrame()
 
     return pd.concat(all_preds, ignore_index=True)
-
-
-def collect_ensemble_metrics(
-    ensemble_dirs: list[Path],
-    logger: logging.Logger | None = None,
-) -> pd.DataFrame:
-    """
-    Collect metrics from ENSEMBLE model directories.
-
-    Args:
-        ensemble_dirs: List of ensemble split directories
-        logger: Optional logger instance
-
-    Returns:
-        DataFrame with ensemble metrics from all splits
-    """
-    all_metrics = []
-
-    for ensemble_dir in ensemble_dirs:
-        # Extract seed from directory name
-        seed = int(ensemble_dir.name.replace("split_seed", ""))
-
-        # Try JSON metrics first (ENSEMBLE uses JSON format)
-        metrics_path = ensemble_dir / "core" / "metrics.json"
-        if metrics_path.exists():
-            try:
-                with open(metrics_path) as f:
-                    metrics_data = json.load(f)
-
-                # Flatten nested test/val metrics into a single row
-                row = {"split_seed": seed, "model": "ENSEMBLE"}
-
-                # Extract test metrics
-                if "test" in metrics_data:
-                    for key, value in metrics_data["test"].items():
-                        row[f"test_{key}"] = value
-
-                # Extract val metrics
-                if "val" in metrics_data:
-                    for key, value in metrics_data["val"].items():
-                        row[f"val_{key}"] = value
-
-                all_metrics.append(row)
-            except Exception as e:
-                if logger:
-                    logger.warning(f"Failed to read ensemble metrics from {metrics_path}: {e}")
-
-    if not all_metrics:
-        return pd.DataFrame()
-
-    return pd.DataFrame(all_metrics)
 
 
 def collect_metrics(
@@ -156,7 +107,7 @@ def collect_metrics(
             continue
 
         try:
-            df = pd.read_csv(metrics_path)
+            df = read_metrics(metrics_path)
             df["split_seed"] = seed
             all_metrics.append(df)
             if logger:
@@ -378,7 +329,7 @@ def collect_predictions(
 
         for csv_path in csv_files:
             try:
-                df = pd.read_csv(csv_path)
+                df = read_predictions(csv_path)
                 df["split_seed"] = seed
                 df["source_file"] = csv_path.name
 
@@ -436,7 +387,7 @@ def collect_feature_reports(
 
         for csv_path in csv_files:
             try:
-                df = pd.read_csv(csv_path)
+                df = read_feature_report(csv_path)
                 df["split_seed"] = seed
                 all_reports.append(df)
             except Exception as e:

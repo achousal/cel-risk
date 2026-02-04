@@ -10,6 +10,7 @@ It handles:
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,11 +39,13 @@ from ced_ml.metrics import (
     top_risk_capture,
 )
 from ced_ml.models.calibration import (
-    adjust_probabilities_for_prevalence,
     calibration_intercept_slope,
     expected_calibration_error,
 )
+from ced_ml.models.prevalence import adjust_probabilities_for_prevalence
 from ced_ml.utils.math_utils import EPSILON_BOUNDS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,26 +105,18 @@ def load_model_artifact(path: str) -> dict[str, Any]:
     Returns:
         Dictionary containing model and metadata
 
-    Notes:
-        Handles backward compatibility with bare models (pre-bundle format).
-        If a bare PrevalenceAdjustedModel is loaded, wraps it in a minimal bundle.
+    Raises:
+        ValueError: If artifact is not in modern bundle format (dict)
     """
     artifact = joblib.load(path)
 
-    # Backward compatibility: if bare model, wrap in minimal bundle
+    # Require modern bundle format
     if not isinstance(artifact, dict):
-
-        # Assume it's a bare PrevalenceAdjustedModel
-        return {
-            "model": artifact,
-            "scenario": "IncidentOnly",  # default fallback
-            "model_name": "unknown",
-            "thresholds": {},
-            "prevalence": {},
-            "calibration": {},
-            "config": {},
-            "seed": 0,
-        }
+        raise ValueError(
+            f"Model artifact at {path} is in legacy format (bare model). "
+            "Modern bundle format (dict) is required. "
+            "Please retrain the model with current training pipeline."
+        )
 
     return artifact
 
@@ -256,7 +251,8 @@ def compute_holdout_metrics(
     for key, val in ctrl_specs.items():
         try:
             thr_val = float(val)
-        except Exception:
+        except (ValueError, TypeError) as e:
+            logger.debug("Skipping invalid threshold '%s': %s", val, e)
             continue
         m_ctrl = binary_metrics_at_threshold(y_true, proba_eval, thr_val)
         tag = str(key).replace("0.", "")
@@ -424,21 +420,20 @@ def evaluate_holdout(
     df_filtered["y"] = (df_filtered[TARGET_COL] == positive_label).astype(int)
     y_all = df_filtered["y"].to_numpy()
 
-    # Extract resolved columns from bundle (preferred) or fallback to config
+    # Extract resolved columns from bundle
     # The model was trained with: protein_cols + numeric_metadata + categorical_metadata
-    resolved_cols = bundle.get("resolved_columns", {})
-    if resolved_cols:
-        # Use resolved columns from training (C6 fix + protein validation)
-        prot_cols = resolved_cols.get("protein_cols", [])
-        numeric_metadata = resolved_cols.get("numeric_metadata", [])
-        categorical_metadata = resolved_cols.get("categorical_metadata", [])
-    else:
-        # Fallback to config (legacy bundles) - discover protein cols from data
-        prot_cols = identify_protein_columns(df_filtered)
-        bundle_config = bundle.get("config", {})
-        columns_config = bundle_config.get("columns", {})
-        numeric_metadata = columns_config.get("numeric_metadata", [])
-        categorical_metadata = columns_config.get("categorical_metadata", [])
+    resolved_cols = bundle.get("resolved_columns")
+    if not resolved_cols:
+        raise ValueError(
+            f"Model artifact at {model_artifact_path} is missing 'resolved_columns' metadata. "
+            "This indicates an old bundle format. "
+            "Please retrain the model with current training pipeline."
+        )
+
+    # Use resolved columns from training (C6 fix + protein validation)
+    prot_cols = resolved_cols.get("protein_cols", [])
+    numeric_metadata = resolved_cols.get("numeric_metadata", [])
+    categorical_metadata = resolved_cols.get("categorical_metadata", [])
 
     # Validate that holdout data contains all required protein columns
     holdout_prot_cols = set(identify_protein_columns(df_filtered))

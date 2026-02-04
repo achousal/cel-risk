@@ -5,7 +5,17 @@ Shared pytest fixtures for CeD-ML tests.
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
+from ced_ml.data.schema import (
+    CED_DATE_COL,
+    CONTROL_LABEL,
+    ID_COL,
+    INCIDENT_LABEL,
+    PREVALENT_LABEL,
+    TARGET_COL,
+)
+from sklearn.datasets import make_classification
 
 
 @pytest.fixture
@@ -213,3 +223,367 @@ def make_mock_config(**overrides):
             config_dict[key] = value
 
     return SimpleNamespace(**config_dict)
+
+
+@pytest.fixture(autouse=True)
+def set_results_env(tmp_path, monkeypatch):
+    """
+    Point CED_RESULTS_DIR to tmp_path/results for E2E tests.
+
+    Automatically applied to all tests. Ensures E2E tests write to isolated
+    temporary directories and do not interfere with actual results directory.
+
+    Used by:
+    - test_e2e_temporal_workflows.py
+    - test_e2e_fixed_panel_workflows.py
+    - test_e2e_multi_model_workflows.py
+    - test_e2e_run_id_workflows.py
+    - test_e2e_output_structure.py
+    - test_e2e_calibration_workflows.py
+    """
+    monkeypatch.setenv("CED_RESULTS_DIR", str(tmp_path / "results"))
+
+
+@pytest.fixture
+def toy_data():
+    """
+    Generate toy classification data for quick training tests.
+
+    Creates a simple binary classification dataset using sklearn's
+    make_classification with reproducible random state.
+
+    Returns:
+        tuple: (X, y) where X is feature array and y is label array
+
+    Used by:
+    - test_models_stacking.py
+    - test_models_optuna_multiobjective.py (imports from make_classification directly)
+    """
+    X, y = make_classification(
+        n_samples=200,
+        n_features=10,
+        n_informative=5,
+        n_redundant=2,
+        n_classes=2,
+        weights=[0.7, 0.3],
+        random_state=42,
+    )
+    return X, y
+
+
+@pytest.fixture
+def toy_data_screening():
+    """
+    Generate toy data optimized for feature screening tests.
+
+    Small dataset with clear signal in first 5 proteins for screening tests.
+    Returns DataFrame with protein column naming convention.
+
+    Returns:
+        tuple: (X, y, protein_cols) where:
+            - X: DataFrame with n_proteins columns (prot_{i}_resid naming)
+            - y: binary labels array
+            - protein_cols: list of protein column names
+
+    Used by:
+    - features/test_screening_fold_count.py
+    """
+    rng = np.random.default_rng(42)
+    n = 200
+    n_proteins = 30
+    y = np.array([0] * 170 + [1] * 30)
+    X = pd.DataFrame(
+        rng.normal(0, 1, (n, n_proteins)),
+        columns=[f"prot_{i}_resid" for i in range(n_proteins)],
+    )
+    # Inject signal in first 5 proteins
+    X.iloc[170:, :5] += 2.0
+    protein_cols = list(X.columns)
+    return X, y, protein_cols
+
+
+@pytest.fixture
+def toy_data_training():
+    """
+    Generate toy data for training module tests with demographics.
+
+    Small dataset with protein features + demographics (age, sex).
+    Imbalanced labels (10% positive) to simulate CeD prevalence.
+
+    Returns:
+        tuple: (X, y) where:
+            - X: DataFrame with protein columns + age + sex
+            - y: binary labels array (imbalanced 10% positive)
+
+    Used by:
+    - test_training.py
+    """
+    rng = np.random.default_rng(42)
+    n_samples = 100
+    n_proteins = 20
+
+    X = pd.DataFrame(
+        rng.standard_normal((n_samples, n_proteins)),
+        columns=[f"prot_{i}_resid" for i in range(n_proteins)],
+    )
+    # Add demographics
+    X["age"] = rng.uniform(20, 80, n_samples)
+    X["sex"] = rng.choice(["M", "F"], n_samples)
+
+    # Imbalanced labels (10% positive)
+    y = rng.binomial(1, 0.1, n_samples)
+
+    return X, y
+
+
+@pytest.fixture
+def sample_data_filters():
+    """
+    Create sample data with various filtering scenarios.
+
+    Dataset designed to test data filtering logic including:
+    - Normal controls
+    - Uncertain controls (controls with CeD_date)
+    - Missing metadata (age, BMI)
+    - Incident cases
+    - Prevalent cases
+
+    Returns:
+        DataFrame with ID, Target, CeD_date, age, BMI columns
+
+    Used by:
+    - test_data_filters.py
+    """
+    return pd.DataFrame(
+        {
+            ID_COL: range(10),
+            TARGET_COL: [
+                CONTROL_LABEL,  # 0: Normal control
+                CONTROL_LABEL,  # 1: Uncertain control (has CeD_date)
+                CONTROL_LABEL,  # 2: Control with missing age
+                CONTROL_LABEL,  # 3: Control with missing BMI
+                INCIDENT_LABEL,  # 4: Normal incident
+                INCIDENT_LABEL,  # 5: Incident with missing age
+                PREVALENT_LABEL,  # 6: Normal prevalent
+                PREVALENT_LABEL,  # 7: Prevalent with CeD_date (expected)
+                CONTROL_LABEL,  # 8: Normal control
+                CONTROL_LABEL,  # 9: Uncertain control with missing metadata
+            ],
+            CED_DATE_COL: [
+                None,  # 0: No date (normal control)
+                "2020-01-01",  # 1: Uncertain control
+                None,  # 2
+                None,  # 3
+                "2021-05-15",  # 4: Normal incident
+                "2021-08-20",  # 5
+                "2019-03-10",  # 6: Normal prevalent
+                "2018-11-22",  # 7: Normal prevalent
+                None,  # 8: Normal control
+                "2022-02-14",  # 9: Uncertain control
+            ],
+            "age": [45, 50, None, 55, 60, None, 65, 70, 75, None],
+            "BMI": [22.5, 25.0, 27.5, None, 30.0, 32.5, 35.0, 37.5, 40.0, 42.5],
+        }
+    )
+
+
+@pytest.fixture
+def sample_data_screening():
+    """
+    Generate sample data for screening cache tests.
+
+    Simple dataset with generic protein naming (protein_{i} not _resid suffix).
+
+    Returns:
+        tuple: (X, y, protein_cols) where:
+            - X: DataFrame with protein columns
+            - y: binary labels (80/20 split)
+            - protein_cols: list of protein column names
+
+    Used by:
+    - features/test_screening_cache.py
+    """
+    rng = np.random.default_rng(42)
+    n_samples = 100
+    n_proteins = 50
+
+    # Create DataFrame with protein columns
+    X = pd.DataFrame(
+        rng.normal(0, 1, (n_samples, n_proteins)),
+        columns=[f"protein_{i}" for i in range(n_proteins)],
+    )
+
+    # Create binary labels
+    y = rng.choice([0, 1], size=n_samples, p=[0.8, 0.2])
+
+    protein_cols = list(X.columns)
+
+    return X, y, protein_cols
+
+
+@pytest.fixture
+def sample_data_nested_rfe():
+    """
+    Generate sample classification data for nested RFE testing.
+
+    Uses sklearn make_classification with meaningful class separation.
+
+    Returns:
+        tuple: (X_df, y, feature_names) where:
+            - X_df: DataFrame with protein_{i} columns
+            - y: binary labels array
+            - feature_names: list of feature names
+
+    Used by:
+    - features/test_nested_rfe.py
+    """
+    X, y = make_classification(
+        n_samples=200,
+        n_features=50,
+        n_informative=10,
+        n_redundant=5,
+        n_classes=2,
+        random_state=42,
+        class_sep=1.0,
+    )
+    feature_names = [f"protein_{i}" for i in range(50)]
+    X_df = pd.DataFrame(X, columns=feature_names)
+    return X_df, y, feature_names
+
+
+@pytest.fixture
+def temporal_proteomics_data_e2e(tmp_path):
+    """
+    Create proteomics dataset with temporal dimension for E2E temporal testing.
+
+    150 samples: 130 controls, 12 incident, 8 prevalent.
+    Samples span 4 time points (years) with random date distribution.
+    Ensures sufficient samples in each temporal split for validation.
+
+    Returns:
+        DataFrame with sample_date, Target, and protein columns
+
+    Used by:
+    - test_e2e_temporal_workflows.py
+
+    Notes:
+        Uses random date offsets (not sequential) to avoid all cases
+        ending up in the test set during temporal splitting.
+    """
+    rng = np.random.default_rng(42)
+
+    n_controls = 130
+    n_incident = 12
+    n_prevalent = 8
+    n_total = n_controls + n_incident + n_prevalent
+    n_proteins = 10
+
+    labels = (
+        [CONTROL_LABEL] * n_controls
+        + [INCIDENT_LABEL] * n_incident
+        + [PREVALENT_LABEL] * n_prevalent
+    )
+
+    # Create temporal dimension: distribute cases across time
+    # This ensures temporal splits have cases in train/val/test
+    base_date = pd.Timestamp("2020-01-01")
+
+    # Generate random dates uniformly across ~4 years
+    # CRITICAL: Use random dates (not sequential by index) to avoid all cases
+    # ending up in test set
+    days_offsets = rng.integers(0, 1460, n_total)  # Random day within 4 years
+    sample_dates = [base_date + pd.Timedelta(days=int(d)) for d in days_offsets]
+
+    # Create proteomics data
+    protein_data = pd.DataFrame(
+        rng.normal(0, 1, (n_total, n_proteins)),
+        columns=[f"prot_{i}_resid" for i in range(n_proteins)],
+    )
+
+    df = pd.DataFrame(
+        {
+            "sample_date": sample_dates,
+            TARGET_COL: labels,
+        }
+    )
+
+    # Merge proteomics
+    df = pd.concat([df, protein_data], axis=1)
+
+    return df
+
+
+@pytest.fixture
+def temporal_proteomics_data_runner(tmp_path):
+    """
+    Create proteomics dataset with temporal component for runner testing.
+
+    200 samples with sample_date spanning 2020-2023.
+    Interleaved labels so incident/prevalent cases are distributed across timeline.
+    Temporal split uses chronological ordering.
+
+    Returns:
+        DataFrame with sample_date, Target, and protein columns
+
+    Used by:
+    - test_e2e_runner.py
+
+    Notes:
+        Larger dataset (200 samples) with explicit label interleaving pattern
+        to ensure cases appear in all temporal windows.
+    """
+    rng = np.random.default_rng(42)
+
+    n_controls = 150
+    n_incident = 30
+    n_prevalent = 20
+    n_total = n_controls + n_incident + n_prevalent
+    n_proteins = 15
+
+    # Interleave labels so incident/prevalent cases are distributed across timeline
+    # (temporal splits need cases in all time windows)
+    labels = []
+    ctrl_idx, inc_idx, prev_idx = 0, 0, 0
+    for i in range(n_total):
+        if i % 6 == 1 and inc_idx < n_incident:
+            labels.append(INCIDENT_LABEL)
+            inc_idx += 1
+        elif i % 10 == 9 and prev_idx < n_prevalent:
+            labels.append(PREVALENT_LABEL)
+            prev_idx += 1
+        elif ctrl_idx < n_controls:
+            labels.append(CONTROL_LABEL)
+            ctrl_idx += 1
+        elif inc_idx < n_incident:
+            labels.append(INCIDENT_LABEL)
+            inc_idx += 1
+        else:
+            labels.append(PREVALENT_LABEL)
+            prev_idx += 1
+
+    # Generate dates spanning 2020-2023
+    base_date = pd.Timestamp("2020-01-01")
+    end_date = pd.Timestamp("2023-12-31")
+    date_range_days = (end_date - base_date).days
+
+    # Random dates across range
+    days_offsets = rng.integers(0, date_range_days, n_total)
+    sample_dates = [base_date + pd.Timedelta(days=int(d)) for d in days_offsets]
+
+    # Create proteomics data
+    protein_data = pd.DataFrame(
+        rng.normal(0, 1, (n_total, n_proteins)),
+        columns=[f"prot_{i}_resid" for i in range(n_proteins)],
+    )
+
+    df = pd.DataFrame(
+        {
+            "sample_date": sample_dates,
+            TARGET_COL: labels,
+        }
+    )
+
+    # Merge proteomics
+    df = pd.concat([df, protein_data], axis=1)
+
+    return df

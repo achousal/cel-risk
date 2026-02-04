@@ -67,7 +67,7 @@ def test_discover_all_models(mock_results_structure):
     """Test discovering all models with aggregated results for a run_id."""
     discovered = discover_models_by_run_id(
         run_id="20260127_115115",
-        results_root=mock_results_structure,
+        results_dir=mock_results_structure,
     )
 
     # Should find LR_EN and RF, but exclude ENSEMBLE and XGBoost (no aggregated)
@@ -89,7 +89,7 @@ def test_discover_with_model_filter(mock_results_structure):
     """Test discovering models with a filter."""
     discovered = discover_models_by_run_id(
         run_id="20260127_115115",
-        results_root=mock_results_structure,
+        results_dir=mock_results_structure,
         model_filter="LR_EN",
     )
 
@@ -103,7 +103,7 @@ def test_discover_nonexistent_run_id(mock_results_structure):
     """Test discovering with a run_id that doesn't exist."""
     discovered = discover_models_by_run_id(
         run_id="99999999_999999",
-        results_root=mock_results_structure,
+        results_dir=mock_results_structure,
     )
 
     assert len(discovered) == 0
@@ -113,19 +113,19 @@ def test_discover_run_id_without_aggregation(mock_results_structure):
     """Test discovering run_id where no models have aggregated results."""
     discovered = discover_models_by_run_id(
         run_id="20260127_120000",
-        results_root=mock_results_structure,
+        results_dir=mock_results_structure,
     )
 
     # Only LR_EN has this run_id, but it has no aggregated dir
     assert len(discovered) == 0
 
 
-def test_discover_invalid_results_root():
-    """Test error handling for nonexistent results root."""
-    with pytest.raises(FileNotFoundError, match="Results root not found"):
+def test_discover_invalid_results_dir():
+    """Test error handling for nonexistent results directory."""
+    with pytest.raises(FileNotFoundError, match="Results directory not found"):
         discover_models_by_run_id(
             run_id="20260127_115115",
-            results_root="/nonexistent/path",
+            results_dir="/nonexistent/path",
         )
 
 
@@ -136,7 +136,7 @@ def test_discover_empty_results_root(tmp_path):
 
     discovered = discover_models_by_run_id(
         run_id="20260127_115115",
-        results_root=empty_results,
+        results_dir=empty_results,
     )
 
     assert len(discovered) == 0
@@ -163,7 +163,7 @@ def test_discover_with_partial_structure(tmp_path):
 
     discovered = discover_models_by_run_id(
         run_id="20260127_115115",
-        results_root=results_root,
+        results_dir=results_root,
     )
 
     # Only Model3 should be discovered (has required feature stability file)
@@ -177,7 +177,7 @@ def test_discover_case_sensitive_model_filter(mock_results_structure):
     """Test that model filter is case-sensitive."""
     discovered = discover_models_by_run_id(
         run_id="20260127_115115",
-        results_root=mock_results_structure,
+        results_dir=mock_results_structure,
         model_filter="lr_en",  # lowercase
     )
 

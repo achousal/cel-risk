@@ -83,5 +83,5 @@ def configure_backend() -> None:
 
     try:
         matplotlib.use("Agg")
-    except Exception:
+    except ImportError:
         logger.debug("Could not set matplotlib backend to Agg")

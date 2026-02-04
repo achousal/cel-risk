@@ -3,19 +3,17 @@
 This module provides:
 - Model instantiation (RF, XGBoost, LinSVM, LogisticRegression)
 - Hyperparameter grid generation for RandomizedSearchCV
-- sklearn version compatibility handling
 
 References:
-- scikit-learn 1.8+ deprecates penalty= in LogisticRegression (use l1_ratio=)
 - XGBoost tree_method controls CPU vs GPU acceleration
 """
 
 import logging
 import re
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import numpy as np
-import sklearn
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -37,53 +35,45 @@ except (ImportError, Exception):
 
 
 # ----------------------------
-# sklearn version compatibility
-# ----------------------------
-def _sklearn_version_tuple(ver: str) -> tuple[int, int, int]:
-    """Parse sklearn version string (robust to rc/dev suffixes)."""
-    nums = re.findall(r"\d+", ver)
-    nums = (nums + ["0", "0", "0"])[:3]
-    return (int(nums[0]), int(nums[1]), int(nums[2]))
-
-
-SKLEARN_VER = _sklearn_version_tuple(getattr(sklearn, "__version__", "0.0.0"))
-
-
-# ----------------------------
 # Parameter grid utilities
 # ----------------------------
-def _parse_float_list(s: str) -> list[float]:
-    """Parse comma-separated float values."""
+T = TypeVar("T")
+
+
+def _parse_list(s: str, cast_fn: Callable[[str], T], type_name: str) -> list[T]:
+    """Parse comma-separated values with specified type casting.
+
+    Args:
+        s: Comma-separated string to parse.
+        cast_fn: Function to cast each token (e.g., float, int).
+        type_name: Type name for debug logging.
+
+    Returns:
+        List of parsed values; invalid tokens are skipped with debug logging.
+    """
     if not s:
         return []
-    out = []
+    out: list[T] = []
     for tok in str(s).split(","):
         tok = tok.strip()
         if not tok:
             continue
         try:
-            out.append(float(tok))
-        except Exception:
-            logger.debug(f"Failed to parse '{tok}' as float; skipping token.")
+            out.append(cast_fn(tok))
+        except (ValueError, TypeError):
+            logger.debug(f"Failed to parse '{tok}' as {type_name}; skipping token.")
             continue
     return out
+
+
+def _parse_float_list(s: str) -> list[float]:
+    """Parse comma-separated float values."""
+    return _parse_list(s, float, "float")
 
 
 def _parse_int_list(s: str) -> list[int]:
     """Parse comma-separated integer values."""
-    if not s:
-        return []
-    out = []
-    for x in str(s).split(","):
-        x = x.strip()
-        if not x:
-            continue
-        try:
-            out.append(int(x))
-        except Exception:
-            logger.debug(f"Failed to parse '{x}' as int; skipping token.")
-            continue
-    return out
+    return _parse_list(s, int, "int")
 
 
 def _require_int_list(s: str, name: str) -> list[int]:
@@ -115,12 +105,12 @@ def _parse_none_int_float_list(s: str) -> list:
             if re.match(r"^[+-]?\d+$", tok):
                 out.append(int(tok))
                 continue
-        except Exception:
+        except (ValueError, TypeError):
             logger.debug(f"Failed to parse '{tok}' as int via regex; will try float.")
         try:
             out.append(float(tok))
             continue
-        except Exception:
+        except (ValueError, TypeError):
             logger.debug(f"Failed to parse '{tok}' as float; keeping as string.")
             out.append(tok)
     return out
@@ -160,14 +150,14 @@ def _coerce_int_or_none_list(vals: list[Any], *, name: str) -> list[Any]:
             try:
                 out.append(int(vv))
                 continue
-            except Exception:
+            except (ValueError, TypeError):
                 logger.debug(f"{name}: failed to parse '{v}' as int; will try float.")
             try:
                 fv = float(vv)
                 if float(fv).is_integer():
                     out.append(int(fv))
                     continue
-            except Exception:
+            except (ValueError, TypeError):
                 logger.debug(f"{name}: failed to parse '{v}' as float.")
                 pass
             raise ValueError(f"{name}: expected int or None, got '{v}'")
@@ -214,7 +204,7 @@ def _coerce_min_samples_leaf_list(
                     raise ValueError(f"{name}: int must be >= 1, got {iv}")
                 out.append(iv)
                 continue
-            except Exception:
+            except (ValueError, TypeError):
                 logger.debug(f"{name}: failed to parse '{v}' as int; will try float.")
             try:
                 fv = float(vv)
@@ -227,7 +217,7 @@ def _coerce_min_samples_leaf_list(
                         raise ValueError(f"{name}: int must be >= 1, got {iv}")
                     out.append(iv)
                     continue
-            except Exception:
+            except (ValueError, TypeError):
                 logger.debug(f"{name}: failed to parse '{v}' as float.")
                 pass
             raise ValueError(f"{name}: could not parse '{v}' as int>=1 or float in (0,1)")
@@ -332,9 +322,8 @@ def build_logistic_regression(
     tol: float = 1e-4,
     random_state: int = 42,
     l1_ratio: float = 0.5,
-    penalty: str = "elasticnet",
 ) -> LogisticRegression:
-    """Build Logistic Regression estimator (sklearn 1.8+ compatible).
+    """Build Logistic Regression estimator.
 
     Args:
         solver: Optimization algorithm
@@ -343,24 +332,18 @@ def build_logistic_regression(
         tol: Convergence tolerance
         random_state: Random seed
         l1_ratio: ElasticNet mixing (0=L2, 1=L1)
-        penalty: Penalty type (ignored in sklearn >=1.8)
 
     Returns:
         Configured LogisticRegression estimator
     """
-    lr_common = {
-        "solver": solver,
-        "C": C,
-        "max_iter": int(max_iter),
-        "tol": float(tol),
-        "random_state": int(random_state),
-    }
-
-    # sklearn >=1.8 deprecates penalty=, uses l1_ratio
-    if SKLEARN_VER >= (1, 8, 0):
-        return LogisticRegression(l1_ratio=l1_ratio, **lr_common)
-    else:
-        return LogisticRegression(penalty=penalty, l1_ratio=l1_ratio, **lr_common)
+    return LogisticRegression(
+        solver=solver,
+        C=C,
+        l1_ratio=l1_ratio,
+        max_iter=int(max_iter),
+        tol=float(tol),
+        random_state=int(random_state),
+    )
 
 
 def build_linear_svm_calibrated(
@@ -432,7 +415,7 @@ def build_random_forest(
         try:
             v = float(max_samples)
             rf_kwargs["max_samples"] = int(v) if v.is_integer() else float(v)
-        except Exception:
+        except (ValueError, TypeError):
             logger.warning(
                 f"Failed to parse max_samples={max_samples}; omitting from RandomForestClassifier kwargs.",
                 exc_info=True,
@@ -530,7 +513,6 @@ def build_models(
             tol=1e-4,  # LRConfig doesn't have tol field
             random_state=random_state,
             l1_ratio=0.5,
-            penalty="elasticnet",
         )
 
     elif model_name == ModelName.LR_L1:
@@ -541,7 +523,6 @@ def build_models(
             tol=1e-4,  # LRConfig doesn't have tol field
             random_state=random_state,
             l1_ratio=1.0,
-            penalty="l1",
         )
 
     elif model_name == ModelName.LinSVM_cal:

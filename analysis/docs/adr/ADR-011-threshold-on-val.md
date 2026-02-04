@@ -15,15 +15,6 @@ TEST remains held-out for unbiased final evaluation.
 - TEST: Must remain completely held-out
 - Threshold on TEST → optimistic bias (leakage)
 
-## Alternatives
-
-| Alternative | Rejected Because |
-|-------------|------------------|
-| Threshold on TEST | Optimistic bias (tuned to TEST) |
-| Threshold on TRAIN (OOF) | TRAIN overfitted, may not generalize |
-| Fixed threshold (0.5) | Arbitrary, ignores imbalance/costs |
-| Nested threshold (inner CV) | Couples threshold to hyperparameters |
-
 ## Consequences
 
 | Positive | Negative |

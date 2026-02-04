@@ -14,27 +14,15 @@ from ced_ml.features.nested_rfe import (
     run_rfecv_within_fold,
     save_nested_rfecv_results,
 )
-from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 
 
 @pytest.fixture
-def sample_data():
-    """Generate sample classification data for testing."""
-    X, y = make_classification(
-        n_samples=200,
-        n_features=50,
-        n_informative=10,
-        n_redundant=5,
-        n_classes=2,
-        random_state=42,
-        class_sep=1.0,
-    )
-    feature_names = [f"protein_{i}" for i in range(50)]
-    X_df = pd.DataFrame(X, columns=feature_names)
-    return X_df, y, feature_names
+def sample_data(sample_data_nested_rfe):
+    """Alias for sample_data_nested_rfe from conftest for backward compatibility."""
+    return sample_data_nested_rfe
 
 
 @pytest.fixture

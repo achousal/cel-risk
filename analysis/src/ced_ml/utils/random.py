@@ -20,57 +20,23 @@ Parameter names for random state vary by context:
   Used when passing explicit RandomState objects between functions.
   Prefer this over global seeding for isolated reproducibility.
   Examples: create_rng(seed) -> rng, then pass rng to worker functions.
-
-Migration Path
---------------
-The global seeding function set_random_seed() is deprecated.
-New code should use create_rng() to create isolated RNG instances.
-Existing CLI callers are preserved for backward compatibility during migration.
 """
 
 import logging
 import os
 import random
-import warnings
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def set_random_seed(seed: int):
-    """
-    Set random seed for all libraries.
-
-    .. deprecated:: 2026-01-31
-        This function uses global RNG state and is deprecated.
-        Use create_rng(seed) to create isolated np.random.RandomState instances instead.
-        Global seeding prevents reproducibility in parallel/concurrent contexts.
-
-    Args:
-        seed: Random seed value
-    """
-    warnings.warn(
-        "set_random_seed() is deprecated and will be removed in a future version. "
-        "Use create_rng(seed) to create an isolated np.random.RandomState instance instead. "
-        "Global seeding via np.random.seed() prevents reproducibility in concurrent contexts.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    random.seed(seed)
-    np.random.seed(seed)
-
-    # Sklearn doesn't have global seed, use random_state parameter
-    # XGBoost uses numpy's random state
-
-
 def create_rng(seed: int) -> np.random.RandomState:
     """
     Create an isolated NumPy RandomState instance.
 
-    Prefer this over set_random_seed() for new code. Isolated RNG instances
-    provide reproducibility without global state side effects, making code
-    safe for parallel execution and easier to test.
+    Isolated RNG instances provide reproducibility without global state side
+    effects, making code safe for parallel execution and easier to test.
 
     Args:
         seed: Random seed value (must be in range [0, 2^32-1])
@@ -141,7 +107,8 @@ def apply_seed_global() -> int | None:
         )
         return None
 
-    set_random_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
     logger.info("SEED_GLOBAL=%d applied (global RNG seeded for reproducibility).", seed)
     return seed
 

@@ -8,7 +8,6 @@ Features:
 - Compatible sklearn interface (best_estimator_, best_params_, best_score_, cv_results_)
 - Supports TPE, Random, CMA-ES, and Grid samplers
 - Supports Median, Percentile, and Hyperband pruners
-- Graceful fallback when optuna is not installed
 """
 
 from __future__ import annotations
@@ -18,40 +17,25 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import numpy as np
+import optuna
 from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
+from .optuna_callbacks import (
+    check_tpe_hyperband_trials,
+    create_trial_callback,
+    log_optimization_summary,
+    validate_study_compatibility,
+)
+from .optuna_utils import (
+    create_pruner,
+    create_sampler,
+    get_optimization_directions,
+    select_from_pareto_frontier,
+    suggest_params,
+)
+
 logger = logging.getLogger(__name__)
-
-# Default seed used when neither sampler_seed nor random_state is provided.
-# Named constant to avoid magic number and make the behavior explicit.
-_DEFAULT_SEED_FALLBACK = 0
-
-# Attempt optuna import with graceful fallback
-_OPTUNA_AVAILABLE = False
-try:
-    import optuna
-    from optuna.pruners import (
-        HyperbandPruner,
-        MedianPruner,
-        NopPruner,
-        PercentilePruner,
-    )
-    from optuna.samplers import (
-        CmaEsSampler,
-        GridSampler,
-        RandomSampler,
-        TPESampler,
-    )
-
-    _OPTUNA_AVAILABLE = True
-except ImportError:
-    optuna = None  # type: ignore[assignment]
-
-
-def optuna_available() -> bool:
-    """Check if optuna is installed and available."""
-    return _OPTUNA_AVAILABLE
 
 
 class OptunaSearchCV(BaseEstimator):
@@ -163,9 +147,6 @@ class OptunaSearchCV(BaseEstimator):
         objectives: list[str] | None = None,
         pareto_selection: str = "knee",
     ):
-        if not optuna_available():
-            raise ImportError("Optuna is not installed. Install with: pip install optuna")
-
         self.estimator = estimator
         self.param_distributions = param_distributions
         self.n_trials = n_trials
@@ -205,117 +186,24 @@ class OptunaSearchCV(BaseEstimator):
 
     def _create_sampler(self) -> optuna.samplers.BaseSampler:
         """Create Optuna sampler based on configuration."""
-        # Determine seed with explicit precedence
-        if self.sampler_seed is not None:
-            seed = self.sampler_seed
-        elif self.random_state is not None:
-            seed = self.random_state
-        else:
-            seed = _DEFAULT_SEED_FALLBACK
-            logger.warning(
-                "Both sampler_seed and random_state are None. "
-                "Defaulting to seed=%d for determinism. "
-                "Consider setting random_state explicitly for reproducibility.",
-                _DEFAULT_SEED_FALLBACK,
-            )
-
-        if self.sampler == "tpe":
-            return TPESampler(seed=seed)
-        elif self.sampler == "random":
-            return RandomSampler(seed=seed)
-        elif self.sampler == "cmaes":
-            return CmaEsSampler(seed=seed)
-        elif self.sampler == "grid":
-            # Grid sampler requires explicit search space
-            search_space = self._build_grid_search_space()
-            return GridSampler(search_space, seed=seed)
-        else:
-            raise ValueError(f"Unknown sampler: {self.sampler}")
-
-    def _build_grid_search_space(self) -> dict[str, list]:
-        """Build search space for GridSampler from param_distributions."""
-        search_space = {}
-        for name, spec in self.param_distributions.items():
-            if spec.get("type") == "categorical":
-                search_space[name] = spec["choices"]
-            elif spec.get("type") in ("int", "float"):
-                # Create a small grid for continuous params
-                low, high = spec["low"], spec["high"]
-                if spec.get("log", False):
-                    if low <= 0:
-                        raise ValueError(
-                            f"Cannot use log scale for param {name}: low={low} must be > 0"
-                        )
-                    values = np.logspace(np.log10(low), np.log10(high), num=5).tolist()
-                else:
-                    values = np.linspace(low, high, num=5).tolist()
-                if spec["type"] == "int":
-                    values = sorted({int(v) for v in values})
-                search_space[name] = values
-            else:
-                raise ValueError(f"Cannot build grid for param {name}: {spec}")
-        return search_space
+        return create_sampler(
+            self.sampler,
+            self.sampler_seed,
+            self.random_state,
+            self.param_distributions,
+        )
 
     def _create_pruner(self) -> optuna.pruners.BasePruner:
         """Create Optuna pruner based on configuration."""
-        if self.pruner == "median":
-            return MedianPruner(n_startup_trials=self.pruner_n_startup_trials)
-        elif self.pruner == "percentile":
-            return PercentilePruner(
-                percentile=self.pruner_percentile,
-                n_startup_trials=self.pruner_n_startup_trials,
-            )
-        elif self.pruner == "hyperband":
-            return HyperbandPruner()
-        elif self.pruner == "none":
-            return NopPruner()
-        else:
-            raise ValueError(f"Unknown pruner: {self.pruner}")
+        return create_pruner(
+            self.pruner,
+            self.pruner_n_startup_trials,
+            self.pruner_percentile,
+        )
 
     def _suggest_params(self, trial: optuna.Trial) -> dict[str, Any]:
         """Suggest hyperparameters for a trial based on param_distributions."""
-        params = {}
-        for name, spec in self.param_distributions.items():
-            param_type = spec.get("type", "categorical")
-
-            if param_type == "int":
-                params[name] = trial.suggest_int(
-                    name,
-                    spec["low"],
-                    spec["high"],
-                    log=spec.get("log", False),
-                )
-            elif param_type == "float":
-                params[name] = trial.suggest_float(
-                    name,
-                    spec["low"],
-                    spec["high"],
-                    log=spec.get("log", False),
-                )
-            elif param_type == "categorical":
-                # Handle unhashable types (dicts) by converting to/from tuples
-                choices = spec["choices"]
-                hashable_choices = []
-                for choice in choices:
-                    if isinstance(choice, dict):
-                        # Convert dict to tuple of tuples for hashing
-                        hashable_choices.append(tuple(sorted(choice.items())))
-                    else:
-                        hashable_choices.append(choice)
-
-                suggested = trial.suggest_categorical(name, hashable_choices)
-
-                # Convert back to dict if needed
-                if isinstance(suggested, tuple) and all(
-                    isinstance(item, tuple) and len(item) == 2 for item in suggested
-                ):
-                    params[name] = dict(suggested)
-                else:
-                    params[name] = suggested
-            else:
-                raise ValueError(f"Unknown param type for {name}: {param_type}")
-
-        return params
+        return suggest_params(trial, self.param_distributions)
 
     def fit(self, X, y, **fit_params) -> OptunaSearchCV:  # noqa: ARG002
         """
@@ -356,12 +244,7 @@ class OptunaSearchCV(BaseEstimator):
         pruner = self._create_pruner()
 
         # Warn about TPE + Hyperband needing sufficient trials for startup
-        if self.sampler == "tpe" and self.pruner == "hyperband" and self.n_trials < 40:
-            logger.warning(
-                f"[optuna] TPE sampler with HyperbandPruner typically needs 40+ trials "
-                f"for effective optimization (n_trials={self.n_trials}). "
-                "Consider increasing n_trials or using sampler='random' for fewer trials."
-            )
+        check_tpe_hyperband_trials(self.sampler, self.pruner, self.n_trials)
 
         # Set optuna verbosity
         if self.verbose == 0:
@@ -373,7 +256,7 @@ class OptunaSearchCV(BaseEstimator):
 
         # Create or load study (multi-objective or single-objective)
         if self.multi_objective:
-            directions = self._get_directions()
+            directions = get_optimization_directions(self.objectives)
             self.study_ = optuna.create_study(
                 study_name=self.study_name,
                 storage=self.storage,
@@ -393,31 +276,20 @@ class OptunaSearchCV(BaseEstimator):
             )
 
         # Validate existing study compatibility
-        if self.load_if_exists and len(self.study_.trials) > 0:
-            # Check if loaded study is multi-objective when we expect single-objective
-            study_is_multi = hasattr(self.study_, "directions")
-            if study_is_multi and not self.multi_objective:
-                raise ValueError(
-                    "[optuna] Incompatible study loaded: study is multi-objective but "
-                    "multi_objective=False was requested. Please use a different study_name, "
-                    "set load_if_exists=False, or delete the existing study database."
-                )
-            # Check if loaded study is single-objective when we expect multi-objective
-            if not study_is_multi and self.multi_objective:
-                raise ValueError(
-                    "[optuna] Incompatible study loaded: study is single-objective but "
-                    "multi_objective=True was requested. Please use a different study_name, "
-                    "set load_if_exists=False, or delete the existing study database."
-                )
-            # For single-objective, check direction compatibility
-            if not self.multi_objective and self.study_.direction.name.lower() != self.direction:
-                logger.warning(
-                    f"[optuna] Loaded study has direction={self.study_.direction.name.lower()}, "
-                    f"but requested direction={self.direction}. Using existing study's direction."
-                )
+        validate_study_compatibility(
+            self.study_,
+            self.multi_objective,
+            self.direction,
+            self.load_if_exists,
+        )
 
         # Create objective with CV splitter
         if self.multi_objective:
+            # Worst-case sentinel for failed trials. TrialPruned stores None
+            # values that crash Optuna TPE sampler (>=4.0) in
+            # _calculate_weights_below_for_multi_objective, so return explicit
+            # worst-case scores: AUROC=0.0 (worst), neg_brier=-1.0 (worst).
+            _WORST_MO: tuple[float, float] = (0.0, -1.0)
 
             def objective(trial: optuna.Trial) -> tuple[float, float]:
                 params = self._suggest_params(trial)
@@ -426,14 +298,14 @@ class OptunaSearchCV(BaseEstimator):
                     estimator.set_params(**params)
                 except ValueError as e:
                     logger.warning(f"[optuna] Invalid params {params}: {e}")
-                    raise optuna.TrialPruned() from e
+                    return _WORST_MO
 
                 try:
                     scores = self._multi_objective_cv_score(estimator, X_arr, y_arr, cv_splitter)
                     return scores
                 except Exception as e:
                     logger.warning(f"[optuna] CV failed for params {params}: {e}")
-                    raise optuna.TrialPruned() from e
+                    return _WORST_MO
 
         else:
 
@@ -465,23 +337,7 @@ class OptunaSearchCV(BaseEstimator):
             f"Hyperparameter search: {self.n_trials} trials (sampler={self.sampler}, pruner={self.pruner})"
         )
 
-        def trial_callback(study: optuna.Study, trial: optuna.Trial) -> None:
-            """Log progress every 10th trial."""
-            trial_number = trial.number + 1  # 1-indexed for logging
-
-            # Log every 10th trial
-            if trial_number % 10 == 0:
-                if trial.state == optuna.trial.TrialState.COMPLETE:
-                    if self.multi_objective:
-                        score_str = f"AUROC={trial.values[0]:.3f}, Brier={trial.values[1]:.3f}"
-                    else:
-                        score_str = f"score={trial.value:.3f}"
-
-                    # Format params concisely
-                    param_str = ", ".join([f"{k}={v}" for k, v in trial.params.items()])
-                    logger.info(
-                        f"  Trial {trial_number}/{self.n_trials}: {score_str}, params={{{param_str}}}"
-                    )
+        trial_callback_fn = create_trial_callback(self.n_trials, self.multi_objective)
 
         # Run optimization
         self.study_.optimize(
@@ -489,7 +345,7 @@ class OptunaSearchCV(BaseEstimator):
             n_trials=self.n_trials,
             timeout=self.timeout,
             show_progress_bar=self.verbose > 0,
-            callbacks=[trial_callback] if logger.isEnabledFor(logging.INFO) else None,
+            callbacks=[trial_callback_fn] if logger.isEnabledFor(logging.INFO) else None,
         )
 
         # Extract results
@@ -523,20 +379,7 @@ class OptunaSearchCV(BaseEstimator):
             self.best_estimator_.fit(X_arr, y_arr)
 
         # Log summary with hyperparameter importance
-        n_pruned = len([t for t in self.study_.trials if t.state == optuna.trial.TrialState.PRUNED])
-        logger.info(
-            f"  Completed {len(completed_trials)} trials ({n_pruned} pruned): best_score={self.best_score_:.3f}"
-        )
-
-        # Log hyperparameter importance if enough trials
-        if len(completed_trials) >= 20 and not self.multi_objective:
-            try:
-                importance = optuna.importance.get_param_importances(self.study_)
-                top_params = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:3]
-                importance_str = ", ".join([f"{k} ({v:.2f})" for k, v in top_params])
-                logger.info(f"  Top hyperparameter importance: {importance_str}")
-            except Exception:
-                pass  # Importance calculation may fail for some samplers
+        log_optimization_summary(self.study_, self.best_score_, self.multi_objective)
 
         return self
 
@@ -614,21 +457,6 @@ class OptunaSearchCV(BaseEstimator):
         if self.study_ is None:
             raise ValueError("Study not created. Call fit() first.")
         return self.study_.trials_dataframe()
-
-    def _get_directions(self) -> list[str]:
-        """Get optimization directions for each objective.
-
-        Returns
-        -------
-        list[str]
-            List of "maximize" or "minimize" for each objective.
-        """
-        direction_map = {
-            "roc_auc": "maximize",
-            "neg_brier_score": "maximize",  # Negative Brier, so maximize (minimize -Brier = maximize Brier reduction)
-            "average_precision": "maximize",
-        }
-        return [direction_map[obj] for obj in self.objectives]
 
     def _multi_objective_cv_score(self, estimator, X, y, cv_splitter) -> tuple[float, float]:
         """Compute AUROC and Brier score across CV folds.
@@ -728,14 +556,7 @@ class OptunaSearchCV(BaseEstimator):
             f"Selecting using strategy: {self.pareto_selection}"
         )
 
-        if self.pareto_selection == "knee":
-            selected = self._find_knee_point(pareto_trials)
-        elif self.pareto_selection == "extreme_auroc":
-            selected = max(pareto_trials, key=lambda t: t.values[0])
-        elif self.pareto_selection == "balanced":
-            selected = self._find_balanced_point(pareto_trials)
-        else:
-            raise ValueError(f"Unknown pareto_selection: {self.pareto_selection}")
+        selected = select_from_pareto_frontier(pareto_trials, self.pareto_selection)
 
         self.best_params_ = selected.params
         self.best_score_ = selected.values[0]  # AUROC as primary metric
@@ -746,70 +567,6 @@ class OptunaSearchCV(BaseEstimator):
             f"[optuna] Selected trial {selected.number}: "
             f"AUROC={selected.values[0]:.4f}, Brier={-selected.values[1]:.4f}"
         )
-
-    def _find_knee_point(self, trials):
-        """Find knee point in Pareto frontier (closest to ideal point).
-
-        Normalizes objectives to [0, 1] and finds trial with minimum Euclidean
-        distance to the ideal point (AUROC=1, Brier=0).
-
-        Parameters
-        ----------
-        trials : list[optuna.Trial]
-            Pareto-optimal trials.
-
-        Returns
-        -------
-        optuna.Trial
-            Trial at knee point.
-        """
-        auroc_vals = np.array([t.values[0] for t in trials])
-        brier_vals = np.array([-t.values[1] for t in trials])  # Convert back to positive
-
-        # Normalize to [0, 1]
-        auroc_range = auroc_vals.max() - auroc_vals.min() + 1e-10
-        brier_range = brier_vals.max() - brier_vals.min() + 1e-10
-
-        auroc_norm = (auroc_vals - auroc_vals.min()) / auroc_range
-        brier_norm = 1 - (brier_vals - brier_vals.min()) / brier_range  # Invert (lower better)
-
-        # Distance from ideal (AUROC=1, Brier=0)
-        distances = np.sqrt((1 - auroc_norm) ** 2 + (1 - brier_norm) ** 2)
-        knee_idx = np.argmin(distances)
-
-        return trials[knee_idx]
-
-    def _find_balanced_point(self, trials):
-        """Find balanced point in Pareto frontier (maximum sum of normalized objectives).
-
-        Normalizes both objectives and selects trial with maximum sum, giving
-        equal weight to AUROC and calibration quality.
-
-        Parameters
-        ----------
-        trials : list[optuna.Trial]
-            Pareto-optimal trials.
-
-        Returns
-        -------
-        optuna.Trial
-            Trial with best balanced performance.
-        """
-        auroc_vals = np.array([t.values[0] for t in trials])
-        brier_vals = np.array([-t.values[1] for t in trials])
-
-        # Normalize
-        auroc_range = auroc_vals.max() - auroc_vals.min() + 1e-10
-        brier_range = brier_vals.max() - brier_vals.min() + 1e-10
-
-        auroc_norm = (auroc_vals - auroc_vals.min()) / auroc_range
-        brier_norm = 1 - (brier_vals - brier_vals.min()) / brier_range
-
-        # Equal weight sum
-        scores = auroc_norm + brier_norm
-        best_idx = np.argmax(scores)
-
-        return trials[best_idx]
 
     def get_pareto_frontier(self):
         """Get Pareto frontier as DataFrame for analysis/visualization.

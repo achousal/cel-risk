@@ -17,18 +17,10 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from .corr_prune import (
-    compute_univariate_strength,
-    prune_and_refill_panel,
-    prune_correlated_proteins,
-)
+from .corr_prune import prune_and_refill_panel
 
-# Re-export for backward compatibility (these were previously defined in this module)
 __all__ = [
     "build_multi_size_panels",
-    "compute_univariate_strength",
-    "prune_and_refill_panel",
-    "prune_correlated_proteins",
 ]
 
 

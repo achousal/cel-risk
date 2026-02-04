@@ -1,11 +1,8 @@
 """
 Orchestration helper functions for aggregate_splits.
 
-This module contains the stage-level orchestration functions extracted from
-the original mega-function run_aggregate_splits(). Each function represents
+This module contains the stage-level orchestration. Each function represents
 a logical stage in the aggregation pipeline.
-
-Progress: PR 1.6 - Reduce run_aggregate_splits() complexity from C901=130
 """
 
 from __future__ import annotations
@@ -17,42 +14,35 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from ced_ml.data.io_helpers import save_metrics, save_predictions
 from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
+from ced_ml.evaluation.reports import AggregatedOutputDirectories
+from ced_ml.features.importance import aggregate_fold_importances
 
 if TYPE_CHECKING:
     from logging import Logger
 
 
-def setup_aggregation_directories(results_path: Path) -> dict[str, Path]:
+def setup_aggregation_directories(results_path: Path) -> AggregatedOutputDirectories:
     """
     Create output directory structure for aggregation results.
 
-    Uses the new AggregatedOutputDirectories structure:
-    - aggregated/metrics/ (CSVs, JSONs)
-    - aggregated/panels/ (consensus panels, feature stability)
-    - aggregated/plots/ (all visualizations)
+    Returns an AggregatedOutputDirectories dataclass with paths to:
+    - root: aggregated/ base directory
+    - metrics: aggregated/metrics/ (CSVs, JSONs)
+    - panels: aggregated/panels/ (consensus panels, feature stability)
+    - plots: aggregated/plots/ (all visualizations)
+    - cv: aggregated/cv/ (CV artifacts)
+    - preds: aggregated/preds/ (pooled predictions)
+    - diagnostics: aggregated/diagnostics/ (calibration, DCA, screening)
 
     Args:
         results_path: Root results directory (e.g., results/{model}/run_{id}/)
 
     Returns:
-        Dictionary mapping directory names to Path objects
+        AggregatedOutputDirectories dataclass instance with all directory paths
     """
-    from ced_ml.evaluation.reports import AggregatedOutputDirectories
-
-    # Create aggregated output structure
-    agg_outdirs = AggregatedOutputDirectories.create(root=str(results_path), exist_ok=True)
-
-    # Return dict for backward compatibility with existing code
-    return {
-        "agg": Path(agg_outdirs.root),
-        "metrics": Path(agg_outdirs.metrics),
-        "panels": Path(agg_outdirs.panels),
-        "plots": Path(agg_outdirs.plots),
-        "cv": Path(agg_outdirs.cv),
-        "preds": Path(agg_outdirs.preds),
-        "diagnostics": Path(agg_outdirs.diagnostics),
-    }
+    return AggregatedOutputDirectories.create(root=str(results_path), exist_ok=True)
 
 
 def save_pooled_predictions(
@@ -76,11 +66,11 @@ def save_pooled_predictions(
     """
     # Test predictions (flattened to preds/)
     if not pooled_test_df.empty:
-        pooled_test_df.to_csv(preds_dir / "pooled_test_preds.csv", index=False)
+        save_predictions(pooled_test_df, preds_dir / "pooled_test_preds.csv")
 
         if "model" in pooled_test_df.columns:
             for model_name, model_df in pooled_test_df.groupby("model"):
-                model_df.to_csv(preds_dir / f"pooled_test_preds__{model_name}.csv", index=False)
+                save_predictions(model_df, preds_dir / f"pooled_test_preds__{model_name}.csv")
 
         logger.info(
             f"Pooled test predictions: {len(pooled_test_df)} samples from "
@@ -90,11 +80,11 @@ def save_pooled_predictions(
 
     # Validation predictions (flattened to preds/)
     if not pooled_val_df.empty:
-        pooled_val_df.to_csv(preds_dir / "pooled_val_preds.csv", index=False)
+        save_predictions(pooled_val_df, preds_dir / "pooled_val_preds.csv")
 
         if "model" in pooled_val_df.columns:
             for model_name, model_df in pooled_val_df.groupby("model"):
-                model_df.to_csv(preds_dir / f"pooled_val_preds__{model_name}.csv", index=False)
+                save_predictions(model_df, preds_dir / f"pooled_val_preds__{model_name}.csv")
 
         logger.info(
             f"Pooled val predictions: {len(pooled_val_df)} samples from "
@@ -118,17 +108,72 @@ def save_pooled_predictions(
                     mask, repeat_cols
                 ].mean(axis=1)
 
-        pooled_train_oof_df.to_csv(preds_dir / "pooled_train_oof.csv", index=False)
+        save_predictions(pooled_train_oof_df, preds_dir / "pooled_train_oof.csv")
 
         if "model" in pooled_train_oof_df.columns:
             for model_name, model_df in pooled_train_oof_df.groupby("model"):
-                model_df.to_csv(preds_dir / f"pooled_train_oof__{model_name}.csv", index=False)
+                save_predictions(model_df, preds_dir / f"pooled_train_oof__{model_name}.csv")
 
         logger.info(
             f"Pooled train OOF predictions: {len(pooled_train_oof_df)} samples from "
             f"{pooled_train_oof_df['split_seed'].nunique()} splits, "
             f"{pooled_train_oof_df['model'].nunique() if 'model' in pooled_train_oof_df.columns else 1} model(s)"
         )
+
+
+def aggregate_importance(
+    split_dirs: list[Path],
+    model_name: str,
+    output_dir: Path,
+    logger: Logger,
+) -> pd.DataFrame | None:
+    """
+    Aggregate OOF importance across splits.
+
+    Args:
+        split_dirs: List of split directories containing importance CSVs
+        model_name: Model name (e.g., "LR_EN")
+        output_dir: Output directory for aggregated importance
+        logger: Logger instance
+
+    Returns:
+        Aggregated importance DataFrame, or None if no importance files found
+    """
+    importance_files = []
+    for split_dir in split_dirs:
+        cv_dir = split_dir / "cv"
+        importance_file = cv_dir / f"oof_importance__{model_name}.csv"
+        if importance_file.exists():
+            importance_files.append(importance_file)
+
+    if not importance_files:
+        logger.debug(f"No importance files found for {model_name}")
+        return None
+
+    logger.info(f"Aggregating importance from {len(importance_files)} splits for {model_name}...")
+
+    fold_dfs = [pd.read_csv(f) for f in importance_files]
+
+    agg_df = aggregate_fold_importances(fold_dfs)
+
+    if agg_df.empty:
+        logger.warning(f"Aggregated importance is empty for {model_name}")
+        return None
+
+    agg_df["stability"] = agg_df["n_folds_nonzero"] / len(importance_files)
+
+    agg_df = agg_df.sort_values("mean_importance", ascending=False, ignore_index=True)
+    agg_df["rank"] = range(1, len(agg_df) + 1)
+
+    output_df = agg_df[["feature", "mean_importance", "std_importance", "stability", "rank"]]
+
+    importance_dir = output_dir / "importance"
+    importance_dir.mkdir(parents=True, exist_ok=True)
+    out_path = importance_dir / f"oof_importance__{model_name}.csv"
+    output_df.to_csv(out_path, index=False)
+    logger.info(f"Saved aggregated importance to {out_path}")
+
+    return output_df
 
 
 def compute_and_save_pooled_metrics(
@@ -192,7 +237,7 @@ def compute_and_save_pooled_metrics(
 
         if pooled_test_metrics:
             metrics_rows = list(pooled_test_metrics.values())
-            pd.DataFrame(metrics_rows).to_csv(metrics_dir / "pooled_test_metrics.csv", index=False)
+            save_metrics(pd.DataFrame(metrics_rows), metrics_dir / "pooled_test_metrics.csv")
 
             for model_name, metrics in pooled_test_metrics.items():
                 auroc = metrics.get(METRIC_AUROC)
@@ -225,7 +270,7 @@ def compute_and_save_pooled_metrics(
                         )
                     ]
                 )
-                selection_df.to_csv(metrics_dir / "selection_scores.csv", index=False)
+                save_metrics(selection_df, metrics_dir / "selection_scores.csv")
                 logger.info("Selection scores computed and saved")
                 for model_name, score in selection_scores.items():
                     logger.info(f"Selection score [{model_name}]: {score:.4f}")
@@ -261,7 +306,7 @@ def compute_and_save_pooled_metrics(
         )
         if pooled_val_metrics:
             metrics_rows = list(pooled_val_metrics.values())
-            pd.DataFrame(metrics_rows).to_csv(metrics_dir / "pooled_val_metrics.csv", index=False)
+            save_metrics(pd.DataFrame(metrics_rows), metrics_dir / "pooled_val_metrics.csv")
             for model_name, metrics in pooled_val_metrics.items():
                 val_auroc = metrics.get(METRIC_AUROC)
                 logger.info(

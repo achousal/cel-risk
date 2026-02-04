@@ -14,10 +14,6 @@ from ced_ml.cli.aggregation.collection import (
     collect_metrics,
     collect_predictions,
 )
-from ced_ml.cli.aggregation.discovery import (
-    discover_ensemble_dirs,
-    discover_split_dirs,
-)
 from ced_ml.cli.aggregation.orchestrator import (
     build_aggregation_metadata,
     build_return_summary,
@@ -33,6 +29,10 @@ from ced_ml.cli.aggregation.reporting import (
     aggregate_feature_reports,
     aggregate_feature_stability,
     build_consensus_panels,
+)
+from ced_ml.cli.discovery import (
+    discover_ensemble_dirs,
+    discover_split_dirs,
 )
 
 __all__ = [

@@ -1,8 +1,8 @@
 # CeliacRisks Architecture
 
-**Version:** 2.1
-**Date:** 2026-01-28
-**Status:** Streamlined algorithmic documentation with consensus panel integration
+**Version:** 2.2
+**Date:** 2026-02-03
+**Status:** Streamlined algorithmic documentation with consensus panel integration and permutation significance testing
 
 ---
 
@@ -228,6 +228,61 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 3. Hyperparameter tuning only on TRAIN (via inner CV)
 4. OOF predictions: each sample's prediction from fold where it was held out
 
+### 2.9 Significance Testing
+
+**Purpose:** Test the null hypothesis that model performance is no better than chance.
+
+**Method:** Label permutation testing with full pipeline re-execution.
+
+**Algorithm:**
+```
+For each permutation b in 0..B-1:
+    1. Shuffle y_train only (keep X fixed, held-out y unchanged)
+    2. Re-run FULL inner pipeline on permuted labels:
+       - Screening (Mann-Whitney/t-test)
+       - Inner CV k-best tuning
+       - Hyperparameter optimization
+       - Fit final model
+    3. Predict on held-out fold (original X, original y)
+    4. Record AUROC
+
+p-value = (1 + #{null >= observed}) / (1 + B)
+```
+
+**Why re-run full pipeline?** Avoids data leakage in null distribution. Features selected on real labels would inflate null performance.
+
+**CLI:** `ced permutation-test --run-id <RUN_ID> [--model <MODEL>] [--n-perms 200]`
+
+**HPC support:** `--perm-index` flag for LSF/Slurm job arrays.
+
+**Code pointers:**
+- [significance/permutation_test.py](../src/ced_ml/significance/permutation_test.py) - Core algorithm
+- [cli/permutation_test.py](../src/ced_ml/cli/permutation_test.py) - CLI implementation
+
+**See ADR:**
+- [ADR-016: Permutation Testing](adr/ADR-016-permutation-testing.md)
+
+### 2.10 Feature Importance
+
+**Purpose:** Understand which features drive model predictions.
+
+**Methods:**
+
+| Method | Model Type | Approach |
+|--------|------------|----------|
+| Coefficient magnitude | Linear (LR_EN, SVM) | Standardized |coef| |
+| Built-in importance | Tree (RF, XGBoost) | Gini/gain importance |
+| Permutation importance | All | OOF permutation feature importance |
+| Grouped permutation | All | Correlation-robust cluster-level PFI |
+| Drop-column validation | All | Refit without feature/cluster |
+
+**Correlation-robust grouping:** Highly correlated features (r > 0.85) are clustered. Permutation applied to entire cluster to avoid underestimating correlated feature importance.
+
+**Code pointers:**
+- [features/importance.py](../src/ced_ml/features/importance.py) - Linear/tree importance extraction
+- [features/grouped_importance.py](../src/ced_ml/features/grouped_importance.py) - Cluster-based PFI
+- [features/drop_column.py](../src/ced_ml/features/drop_column.py) - Drop-column validation
+
 ---
 
 ## 3. Data Contracts
@@ -297,9 +352,10 @@ src/ced_ml/
   cli/          # Command-line interface
   config/       # Pydantic configuration system
   data/         # Data I/O, splits, persistence
-  features/     # Feature selection pipeline
+  features/     # Feature selection, importance, drop-column
   models/       # Model training, calibration, stacking
   metrics/      # Performance metrics (AUROC, Brier, DCA)
+  significance/ # Permutation testing for model significance
   evaluation/   # Prediction, reporting, scoring
   plotting/     # Visualization
   utils/        # Logging, random, serialization
@@ -321,6 +377,9 @@ src/ced_ml/
 - `features/consensus.py` - Cross-model consensus via Robust Rank Aggregation (Strategy 4: consensus-panel CLI)
 - `features/corr_prune.py` - Correlation-based pruning (Strategy 1: hybrid_stability, Strategy 4: consensus)
 - `features/panels.py` - Fixed panel loading (Strategy 5: fixed panel validation)
+- `features/importance.py` - Linear coefficient and tree importance extraction
+- `features/grouped_importance.py` - Correlation-robust grouped permutation importance
+- `features/drop_column.py` - Drop-column validation for panel features
 
 **Model training:**
 - `models/training.py` - Nested CV orchestration, OOF predictions
@@ -333,6 +392,9 @@ src/ced_ml/
 - `metrics/thresholds.py` - Threshold selection objectives
 - `metrics/dca.py` - Decision curve analysis
 - `evaluation/scoring.py` - Composite scoring for model selection
+
+**Significance testing:**
+- `significance/permutation_test.py` - Label permutation testing for model significance
 
 ### 4.3 Configuration Schema
 

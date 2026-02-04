@@ -96,16 +96,49 @@ DEFAULT_DCA_CONFIG: dict[str, Any] = {
 
 # Default output configuration
 DEFAULT_OUTPUT_CONFIG: dict[str, Any] = {
+    # Prediction artifacts
     "save_train_preds": False,
+    "save_train_oof": True,
     "save_val_preds": True,
     "save_test_preds": True,
+    # Calibration artifacts
     "save_calibration": True,
     "calib_bins": 10,
+    # Feature artifacts
     "save_feature_importance": True,
+    "feature_reports": True,
+    # Optuna artifacts
+    "save_optuna_study": True,
+    "save_optuna_trials": True,
+    # Master plot controls
     "save_plots": True,
+    "max_plot_splits": 0,
     "plot_format": "png",
     "plot_dpi": 300,
+    # Individual plot type controls
+    "plot_roc": True,
+    "plot_pr": True,
+    "plot_calibration": True,
+    "plot_risk_distribution": True,
+    "plot_dca": True,
+    "plot_learning_curve": True,
+    "plot_oof_combined": True,
+    "plot_optuna": True,
     "optuna_plot_format": "html",
+    # Ensemble-specific plots
+    "plot_ensemble_weights": True,
+    "plot_ensemble_comparison": True,
+    "plot_base_correlations": True,
+    # Aggregation-specific
+    "save_pooled_preds": True,
+    "save_summary_csv": True,
+    "save_thresholds": True,
+    "save_individual": False,
+    # Panel optimization
+    "save_panel_csv": True,
+    "save_rfe_curve": True,
+    "save_stability_ranks": True,
+    "save_consensus_ranks": True,
 }
 
 # Default strictness configuration

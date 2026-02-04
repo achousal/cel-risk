@@ -85,33 +85,6 @@ def setup_logger(
 # Only CLI entrypoints should call setup_logger() to configure the root "ced_ml" logger
 
 
-def finalize_live_log(logger: logging.Logger) -> None:
-    """
-    Finalize .live log files by renaming them to their final names.
-
-    This should be called at the end of a script to mark logs as completed.
-    Looks for file handlers with _live_log_path attribute and renames them.
-
-    Args:
-        logger: Logger instance to finalize
-    """
-    import shutil
-
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler):
-            # Check if this is a live log handler
-            if hasattr(handler, "_live_log_path") and hasattr(handler, "_final_log_path"):
-                handler.close()
-                live_path = Path(handler._live_log_path)
-                final_path = Path(handler._final_log_path)
-
-                if live_path.exists():
-                    # Move .live to final name
-                    shutil.move(str(live_path), str(final_path))
-                    # Remove this handler since file is closed
-                    logger.removeHandler(handler)
-
-
 def log_hpc_context(logger: logging.Logger) -> None:
     """Log HPC scheduler metadata if running inside a batch job.
 
@@ -221,6 +194,38 @@ def auto_log_path(
 
     # Fallback
     return logs_root / "misc" / f"{command}_{rid}.log"
+
+
+def setup_command_logger(
+    command: str,
+    log_level: int = logging.INFO,
+    outdir: Path | str = "results",
+    run_id: str | None = None,
+    model: str | None = None,
+    split_seed: int | None = None,
+    logger_name: str = "ced_ml",
+) -> logging.Logger:
+    """Set up a logger for a CLI command with automatic log file path.
+
+    Combines auto_log_path() + setup_logger() + info message into a single call.
+    This replaces 6-10 lines of boilerplate in every CLI command.
+
+    Args:
+        command: CLI command name (train, train-ensemble, aggregate-splits, etc.)
+        log_level: Logging level (default: INFO)
+        outdir: Results output directory
+        run_id: Run identifier
+        model: Model name (optional)
+        split_seed: Split seed (optional)
+        logger_name: Logger name (default: "ced_ml")
+
+    Returns:
+        Configured logger instance with file and console handlers.
+    """
+    log_path = auto_log_path(command, outdir, run_id, model, split_seed)
+    logger = setup_logger(logger_name, log_level, log_file=log_path)
+    logger.info(f"Logging to file: {log_path}")
+    return logger
 
 
 def log_section(logger: logging.Logger, title: str, width: int = 80, char: str = "="):

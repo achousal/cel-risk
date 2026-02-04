@@ -31,6 +31,10 @@ from .style import (
     configure_backend,
 )
 
+# Threshold overlap detection parameters
+_OVERLAP_EPSILON = 0.01  # 1% of x-range for overlap detection
+_OFFSET_AMOUNT = 0.003  # Tiny offset when lines overlap
+
 
 def compute_distribution_stats(scores: np.ndarray) -> dict[str, float]:
     """Compute summary statistics for a distribution of scores.
@@ -92,6 +96,351 @@ def _normalize_threshold(value: float | None) -> float | None:
     return float(min(max(thresh, 0.0), 1.0))
 
 
+def _compute_threshold_offsets(
+    spec_target: float | None,
+    youden: float | None,
+    dca: float | None,
+) -> tuple[float, float, float]:
+    """Compute visual offsets for overlapping threshold lines.
+
+    When threshold values are very close, apply small horizontal offsets
+    to ensure all lines are visible in the plot.
+
+    Args:
+        spec_target: Specificity target threshold (0-1)
+        youden: Youden index threshold (0-1)
+        dca: DCA optimal threshold (0-1)
+
+    Returns:
+        Tuple of (spec_target_offset, youden_offset, dca_offset)
+    """
+
+    def thresholds_overlap(t1: float | None, t2: float | None) -> bool:
+        if t1 is None or t2 is None:
+            return False
+        return abs(t1 - t2) < _OVERLAP_EPSILON
+
+    spec_target_offset = 0.0
+    youden_offset = 0.0
+    dca_offset = 0.0
+
+    # Check spec_target vs youden overlap
+    if thresholds_overlap(spec_target, youden):
+        spec_target_offset = -_OFFSET_AMOUNT
+        youden_offset = _OFFSET_AMOUNT
+
+    # Check spec_target vs dca overlap
+    if thresholds_overlap(spec_target, dca):
+        if spec_target_offset == 0.0:
+            spec_target_offset = -_OFFSET_AMOUNT
+        dca_offset = _OFFSET_AMOUNT * 1.5
+
+    # Check youden vs dca overlap
+    if thresholds_overlap(youden, dca):
+        if youden_offset == 0.0:
+            youden_offset = -_OFFSET_AMOUNT
+        if dca_offset == 0.0:
+            dca_offset = _OFFSET_AMOUNT
+
+    return spec_target_offset, youden_offset, dca_offset
+
+
+def _draw_threshold_lines(
+    ax: plt.Axes,
+    spec_target: float | None,
+    youden: float | None,
+    dca: float | None,
+    offsets: tuple[float, float, float],
+    linewidth: float = LW_PRIMARY,
+    alpha: float = 0.7,
+) -> None:
+    """Draw vertical threshold lines on an axis.
+
+    Args:
+        ax: Matplotlib axis to draw on
+        spec_target: Specificity target threshold value
+        youden: Youden index threshold value
+        dca: DCA optimal threshold value
+        offsets: Tuple of (spec_target_offset, youden_offset, dca_offset)
+        linewidth: Line width for threshold lines
+        alpha: Alpha transparency for lines
+    """
+    spec_target_offset, youden_offset, dca_offset = offsets
+
+    if spec_target is not None:
+        ax.axvline(
+            spec_target + spec_target_offset,
+            color="red",
+            linestyle="--",
+            linewidth=linewidth,
+            alpha=alpha,
+            zorder=10,
+        )
+
+    if youden is not None:
+        ax.axvline(
+            youden + youden_offset,
+            color="green",
+            linestyle="--",
+            linewidth=linewidth,
+            alpha=alpha,
+            zorder=9,
+        )
+
+    if dca is not None:
+        ax.axvline(
+            dca + dca_offset,
+            color=COLOR_SECONDARY,
+            linestyle="--",
+            linewidth=linewidth,
+            alpha=alpha,
+            zorder=8,
+        )
+
+
+def _build_threshold_legend(
+    spec_target: float | None,
+    youden: float | None,
+    dca: float | None,
+    target_spec: float,
+    metrics_at_thresholds: dict,
+) -> tuple[list, list]:
+    """Build legend handles and labels for threshold lines.
+
+    Creates multi-line labels with threshold name and performance metrics
+    (sensitivity, PPV, false positives).
+
+    Args:
+        spec_target: Specificity target threshold value
+        youden: Youden index threshold value
+        dca: DCA optimal threshold value
+        target_spec: Target specificity value (e.g., 0.95)
+        metrics_at_thresholds: Dict with metrics for each threshold type
+
+    Returns:
+        Tuple of (handles, labels) for matplotlib legend
+    """
+    handles = []
+    labels = []
+
+    if spec_target is not None:
+        m = metrics_at_thresholds.get("spec_target")
+        line_handle = Line2D([0], [0], color="red", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7)
+        handles.append(line_handle)
+
+        label_text = f"{target_spec*100:.0f}% Spec"
+        if m:
+            sens = m.get("sensitivity", np.nan)
+            ppv = m.get("precision", np.nan)
+            fp = m.get("fp", np.nan)
+            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
+                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
+        labels.append(label_text)
+
+    if youden is not None:
+        m = metrics_at_thresholds.get("youden")
+        line_handle = Line2D(
+            [0], [0], color="green", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
+        )
+        handles.append(line_handle)
+
+        label_text = "Youden"
+        if m:
+            sens = m.get("sensitivity", np.nan)
+            ppv = m.get("precision", np.nan)
+            fp = m.get("fp", np.nan)
+            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
+                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
+        labels.append(label_text)
+
+    if dca is not None:
+        m = metrics_at_thresholds.get("dca")
+        line_handle = Line2D(
+            [0], [0], color=COLOR_SECONDARY, linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
+        )
+        handles.append(line_handle)
+
+        label_text = "DCA"
+        if m:
+            sens = m.get("sensitivity", np.nan)
+            ppv = m.get("precision", np.nan)
+            fp = m.get("fp", np.nan)
+            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
+                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
+        labels.append(label_text)
+
+    return handles, labels
+
+
+def _plot_main_histogram(
+    ax: plt.Axes,
+    scores: np.ndarray,
+    y_true: np.ndarray | None = None,
+    category_col: np.ndarray | None = None,
+    pos_label: str = "Incident CeD",
+) -> None:
+    """Plot main histogram/density on the given axis.
+
+    Supports three modes:
+    - Single distribution (no y_true or category_col)
+    - Binary split by y_true (Controls vs Incident)
+    - Three-way split by category_col (Controls, Incident, Prevalent)
+
+    Args:
+        ax: Matplotlib axis to plot on
+        scores: Risk scores array
+        y_true: Optional binary labels for two-class split
+        category_col: Optional category labels for three-class split
+        pos_label: Label for positive class
+    """
+    bins = min(60, max(10, int(np.sqrt(len(scores)))))
+
+    if y_true is None and category_col is None:
+        # Single distribution
+        ax.hist(
+            scores,
+            bins=bins,
+            density=True,
+            alpha=0.7,
+            color=COLOR_PRIMARY,
+            edgecolor="white",
+        )
+    elif category_col is not None:
+        # Three-way split (Controls, Incident, Prevalent)
+        categories = [
+            ("Controls", COLOR_PRIMARY, "Controls"),
+            ("Incident", COLOR_TERTIARY, "Incident"),
+            ("Prevalent", COLOR_SECONDARY, "Prevalent"),
+        ]
+
+        for label, color, cat_name in categories:
+            vals = scores[category_col == cat_name]
+            if len(vals) == 0:
+                continue
+            ax.hist(
+                vals,
+                bins=bins,
+                density=True,
+                alpha=0.45,
+                color=color,
+                edgecolor="white",
+                label=label,
+            )
+
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc="upper right", fontsize=FONT_LEGEND)
+    else:
+        # Binary split (Controls vs Incident)
+        for label, color, target in [
+            (CONTROL_LABEL, COLOR_PRIMARY, 0),
+            (pos_label, COLOR_TERTIARY, 1),
+        ]:
+            vals = scores[y_true == target]
+            if len(vals) == 0:
+                continue
+            ax.hist(
+                vals,
+                bins=bins,
+                density=True,
+                alpha=0.45,
+                color=color,
+                edgecolor="white",
+                label=label,
+            )
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc="upper right", fontsize=FONT_LEGEND)
+
+
+def _add_statistics_annotation(ax: plt.Axes, stats: dict[str, float]) -> None:
+    """Add statistics text annotation to axis.
+
+    Args:
+        ax: Matplotlib axis to annotate
+        stats: Statistics dict with keys: mean, median, iqr, sd
+    """
+    stats_text = (
+        f"Mean: {stats['mean']:.3f} | Median: {stats['median']:.3f} | "
+        f"IQR: {stats['iqr']:.3f} | SD: {stats['sd']:.3f}"
+    )
+    ax.text(
+        0.02,
+        0.95,
+        stats_text,
+        transform=ax.transAxes,
+        fontsize=8,
+        va="top",
+        ha="left",
+        bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.7},
+    )
+
+
+def _plot_density_subplot(
+    ax: plt.Axes,
+    scores: np.ndarray,
+    color: str,
+    ylabel: str,
+    xlabel: str,
+    threshold_values: tuple[float | None, float | None, float | None],
+    threshold_offsets: tuple[float, float, float],
+    show_xlabel: bool = False,
+) -> None:
+    """Plot density (KDE) subplot for a specific category.
+
+    Args:
+        ax: Matplotlib axis to plot on
+        scores: Score array for this category
+        color: Color for density plot
+        ylabel: Y-axis label
+        xlabel: X-axis label
+        threshold_values: Tuple of (spec_target, youden, dca) thresholds
+        threshold_offsets: Tuple of (spec_target_offset, youden_offset, dca_offset)
+        show_xlabel: Whether to show x-axis label
+    """
+    # Compute statistics
+    stats = compute_distribution_stats(scores)
+
+    # Create KDE density plot
+    if len(scores) > 0:
+        try:
+            kde = gaussian_kde(scores, bw_method="scott")
+            x_range = np.linspace(0, 1, 200)
+            density = kde(x_range)
+            ax.plot(x_range, density, color=color, linewidth=LW_PRIMARY, alpha=0.8)
+            ax.fill_between(x_range, density, alpha=0.3, color=color)
+        except Exception:
+            # Fallback to histogram if KDE fails
+            ax.hist(
+                scores,
+                bins=20,
+                density=True,
+                alpha=0.7,
+                color=color,
+                edgecolor="white",
+            )
+
+    # Draw threshold lines
+    _draw_threshold_lines(
+        ax,
+        threshold_values[0],
+        threshold_values[1],
+        threshold_values[2],
+        threshold_offsets,
+        linewidth=LW_SECONDARY,
+        alpha=0.5,
+    )
+
+    # Configure axis
+    ax.set_xlim(0, 1)
+    ax.set_ylabel(ylabel, fontsize=9)
+    if show_xlabel:
+        ax.set_xlabel(xlabel)
+    ax.grid(True, alpha=0.2, axis="x")
+    ax.set_yticks([])
+
+    # Add statistics annotation
+    _add_statistics_annotation(ax, stats)
+
+
 def plot_risk_distribution(
     y_true: np.ndarray | None,
     scores: np.ndarray,
@@ -102,12 +451,7 @@ def plot_risk_distribution(
     pos_label: str = "Incident CeD",
     meta_lines: Sequence[str] | None = None,
     category_col: np.ndarray | None = None,
-    dca_threshold: float | None = None,
-    spec_target_threshold: float | None = None,
-    youden_threshold: float | None = None,
-    metrics_at_thresholds: dict[str, dict[str, float]] | None = None,
     x_limits: tuple[float, float] | None = None,
-    target_spec: float = 0.95,
     threshold_bundle: dict | None = None,
 ) -> None:
     """Plot risk score distribution with optional thresholds and case-type subplots.
@@ -128,14 +472,9 @@ def plot_risk_distribution(
         pos_label: Label for positive class (e.g., "Incident CeD")
         meta_lines: Metadata lines for bottom of figure
         category_col: Array of category labels ("Controls", "Incident", "Prevalent")
-        dca_threshold: DCA zero-crossing threshold (0-1) [deprecated, use threshold_bundle]
-        spec_target_threshold: Target specificity threshold (0-1) [deprecated, use threshold_bundle]
-        youden_threshold: Youden's J statistic threshold (0-1) [deprecated, use threshold_bundle]
-        metrics_at_thresholds: Performance metrics at each threshold [deprecated, use threshold_bundle]
         x_limits: Optional tuple (xmin, xmax) for x-axis range
-        target_spec: Target specificity value for annotation label (default: 0.95)
-        threshold_bundle: ThresholdBundle from compute_threshold_bundle() - preferred interface.
-            If provided, overrides individual threshold parameters.
+        threshold_bundle: ThresholdBundle from compute_threshold_bundle().
+            Contains threshold values and metrics for Youden, specificity target, and DCA.
 
     Notes:
         - If category_col is provided, creates three-category KDE plot
@@ -143,93 +482,83 @@ def plot_risk_distribution(
         - If neither is provided, creates single-category histogram
         - Incident/prevalent subplots only shown if category_col includes those categories
     """
-    # If threshold_bundle provided, extract values (preferred interface)
-    if threshold_bundle is not None:
-        youden_threshold = threshold_bundle.get("youden_threshold")
-        spec_target_threshold = threshold_bundle.get("spec_target_threshold")
-        dca_threshold = threshold_bundle.get("dca_threshold")
-        target_spec = threshold_bundle.get("target_spec", 0.95)
-
-        # Build metrics_at_thresholds from bundle
-        metrics_at_thresholds = {}
-        if "youden" in threshold_bundle:
-            m = threshold_bundle["youden"]
-            metrics_at_thresholds["youden"] = {
-                "sensitivity": m.get("sensitivity"),
-                "precision": m.get("precision"),
-                "fp": m.get("fp"),
-                "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
-            }
-        if "spec_target" in threshold_bundle:
-            m = threshold_bundle["spec_target"]
-            metrics_at_thresholds["spec_target"] = {
-                "sensitivity": m.get("sensitivity"),
-                "precision": m.get("precision"),
-                "fp": m.get("fp"),
-                "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
-            }
-        if "dca" in threshold_bundle:
-            m = threshold_bundle["dca"]
-            metrics_at_thresholds["dca"] = {
-                "sensitivity": m.get("sensitivity"),
-                "precision": m.get("precision"),
-                "fp": m.get("fp"),
-                "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
-            }
-
-    # Normalize thresholds to [0, 1] with epsilon tolerance
-    # This handles edge cases where threshold computation may produce values
-    # slightly outside [0, 1] due to floating point arithmetic (e.g., max(p) + 1e-12)
-    spec_target_threshold = _normalize_threshold(spec_target_threshold)
-    youden_threshold = _normalize_threshold(youden_threshold)
-    dca_threshold = _normalize_threshold(dca_threshold)
-
     configure_backend()
 
-    s = np.asarray(scores).astype(float)
+    # Parse threshold bundle
+    spec_target_threshold = None
+    youden_threshold = None
+    dca_threshold = None
+    target_spec = 0.95
+    metrics_at_thresholds = {}
 
-    # Determine if we have incident/prevalent subplots to show
+    if threshold_bundle is not None:
+        spec_target_threshold = _normalize_threshold(threshold_bundle.get("spec_target_threshold"))
+        youden_threshold = _normalize_threshold(threshold_bundle.get("youden_threshold"))
+        dca_threshold = _normalize_threshold(threshold_bundle.get("dca_threshold"))
+        target_spec = threshold_bundle.get("target_spec", 0.95)
+
+        # Extract metrics for each threshold
+        for key, threshold_key in [
+            ("youden", "youden"),
+            ("spec_target", "spec_target"),
+            ("dca", "dca"),
+        ]:
+            if key in threshold_bundle:
+                m = threshold_bundle[key]
+                metrics_at_thresholds[threshold_key] = {
+                    "sensitivity": m.get("sensitivity"),
+                    "precision": m.get("precision"),
+                    "fp": m.get("fp"),
+                    "n_celiac": (m.get("tp", 0) or 0) + (m.get("fn", 0) or 0),
+                }
+
+    # Prepare data
+    s = np.asarray(scores).astype(float)
+    y = np.asarray(y_true).astype(int) if y_true is not None else None
+
+    # Filter for category_col case
     has_incident = False
     has_prevalent = False
+    cat = None
     if category_col is not None:
         cat = np.asarray(category_col)
         mask = np.isfinite(s)
         s = s[mask]
         cat = cat[mask]
+        if y is not None:
+            y = y[mask]
         has_incident = np.any(cat == "Incident")
         has_prevalent = np.any(cat == "Prevalent")
+    elif y is not None:
+        # Binary case
+        mask = np.isfinite(s) & np.isfinite(y)
+        s = s[mask]
+        y = y[mask]
+    else:
+        # Single distribution
+        mask = np.isfinite(s)
+        s = s[mask]
 
-    # Calculate number of subplots needed
-    n_subplots = 1
-    if has_incident:
-        n_subplots += 1
-    if has_prevalent:
-        n_subplots += 1
+    if len(s) == 0:
+        plt.close()
+        return
 
-    # Create figure with appropriate number of subplots
-    # Determine figure size based on plot type (histogram vs KDE)
+    # Compute threshold offsets
+    threshold_offsets = _compute_threshold_offsets(
+        spec_target_threshold, youden_threshold, dca_threshold
+    )
+
+    # Determine subplot layout
+    n_subplots = 1 + int(has_incident) + int(has_prevalent)
+    height_ratios = [8] + [3] * (n_subplots - 1) if n_subplots > 1 else [1]
+
     if n_subplots == 1:
-        height_ratios = [1]
-        if category_col is not None:
-            # Single KDE plot: 4:1 aspect ratio
-            figsize = (12, 3)
-        else:
-            # Single histogram: 3:2 aspect ratio
-            figsize = (9, 6)
+        figsize = (12, 3) if category_col is not None else (9, 6)
     elif n_subplots == 2:
-        # Main histogram (3:2) + 1 KDE subplot (4:1)
-        # With width=9: histogram needs height=6, KDE needs height=2.25
-        # Ratio: 6 / 2.25 = 8 / 3
-        height_ratios = [8, 3]
         figsize = (9, 8.5)
     elif n_subplots == 3:
-        # Main histogram (3:2) + 2 KDE subplots (4:1 each)
-        # Ratio: 6 : 2.25 : 2.25 = 8 : 3 : 3
-        height_ratios = [8, 3, 3]
         figsize = (9, 11)
     else:
-        # Fallback for more subplots
-        height_ratios = [8] + [3] * (n_subplots - 1)
         figsize = (9, 6 + 2.5 * (n_subplots - 1))
 
     fig, axes = plt.subplots(n_subplots, 1, figsize=figsize, height_ratios=height_ratios)
@@ -238,217 +567,31 @@ def plot_risk_distribution(
 
     ax_main = axes[0]
 
-    # === MAIN HISTOGRAM (ax_main) ===
-    if y_true is None and category_col is None:
-        mask = np.isfinite(s)
-        s = s[mask]
-        if len(s) == 0:
-            plt.close()
-            return
-        bins = min(60, max(10, int(np.sqrt(len(s)))))
-        ax_main.hist(
-            s,
-            bins=bins,
-            density=True,
-            alpha=0.7,
-            color=COLOR_PRIMARY,
-            edgecolor="white",
-        )
-    elif category_col is not None:
-        # Use category column for three-way split (Controls, Incident, Prevalent)
-        # Note: s and cat already filtered for NaN at lines 146-148
-        if len(s) == 0:
-            plt.close()
-            return
-        bins = min(60, max(10, int(np.sqrt(len(s)))))
+    # Plot main histogram
+    _plot_main_histogram(ax_main, s, y, cat, pos_label)
 
-        # Define three categories with distinct colors
-        categories = [
-            ("Controls", COLOR_PRIMARY, "Controls"),
-            ("Incident", COLOR_TERTIARY, "Incident"),
-            ("Prevalent", COLOR_SECONDARY, "Prevalent"),
-        ]
+    # Draw threshold lines
+    _draw_threshold_lines(
+        ax_main,
+        spec_target_threshold,
+        youden_threshold,
+        dca_threshold,
+        threshold_offsets,
+    )
 
-        for label, color, cat_name in categories:
-            vals = s[cat == cat_name]
-            if len(vals) == 0:
-                continue
-            ax_main.hist(
-                vals,
-                bins=bins,
-                density=True,
-                alpha=0.45,
-                color=color,
-                edgecolor="white",
-                label=label,
-            )
-
-        if ax_main.get_legend_handles_labels()[0]:
-            ax_main.legend(loc="upper right", fontsize=FONT_LEGEND)
-    else:
-        y = np.asarray(y_true).astype(int)
-        mask = np.isfinite(s) & np.isfinite(y)
-        s = s[mask]
-        y = y[mask]
-        if len(s) == 0:
-            plt.close()
-            return
-        bins = min(60, max(10, int(np.sqrt(len(s)))))
-        for label, color, target in [
-            (CONTROL_LABEL, COLOR_PRIMARY, 0),
-            (pos_label, COLOR_TERTIARY, 1),
-        ]:
-            vals = s[y == target]
-            if len(vals) == 0:
-                continue
-            ax_main.hist(
-                vals,
-                bins=bins,
-                density=True,
-                alpha=0.45,
-                color=color,
-                edgecolor="white",
-                label=label,
-            )
-        if ax_main.get_legend_handles_labels()[0]:
-            ax_main.legend(loc="upper right", fontsize=FONT_LEGEND)
-
-    # Add threshold lines (without labels - will be added to legend separately)
-    # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
-
-    # Detect overlapping thresholds and apply offsets so all lines are visible
-    # Overlap threshold: 1% of x-range (0.01 for [0,1] range)
-    overlap_eps = 0.01
-    offset_amount = 0.003  # Tiny offset when lines overlap (just enough to see both)
-
-    def _thresholds_overlap(t1: float | None, t2: float | None) -> bool:
-        """Check if two thresholds are close enough to visually overlap."""
-        if t1 is None or t2 is None:
-            return False
-        return abs(t1 - t2) < overlap_eps
-
-    # Compute offsets for each threshold to avoid overlap
-    spec_target_offset = 0.0
-    youden_offset = 0.0
-    dca_offset = 0.0
-
-    # Check spec_target vs youden overlap
-    if _thresholds_overlap(spec_target_threshold, youden_threshold):
-        spec_target_offset = -offset_amount  # Shift spec_target left
-        youden_offset = offset_amount  # Shift youden right
-
-    # Check spec_target vs dca overlap (if not already offset)
-    if _thresholds_overlap(spec_target_threshold, dca_threshold):
-        if spec_target_offset == 0.0:
-            spec_target_offset = -offset_amount
-        dca_offset = offset_amount * 1.5  # Shift dca further right
-
-    # Check youden vs dca overlap
-    if _thresholds_overlap(youden_threshold, dca_threshold):
-        if youden_offset == 0.0:
-            youden_offset = -offset_amount
-        if dca_offset == 0.0:
-            dca_offset = offset_amount
-
-    # Draw threshold lines with z-order to ensure visibility
-    # Higher zorder = drawn on top
-    if spec_target_threshold is not None:
-        ax_main.axvline(
-            spec_target_threshold + spec_target_offset,
-            color="red",
-            linestyle="--",
-            linewidth=LW_PRIMARY,
-            alpha=0.7,
-            zorder=10,  # Red (spec_target) on top
-        )
-
-    if youden_threshold is not None:
-        ax_main.axvline(
-            youden_threshold + youden_offset,
-            color="green",
-            linestyle="--",
-            linewidth=LW_PRIMARY,
-            alpha=0.7,
-            zorder=9,  # Green (youden) middle
-        )
-
-    if dca_threshold is not None:
-        ax_main.axvline(
-            dca_threshold + dca_offset,
-            color=COLOR_SECONDARY,
-            linestyle="--",
-            linewidth=LW_PRIMARY,
-            alpha=0.7,
-            zorder=8,
-        )
-
-    # Create comprehensive legend with threshold metrics
+    # Build and apply legend
     handles, labels = ax_main.get_legend_handles_labels()
-    threshold_handles = []
-    threshold_labels = []
+    threshold_handles, threshold_labels = _build_threshold_legend(
+        spec_target_threshold,
+        youden_threshold,
+        dca_threshold,
+        target_spec,
+        metrics_at_thresholds,
+    )
 
-    if spec_target_threshold is not None:
-        m = metrics_at_thresholds.get("spec_target") if metrics_at_thresholds else None
-
-        line_handle = Line2D([0], [0], color="red", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7)
-        threshold_handles.append(line_handle)
-
-        # Multi-line label format with each metric on separate line
-        label_text = f"{target_spec*100:.0f}% Spec"
-        if m:
-            sens = m.get("sensitivity", np.nan)
-            ppv = m.get("precision", np.nan)
-            fp = m.get("fp", np.nan)
-            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
-                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
-        threshold_labels.append(label_text)
-
-    if youden_threshold is not None:
-        m = metrics_at_thresholds.get("youden") if metrics_at_thresholds else None
-
-        line_handle = Line2D(
-            [0], [0], color="green", linestyle="--", linewidth=LW_PRIMARY, alpha=0.7
-        )
-        threshold_handles.append(line_handle)
-
-        # Multi-line label format with each metric on separate line
-        label_text = "Youden"
-        if m:
-            sens = m.get("sensitivity", np.nan)
-            ppv = m.get("precision", np.nan)
-            fp = m.get("fp", np.nan)
-            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
-                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
-        threshold_labels.append(label_text)
-
-    if dca_threshold is not None:
-        m = metrics_at_thresholds.get("dca") if metrics_at_thresholds else None
-
-        line_handle = Line2D(
-            [0],
-            [0],
-            color=COLOR_SECONDARY,
-            linestyle="--",
-            linewidth=LW_PRIMARY,
-            alpha=0.7,
-        )
-        threshold_handles.append(line_handle)
-
-        # Multi-line label format with each metric on separate line
-        label_text = "DCA"
-        if m:
-            sens = m.get("sensitivity", np.nan)
-            ppv = m.get("precision", np.nan)
-            fp = m.get("fp", np.nan)
-            if not np.isnan(sens) and not np.isnan(ppv) and not np.isnan(fp):
-                label_text += f"\nSens: {sens*100:.1f}%\nPPV: {ppv*100:.1f}%\nFP: {int(fp)}"
-        threshold_labels.append(label_text)
-
-    # Combine all handles and labels
     all_handles = handles + threshold_handles
     all_labels = labels + threshold_labels
 
-    # Create legend outside plot area
     if all_handles:
         ax_main.legend(
             all_handles,
@@ -459,6 +602,7 @@ def plot_risk_distribution(
             framealpha=0.9,
         )
 
+    # Configure main axis
     if subtitle:
         ax_main.set_title(f"{title}\n{subtitle}", fontsize=FONT_TITLE)
     else:
@@ -466,189 +610,45 @@ def plot_risk_distribution(
     ax_main.set_ylabel("Density")
     ax_main.grid(True, alpha=0.2)
 
-    # Apply x-axis limits if provided
     if x_limits is not None:
         ax_main.set_xlim(x_limits)
     elif category_col is not None:
-        # When using category_col (3-way split), match subplot xlim for consistency
         ax_main.set_xlim(0, 1)
 
-    # === INCIDENT DENSITY PLOT (if applicable) ===
+    # Plot incident subplot if needed
     subplot_idx = 1
     if has_incident:
-        ax_incident = axes[subplot_idx]
+        incident_scores = s[cat == "Incident"]
+        _plot_density_subplot(
+            axes[subplot_idx],
+            incident_scores,
+            COLOR_TERTIARY,
+            "Incident\nDensity",
+            xlabel,
+            (spec_target_threshold, youden_threshold, dca_threshold),
+            threshold_offsets,
+            show_xlabel=not has_prevalent,
+        )
         subplot_idx += 1
 
-        incident_scores = s[cat == "Incident"]
-        stats = compute_distribution_stats(incident_scores)
-
-        # Create KDE density plot
-        if len(incident_scores) > 0:
-            try:
-                kde = gaussian_kde(incident_scores, bw_method="scott")
-                x_range = np.linspace(0, 1, 200)
-                density = kde(x_range)
-                ax_incident.plot(
-                    x_range,
-                    density,
-                    color=COLOR_TERTIARY,
-                    linewidth=LW_PRIMARY,
-                    alpha=0.8,
-                )
-                ax_incident.fill_between(x_range, density, alpha=0.3, color=COLOR_TERTIARY)
-            except Exception:
-                # Fallback to histogram if KDE fails (e.g., too few points)
-                ax_incident.hist(
-                    incident_scores,
-                    bins=20,
-                    density=True,
-                    alpha=0.7,
-                    color=COLOR_TERTIARY,
-                    edgecolor="white",
-                )
-
-        # Add threshold lines (no labels) with same offsets as main plot
-        # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
-        if spec_target_threshold is not None:
-            ax_incident.axvline(
-                spec_target_threshold + spec_target_offset,
-                color="red",
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=10,
-            )
-        if youden_threshold is not None:
-            ax_incident.axvline(
-                youden_threshold + youden_offset,
-                color="green",
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=9,
-            )
-        if dca_threshold is not None:
-            ax_incident.axvline(
-                dca_threshold + dca_offset,
-                color=COLOR_SECONDARY,
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=8,
-            )
-
-        ax_incident.set_xlim(0, 1)
-        ax_incident.set_ylabel("Incident\nDensity", fontsize=9)
-        ax_incident.grid(True, alpha=0.2, axis="x")
-        ax_incident.set_yticks([])
-
-        # Add statistics text
-        stats_text = (
-            f"Mean: {stats['mean']:.3f} | Median: {stats['median']:.3f} | "
-            f"IQR: {stats['iqr']:.3f} | SD: {stats['sd']:.3f}"
-        )
-        ax_incident.text(
-            0.02,
-            0.95,
-            stats_text,
-            transform=ax_incident.transAxes,
-            fontsize=8,
-            va="top",
-            ha="left",
-            bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.7},
-        )
-
-    # === PREVALENT DENSITY PLOT (if applicable) ===
+    # Plot prevalent subplot if needed
     if has_prevalent:
-        ax_prevalent = axes[subplot_idx]
-
         prevalent_scores = s[cat == "Prevalent"]
-        stats = compute_distribution_stats(prevalent_scores)
-
-        # Create KDE density plot
-        if len(prevalent_scores) > 0:
-            try:
-                kde = gaussian_kde(prevalent_scores, bw_method="scott")
-                x_range = np.linspace(0, 1, 200)
-                density = kde(x_range)
-                ax_prevalent.plot(
-                    x_range,
-                    density,
-                    color=COLOR_SECONDARY,
-                    linewidth=LW_PRIMARY,
-                    alpha=0.8,
-                )
-                ax_prevalent.fill_between(x_range, density, alpha=0.3, color=COLOR_SECONDARY)
-            except Exception:
-                # Fallback to histogram if KDE fails
-                ax_prevalent.hist(
-                    prevalent_scores,
-                    bins=20,
-                    density=True,
-                    alpha=0.7,
-                    color=COLOR_SECONDARY,
-                    edgecolor="white",
-                )
-
-        # Add threshold lines (no labels) with same offsets as main plot
-        # Note: Thresholds are pre-normalized to [0, 1] via _normalize_threshold()
-        if spec_target_threshold is not None:
-            ax_prevalent.axvline(
-                spec_target_threshold + spec_target_offset,
-                color="red",
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=10,
-            )
-        if youden_threshold is not None:
-            ax_prevalent.axvline(
-                youden_threshold + youden_offset,
-                color="green",
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=9,
-            )
-        if dca_threshold is not None:
-            ax_prevalent.axvline(
-                dca_threshold + dca_offset,
-                color=COLOR_SECONDARY,
-                linestyle="--",
-                linewidth=LW_SECONDARY,
-                alpha=0.5,
-                zorder=8,
-            )
-
-        ax_prevalent.set_xlim(0, 1)
-        ax_prevalent.set_ylabel("Prevalent\nDensity", fontsize=9)
-        ax_prevalent.set_xlabel(xlabel)
-        ax_prevalent.grid(True, alpha=0.2, axis="x")
-        ax_prevalent.set_yticks([])
-
-        # Add statistics text
-        stats_text = (
-            f"Mean: {stats['mean']:.3f} | Median: {stats['median']:.3f} | "
-            f"IQR: {stats['iqr']:.3f} | SD: {stats['sd']:.3f}"
+        _plot_density_subplot(
+            axes[subplot_idx],
+            prevalent_scores,
+            COLOR_SECONDARY,
+            "Prevalent\nDensity",
+            xlabel,
+            (spec_target_threshold, youden_threshold, dca_threshold),
+            threshold_offsets,
+            show_xlabel=True,
         )
-        ax_prevalent.text(
-            0.02,
-            0.95,
-            stats_text,
-            transform=ax_prevalent.transAxes,
-            fontsize=8,
-            va="top",
-            ha="left",
-            bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.7},
-        )
-    else:
-        # If no prevalent subplot, add xlabel to last subplot
-        if has_incident:
-            axes[-1].set_xlabel(xlabel)
-        else:
-            ax_main.set_xlabel(xlabel)
+    elif not has_incident:
+        # No subplots, add xlabel to main
+        ax_main.set_xlabel(xlabel)
 
-    # Apply metadata and adjust layout
+    # Apply metadata and save
     bottom_margin = apply_plot_metadata(fig, meta_lines) if meta_lines else 0.1
     plt.subplots_adjust(left=0.12, right=0.70, top=0.92, bottom=bottom_margin, hspace=0.3)
     plt.savefig(out_path, dpi=DPI)

@@ -341,7 +341,8 @@ def threshold_from_controls(p_controls: np.ndarray, target_spec: float) -> float
     except TypeError:
         # Older numpy versions use 'interpolation' parameter
         thr = float(np.quantile(pc, q, interpolation="higher"))
-    except Exception:
+    except Exception as e:
+        logger.warning("Unexpected error in quantile calculation, using default: %s", e)
         thr = float(np.quantile(pc, q))
     if not np.isfinite(thr):
         thr = float(np.max(pc) + 1e-12)

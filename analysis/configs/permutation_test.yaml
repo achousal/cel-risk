@@ -1,0 +1,21 @@
+# Permutation Test Configuration
+#
+# USAGE::
+#   ced permutation-test --run-id 20260127_104409                # All models
+#   ced permutation-test --run-id 20260127_104409 --model LR_EN  # Single model
+#
+# HPC MODE:
+#   ced permutation-test --run-id 20260127_104409 --hpc   # Submit LSF job array
+
+# Permutation Test Parameters
+n_perms: 200              # Number of permutations (default: 200; increase for tighter p-values)
+metric: auroc             # Metric to evaluate (only 'auroc' supported per ADR-007)
+random_state: 42          # Random seed for reproducibility
+
+# Parallelization
+n_jobs: 1                 # Parallel jobs for local execution (1 = sequential; -1 = all CPUs)
+                          # Note: HPC mode uses job arrays, not n_jobs
+
+# Output Settings
+outdir: null              # Output directory (null = auto-detect: {run_dir}/{model}/significance/)
+save_individual: true     # Save individual permutation results (for HPC aggregation)
