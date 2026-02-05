@@ -27,6 +27,7 @@ from ced_ml.config.defaults import (
 )
 from ced_ml.config.schema import (
     AggregateConfig,
+    PermutationTestConfig,
     SplitsConfig,
     TrainingConfig,
 )
@@ -392,6 +393,52 @@ def load_aggregate_config(
         return AggregateConfig(**config_dict)
     except ValidationError as e:
         raise ValueError(f"Invalid aggregate configuration:\n{e}") from e
+
+
+def load_permutation_config(
+    config_file: str | Path | None = None,
+    overrides: list[str] | None = None,
+) -> PermutationTestConfig:
+    """
+    Load permutation test configuration from file and CLI overrides.
+
+    Args:
+        config_file: Path to YAML config file (optional, defaults to configs/permutation_test.yaml)
+        overrides: List of CLI overrides in "key=value" format (optional)
+
+    Returns:
+        Validated PermutationTestConfig instance
+    """
+    from ced_ml.utils.paths import get_default_paths
+
+    config_dict: dict[str, Any] = {}
+
+    # Auto-discover config file if not provided
+    if config_file is None:
+        try:
+            defaults = get_default_paths()
+            config_file = defaults["configs"] / "permutation_test.yaml"
+        except Exception:
+            config_file = Path("configs/permutation_test.yaml")
+
+    if config_file is not None:
+        config_file_path = Path(config_file)
+        if config_file_path.exists():
+            file_config = load_yaml(config_file_path)
+
+            # Resolve relative paths relative to config file directory
+            file_config = resolve_paths_relative_to_config(file_config, config_file_path)
+
+            # Merge file config
+            config_dict = file_config
+
+    if overrides:
+        config_dict = apply_overrides(config_dict, overrides)
+
+    try:
+        return PermutationTestConfig(**config_dict)
+    except ValidationError as e:
+        raise ValueError(f"Invalid permutation test configuration:\n{e}") from e
 
 
 def save_config(config: SplitsConfig | TrainingConfig, output_path: str | Path):

@@ -15,7 +15,7 @@
 - Multi-model stacking ensemble with OOF-based calibration
 - Temporal validation with holdout test sets
 - Panel size optimization for biomarker discovery/deployment
-- HPC-ready (LSF/Slurm) with efficient parallelization
+- HPC-ready (LSF/Slurm) with efficient run-time parallelization
 
 ---
 

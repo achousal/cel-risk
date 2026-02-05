@@ -296,7 +296,7 @@ def oof_predictions_with_nested_cv(
                 fold_importance = extract_importance_from_model(
                     fitted_model,
                     model_name,
-                    protein_cols,
+                    feature_names=None,  # extracted from Pipeline selection steps
                     X_val=X_val_fold,
                     y_val=y_val_fold,
                     grouped=oof_grouped,
