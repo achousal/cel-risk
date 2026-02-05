@@ -366,7 +366,7 @@ fi
 ced permutation-test \\
   --run-id {run_id} \\
   --model {model} \\
-  --split-seed {split_seed} \\
+  --split-seed-start {split_seed} \\
   --perm-index $PERM_INDEX \\
   --random-state {random_state}"""
     return cmd
@@ -399,7 +399,7 @@ def _build_permutation_test_full_command(
     cmd = f"""ced permutation-test \\
   --run-id {run_id} \\
   --model {model} \\
-  --split-seed {split_seed} \\
+  --split-seed-start {split_seed} \\
   --n-perms {n_perms} \\
   --n-jobs {n_jobs} \\
   --random-state {random_state}"""

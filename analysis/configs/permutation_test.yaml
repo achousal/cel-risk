@@ -5,6 +5,10 @@ n_perms: 200              # Number of permutations (default: 200; increase for t
 metric: auroc             # Metric to evaluate (only 'auroc' supported per ADR-007)
 random_state: 42          # Random seed for reproducibility
 
+# Split Seed Range
+split_seed_start: 10       # First split seed to test
+n_split_seeds: 3          # Number of consecutive seeds to test (seeds: start .. start + n - 1)
+
 # Parallelization
 n_jobs: 1                 # Parallel jobs for local execution (1 = sequential; -1 = all CPUs)
                           # Note: HPC mode uses job arrays, not n_jobs
@@ -17,4 +21,4 @@ save_individual: true     # Save individual permutation results (for HPC aggrega
 aggregation:
   method: pooled_null           # pooled_null | fisher | stouffer
   alpha: 0.05
-  min_seeds_required: 1         # minimum seeds to aggregate
+  min_seeds_required: 3         # minimum seeds to aggregate

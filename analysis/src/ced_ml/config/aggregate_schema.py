@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .output_schema import OutputConfig
+
 
 class AggregateConfig(BaseModel):
     """Configuration for aggregate-splits command."""
@@ -29,22 +31,8 @@ class AggregateConfig(BaseModel):
     corr_method: Literal["pearson", "spearman"] = "pearson"
     corr_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
-    # Output control
-    save_pooled_preds: bool = True
-    save_summary_csv: bool = True
-    save_plots: bool = True
-    save_thresholds: bool = True
-    plot_format: str = "png"
-    plot_dpi: int = 300
-
-    # Individual plot type controls
-    plot_roc: bool = True
-    plot_pr: bool = True
-    plot_calibration: bool = True
-    plot_risk_distribution: bool = True
-    plot_dca: bool = True
-    plot_oof_combined: bool = True
-    plot_learning_curve: bool = True
+    # Output configuration (loaded from output_config.yaml)
+    output: OutputConfig = Field(default_factory=OutputConfig)
 
 
 class PanelOptimizeConfig(BaseModel):

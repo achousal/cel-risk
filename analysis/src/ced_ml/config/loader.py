@@ -359,14 +359,31 @@ def load_aggregate_config(
     Returns:
         Validated AggregateConfig instance
     """
-    config_dict = {}
+    config_dict = {"output": DEFAULT_OUTPUT_CONFIG.copy()}
 
     if config_file is not None:
         config_file_path = Path(config_file)
-        config_dict = load_yaml(config_file_path)
+        file_config = load_yaml(config_file_path)
 
         # Resolve relative paths relative to config file directory
-        config_dict = resolve_paths_relative_to_config(config_dict, config_file_path)
+        file_config = resolve_paths_relative_to_config(file_config, config_file_path)
+
+        # Merge file config
+        for key, value in file_config.items():
+            if key in config_dict and isinstance(value, dict):
+                config_dict[key].update(value)
+            else:
+                config_dict[key] = value
+
+        # Load output config from output_config.yaml (if exists)
+        config_dir = config_file_path.parent
+        output_config_path = config_dir / "output_config.yaml"
+        if output_config_path.exists():
+            output_config = load_yaml(output_config_path)
+            # Flatten structured sections (artifacts, plots, aggregation, panels) into output dict
+            for section in ["artifacts", "plots", "aggregation", "panels"]:
+                if section in output_config:
+                    config_dict["output"].update(output_config[section])
 
     if overrides:
         config_dict = apply_overrides(config_dict, overrides)

@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 from ced_ml.cli.consensus_panel import (
     discover_models_with_aggregated_results,
-    load_model_rfe_ranking,
     load_model_stability,
 )
 
@@ -185,34 +184,3 @@ class TestLoadModelStability:
         """Missing stability file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="Feature stability"):
             load_model_stability(tmp_path)
-
-
-class TestLoadModelRfeRanking:
-    """Tests for load_model_rfe_ranking function."""
-
-    def test_loads_rfe_ranking(self, mock_aggregated_structure):
-        """Loads RFE ranking from aggregated directory."""
-        aggregated_dir = mock_aggregated_structure / "run_20260127_115115" / "LR_EN" / "aggregated"
-
-        rfe_ranking = load_model_rfe_ranking(aggregated_dir)
-
-        assert rfe_ranking is not None
-        assert len(rfe_ranking) == 5
-        # P5 was eliminated first (order 0)
-        assert rfe_ranking["P5"] == 0
-        # P1 was eliminated last (order 4)
-        assert rfe_ranking["P1"] == 4
-
-    def test_missing_rfe_returns_none(self, mock_aggregated_structure):
-        """Missing RFE file returns None (graceful fallback)."""
-        aggregated_dir = mock_aggregated_structure / "run_20260127_115115" / "RF" / "aggregated"
-
-        rfe_ranking = load_model_rfe_ranking(aggregated_dir)
-
-        assert rfe_ranking is None
-
-    def test_nonexistent_dir_returns_none(self, tmp_path):
-        """Nonexistent directory returns None."""
-        rfe_ranking = load_model_rfe_ranking(tmp_path / "nonexistent")
-
-        assert rfe_ranking is None

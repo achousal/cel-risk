@@ -1,9 +1,10 @@
 """Cross-model consensus panel generation via Robust Rank Aggregation.
 
 This module aggregates protein rankings from multiple models to create a single
-consensus panel for clinical deployment. The workflow:
+consensus panel for clinical deployment. The workflow (per ADR-004):
 
-1. Per-model ranking: Combine stability frequency + RFE rank into composite score
+1. Per-model ranking: OOF importance (primary) + Essentiality (secondary) +
+   Stability (tie-break) combined into composite score
 2. Cross-model RRA: Aggregate rankings via geometric mean of reciprocal ranks
 3. Correlation clustering: Deduplicate highly correlated proteins (|r| > threshold)
 4. Top-N selection: Extract final panel
@@ -56,45 +57,38 @@ class ConsensusResult:
 
 def compute_per_model_ranking(
     stability_df: pd.DataFrame,
-    rfe_ranking: dict[str, int] | None = None,
-    rfe_weight: float = 0.5,
     stability_col: str = "selection_fraction",
     oof_importance_df: pd.DataFrame | None = None,
     essentiality_df: pd.DataFrame | None = None,
-    use_stringent_ranking: bool = False,
+    oof_weight: float = 0.6,
+    essentiality_weight: float = 0.3,
+    stability_weight: float = 0.1,
 ) -> pd.DataFrame:
     """Compute composite ranking for a single model.
 
-    Supports two ranking modes:
-    1. Legacy mode (use_stringent_ranking=False): Stability + RFE
-    2. Stringent mode (use_stringent_ranking=True): OOF importance (primary) +
-       Essentiality (secondary) + Stability (tie-break)
+    Uses OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
+    per ADR-004 feature selection strategy.
 
     Args:
         stability_df: DataFrame with columns [protein, selection_fraction].
-        rfe_ranking: Dict mapping protein -> elimination_order (0 = removed first).
-            If None, uses stability-only ranking. Used in legacy mode.
-        rfe_weight: Weight for RFE component (0-1). Stability weight = 1 - rfe_weight.
-            Used in legacy mode only.
         stability_col: Column name for stability frequency.
         oof_importance_df: DataFrame with OOF grouped importance (columns: feature/protein,
-            importance/mean_importance). Required for stringent mode.
+            importance/mean_importance).
         essentiality_df: DataFrame with drop-column essentiality results (columns:
-            cluster_id, representative/features, mean_delta_auroc). Optional for stringent mode.
-        use_stringent_ranking: Use stringent ranking (OOF + essentiality + stability)
-            instead of legacy (stability + RFE).
+            cluster_id, representative/features, mean_delta_auroc).
+        oof_weight: Weight for OOF importance (default 0.6).
+        essentiality_weight: Weight for essentiality (default 0.3).
+        stability_weight: Weight for stability (default 0.1).
 
     Returns:
         DataFrame with columns:
             - protein: Protein name
             - stability_freq: Selection frequency [0, 1]
             - stability_rank: Rank by stability (1 = best)
-            - oof_importance: OOF importance score (stringent mode)
-            - oof_rank: Rank by OOF importance (stringent mode)
-            - essentiality: Drop-column delta AUROC (stringent mode)
-            - essentiality_rank: Rank by essentiality (stringent mode)
-            - rfe_importance: Normalized RFE importance [0, 1] (legacy mode)
-            - rfe_rank: Rank by RFE (legacy mode)
+            - oof_importance: OOF importance score
+            - oof_rank: Rank by OOF importance
+            - essentiality: Drop-column delta AUROC
+            - essentiality_rank: Rank by essentiality
             - composite_score: Weighted combination [0, 1]
             - final_rank: Rank by composite score (1 = best)
     """
@@ -118,205 +112,133 @@ def compute_per_model_ranking(
     n_proteins = len(df)
     df["norm_stability"] = (n_proteins - df["stability_rank"] + 1) / n_proteins
 
-    # Initialize optional columns (only for stringent mode columns that need pre-init)
-    # Legacy mode columns (rfe_importance, rfe_rank, norm_rfe) are set in the legacy branch
-    # to avoid conflicts with the merge operation
-    if use_stringent_ranking:
-        df["oof_importance"] = np.nan
-        df["oof_rank"] = np.nan
-        df["norm_oof"] = np.nan
-        df["essentiality"] = np.nan
-        df["essentiality_rank"] = np.nan
-        df["norm_essentiality"] = np.nan
+    # Initialize value columns (rank columns created during processing)
+    df["oof_importance"] = np.nan
+    df["essentiality"] = np.nan
 
-    if use_stringent_ranking:
-        # Stringent mode: OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
-        # Weights: OOF=0.6, Essentiality=0.3, Stability=0.1
-
-        # Handle OOF importance (primary signal)
-        if oof_importance_df is not None and len(oof_importance_df) > 0:
-            # Detect column names (support both 'feature' and 'protein')
-            oof_col = "feature" if "feature" in oof_importance_df.columns else "protein"
-            imp_col = (
-                "mean_importance"
-                if "mean_importance" in oof_importance_df.columns
-                else "importance"
-            )
-
-            oof_lookup = dict(
-                zip(
-                    oof_importance_df[oof_col],
-                    oof_importance_df[imp_col],
-                    strict=False,
-                )
-            )
-            df["oof_importance"] = df["protein"].map(oof_lookup)
-
-            # Rank by OOF importance (higher = better)
-            oof_valid = df[df["oof_importance"].notna()].copy()
-            if len(oof_valid) > 0:
-                oof_valid = oof_valid.sort_values("oof_importance", ascending=False)
-                oof_valid["oof_rank"] = range(1, len(oof_valid) + 1)
-                df = df.merge(oof_valid[["protein", "oof_rank"]], on="protein", how="left")
-
-                # Normalize OOF to [0, 1]
-                n_oof = len(oof_valid)
-                df["norm_oof"] = np.where(
-                    df["oof_rank"].notna(),
-                    (n_oof - df["oof_rank"] + 1) / n_oof,
-                    0.0,  # Missing = 0 contribution
-                )
-            else:
-                df["norm_oof"] = 0.0
-        else:
-            df["norm_oof"] = 0.0
-
-        # Handle essentiality (secondary signal)
-        if essentiality_df is not None and len(essentiality_df) > 0:
-            # Essentiality df has cluster_id, mean_delta_auroc
-            # Map representative protein to essentiality score
-            if "representative" in essentiality_df.columns:
-                ess_col = "representative"
-            elif "features" in essentiality_df.columns:
-                # May be JSON list; take first feature
-                ess_col = "features"
-            else:
-                ess_col = None
-
-            if ess_col and "mean_delta_auroc" in essentiality_df.columns:
-                if ess_col == "features":
-                    # Parse JSON and take first feature
-                    import json as json_module
-
-                    def parse_first_feature(x):
-                        try:
-                            features = json_module.loads(x) if isinstance(x, str) else x
-                            return features[0] if features else None
-                        except (json_module.JSONDecodeError, TypeError):
-                            return x
-
-                    ess_lookup = dict(
-                        zip(
-                            essentiality_df[ess_col].apply(parse_first_feature),
-                            essentiality_df["mean_delta_auroc"],
-                            strict=False,
-                        )
-                    )
-                else:
-                    ess_lookup = dict(
-                        zip(
-                            essentiality_df[ess_col],
-                            essentiality_df["mean_delta_auroc"],
-                            strict=False,
-                        )
-                    )
-                df["essentiality"] = df["protein"].map(ess_lookup)
-
-                # Rank by essentiality (higher delta = more essential)
-                ess_valid = df[df["essentiality"].notna()].copy()
-                if len(ess_valid) > 0:
-                    ess_valid = ess_valid.sort_values("essentiality", ascending=False)
-                    ess_valid["essentiality_rank"] = range(1, len(ess_valid) + 1)
-                    df = df.merge(
-                        ess_valid[["protein", "essentiality_rank"]], on="protein", how="left"
-                    )
-
-                    # Normalize essentiality to [0, 1]
-                    n_ess = len(ess_valid)
-                    df["norm_essentiality"] = np.where(
-                        df["essentiality_rank"].notna(),
-                        (n_ess - df["essentiality_rank"] + 1) / n_ess,
-                        0.0,
-                    )
-                else:
-                    df["norm_essentiality"] = 0.0
-            else:
-                df["norm_essentiality"] = 0.0
-        else:
-            df["norm_essentiality"] = 0.0
-
-        # Compute composite score: OOF (0.6) + Essentiality (0.3) + Stability (0.1)
-        # These weights reflect: primary > secondary > tie-break
-        df["composite_score"] = (
-            0.6 * df["norm_oof"].fillna(0.0)
-            + 0.3 * df["norm_essentiality"].fillna(0.0)
-            + 0.1 * df["norm_stability"]
+    # Handle OOF importance (primary signal)
+    if oof_importance_df is not None and len(oof_importance_df) > 0:
+        # Detect column names (support both 'feature' and 'protein')
+        oof_col = "feature" if "feature" in oof_importance_df.columns else "protein"
+        imp_col = (
+            "mean_importance" if "mean_importance" in oof_importance_df.columns else "importance"
         )
 
-    else:
-        # Legacy mode: Stability + RFE
-        if rfe_ranking and len(rfe_ranking) > 0:
-            # Convert elimination order to importance
-            # Higher elimination_order = eliminated later = more important
-            max_order = max(rfe_ranking.values()) if rfe_ranking else 0
+        oof_lookup = dict(
+            zip(
+                oof_importance_df[oof_col],
+                oof_importance_df[imp_col],
+                strict=False,
+            )
+        )
+        df["oof_importance"] = df["protein"].map(oof_lookup)
 
-            def get_rfe_importance(protein: str) -> float:
-                if protein in rfe_ranking:
-                    # Normalize: eliminated last (max_order) -> 1.0, eliminated first (0) -> low
-                    return (rfe_ranking[protein] + 1) / (max_order + 1)
-                return np.nan
+        # Rank by OOF importance (higher = better)
+        oof_valid = df[df["oof_importance"].notna()].copy()
+        if len(oof_valid) > 0:
+            oof_valid = oof_valid.sort_values("oof_importance", ascending=False)
+            oof_rank_map = {p: r for r, p in enumerate(oof_valid["protein"], 1)}
+            df["oof_rank"] = df["protein"].map(oof_rank_map)
 
-            df["rfe_importance"] = df["protein"].apply(get_rfe_importance)
-
-            # Compute RFE rank (proteins with RFE data only)
-            rfe_valid = df[df["rfe_importance"].notna()].copy()
-            rfe_valid = rfe_valid.sort_values("rfe_importance", ascending=False)
-            rfe_valid["rfe_rank"] = range(1, len(rfe_valid) + 1)
-
-            # Merge back
-            df = df.merge(rfe_valid[["protein", "rfe_rank"]], on="protein", how="left")
-
-            # Normalize RFE to [0, 1]
-            n_rfe = rfe_valid["rfe_rank"].notna().sum()
-            if n_rfe > 0:
-                df["norm_rfe"] = np.where(
-                    df["rfe_rank"].notna(),
-                    (n_rfe - df["rfe_rank"] + 1) / n_rfe,
-                    np.nan,
-                )
-            else:
-                df["norm_rfe"] = np.nan
-
-            # Composite score: weighted combination
-            # For proteins without RFE, use stability only
-            df["composite_score"] = np.where(
-                df["norm_rfe"].notna(),
-                rfe_weight * df["norm_rfe"] + (1 - rfe_weight) * df["norm_stability"],
-                df["norm_stability"],
+            # Normalize OOF to [0, 1]
+            n_oof = len(oof_valid)
+            df["norm_oof"] = np.where(
+                df["oof_rank"].notna(),
+                (n_oof - df["oof_rank"] + 1) / n_oof,
+                0.0,  # Missing = 0 contribution
             )
         else:
-            # No RFE: use stability only
-            df["rfe_importance"] = np.nan
-            df["rfe_rank"] = np.nan
-            df["composite_score"] = df["norm_stability"]
+            df["oof_rank"] = np.nan
+            df["norm_oof"] = 0.0
+    else:
+        df["oof_rank"] = np.nan
+        df["norm_oof"] = 0.0
+
+    # Handle essentiality (secondary signal)
+    if essentiality_df is not None and len(essentiality_df) > 0:
+        # Essentiality df has cluster_id, mean_delta_auroc
+        # Map representative protein to essentiality score
+        if "representative" in essentiality_df.columns:
+            ess_col = "representative"
+        elif "features" in essentiality_df.columns:
+            # May be JSON list; take first feature
+            ess_col = "features"
+        else:
+            ess_col = None
+
+        if ess_col and "mean_delta_auroc" in essentiality_df.columns:
+            if ess_col == "features":
+                # Parse JSON and take first feature
+                def parse_first_feature(x):
+                    try:
+                        features = json.loads(x) if isinstance(x, str) else x
+                        return features[0] if features else None
+                    except (json.JSONDecodeError, TypeError):
+                        return x
+
+                ess_lookup = dict(
+                    zip(
+                        essentiality_df[ess_col].apply(parse_first_feature),
+                        essentiality_df["mean_delta_auroc"],
+                        strict=False,
+                    )
+                )
+            else:
+                ess_lookup = dict(
+                    zip(
+                        essentiality_df[ess_col],
+                        essentiality_df["mean_delta_auroc"],
+                        strict=False,
+                    )
+                )
+            df["essentiality"] = df["protein"].map(ess_lookup)
+
+            # Rank by essentiality (higher delta = more essential)
+            ess_valid = df[df["essentiality"].notna()].copy()
+            if len(ess_valid) > 0:
+                ess_valid = ess_valid.sort_values("essentiality", ascending=False)
+                ess_rank_map = {p: r for r, p in enumerate(ess_valid["protein"], 1)}
+                df["essentiality_rank"] = df["protein"].map(ess_rank_map)
+
+                # Normalize essentiality to [0, 1]
+                n_ess = len(ess_valid)
+                df["norm_essentiality"] = np.where(
+                    df["essentiality_rank"].notna(),
+                    (n_ess - df["essentiality_rank"] + 1) / n_ess,
+                    0.0,
+                )
+            else:
+                df["essentiality_rank"] = np.nan
+                df["norm_essentiality"] = 0.0
+        else:
+            df["essentiality_rank"] = np.nan
+            df["norm_essentiality"] = 0.0
+    else:
+        df["essentiality_rank"] = np.nan
+        df["norm_essentiality"] = 0.0
+
+    # Compute composite score with configurable weights
+    df["composite_score"] = (
+        oof_weight * df["norm_oof"].fillna(0.0)
+        + essentiality_weight * df["norm_essentiality"].fillna(0.0)
+        + stability_weight * df["norm_stability"]
+    )
 
     # Final rank by composite score
     df = df.sort_values("composite_score", ascending=False)
     df["final_rank"] = range(1, len(df) + 1)
 
-    # Select output columns based on mode
-    if use_stringent_ranking:
-        output_cols = [
-            "protein",
-            "stability_freq",
-            "stability_rank",
-            "oof_importance",
-            "oof_rank",
-            "essentiality",
-            "essentiality_rank",
-            "composite_score",
-            "final_rank",
-        ]
-    else:
-        output_cols = [
-            "protein",
-            "stability_freq",
-            "stability_rank",
-            "rfe_importance",
-            "rfe_rank",
-            "composite_score",
-            "final_rank",
-        ]
+    output_cols = [
+        "protein",
+        "stability_freq",
+        "stability_rank",
+        "oof_importance",
+        "oof_rank",
+        "essentiality",
+        "essentiality_rank",
+        "composite_score",
+        "final_rank",
+    ]
 
     # Keep only columns that exist
     output_cols = [c for c in output_cols if c in df.columns]
@@ -555,61 +477,51 @@ def cluster_and_select_representatives(
 
 def build_consensus_panel(
     model_stability: dict[str, pd.DataFrame],
-    model_rfe_rankings: dict[str, dict[str, int] | None],
     df_train: pd.DataFrame,
     stability_threshold: float = 0.90,
     corr_threshold: float = 0.85,
     target_size: int = 25,
-    rfe_weight: float = 0.5,
     rra_method: str = "geometric_mean",
     corr_method: str = "spearman",
     model_oof_importance: dict[str, pd.DataFrame] | None = None,
     model_essentiality: dict[str, pd.DataFrame] | None = None,
-    use_stringent_ranking: bool = False,
+    oof_weight: float = 0.6,
+    essentiality_weight: float = 0.3,
+    stability_weight: float = 0.1,
 ) -> ConsensusResult:
     """Build consensus panel from multiple models.
 
     Main entry point for cross-model consensus generation.
 
-    Supports two ranking modes:
-    1. Legacy mode (use_stringent_ranking=False): Stability + RFE
-    2. Stringent mode (use_stringent_ranking=True): OOF importance (primary) +
-       Essentiality (secondary) + Stability (tie-break)
+    Uses composite ranking per ADR-004: OOF importance (primary) +
+    Essentiality (secondary) + Stability (tie-break).
 
     Args:
         model_stability: Dict mapping model_name -> DataFrame with columns
             [protein, selection_fraction]. Only proteins above stability_threshold
             are considered.
-        model_rfe_rankings: Dict mapping model_name -> RFE ranking dict
-            (protein -> elimination_order), or None if RFE not available.
-            Used in legacy mode.
         df_train: Training data for correlation computation.
         stability_threshold: Minimum selection frequency to include protein.
         corr_threshold: Correlation threshold for clustering.
         target_size: Target panel size after pruning.
-        rfe_weight: Weight for RFE vs stability (0-1). Used in legacy mode.
         rra_method: RRA aggregation method.
         corr_method: Correlation method for clustering.
         model_oof_importance: Dict mapping model_name -> OOF importance DataFrame
-            (columns: feature/protein, importance/mean_importance). For stringent mode.
+            (columns: feature/protein, importance/mean_importance).
         model_essentiality: Dict mapping model_name -> Essentiality DataFrame
-            (columns: cluster_id, representative/features, mean_delta_auroc). For stringent mode.
-        use_stringent_ranking: Use stringent ranking (OOF + essentiality + stability)
-            instead of legacy (stability + RFE).
+            (columns: cluster_id, representative/features, mean_delta_auroc).
+        oof_weight: Weight for OOF importance in composite score (default 0.6).
+        essentiality_weight: Weight for essentiality in composite score (default 0.3).
+        stability_weight: Weight for stability in composite score (default 0.1).
 
     Returns:
         ConsensusResult with final panel and intermediate data.
     """
     logger.info(f"Building consensus panel from {len(model_stability)} models")
-    ranking_mode = (
-        "stringent (OOF+essentiality+stability)"
-        if use_stringent_ranking
-        else "legacy (stability+RFE)"
-    )
     logger.info(
         f"Parameters: stability_threshold={stability_threshold}, "
         f"corr_threshold={corr_threshold}, target_size={target_size}, "
-        f"ranking_mode={ranking_mode}"
+        f"composite_weights=(oof={oof_weight}, ess={essentiality_weight}, stab={stability_weight})"
     )
 
     # Step 1: Compute per-model rankings
@@ -627,54 +539,42 @@ def build_consensus_panel(
             )
             continue
 
-        # Get ranking inputs based on mode
-        rfe_ranking = model_rfe_rankings.get(model_name)
-        has_rfe = rfe_ranking is not None and len(rfe_ranking) > 0
-
+        # Get OOF importance and essentiality if available
         oof_importance_df = None
         essentiality_df = None
         has_oof = False
         has_essentiality = False
 
-        if use_stringent_ranking:
-            if model_oof_importance:
-                oof_importance_df = model_oof_importance.get(model_name)
-                has_oof = oof_importance_df is not None and len(oof_importance_df) > 0
-            if model_essentiality:
-                essentiality_df = model_essentiality.get(model_name)
-                has_essentiality = essentiality_df is not None and len(essentiality_df) > 0
+        if model_oof_importance:
+            oof_importance_df = model_oof_importance.get(model_name)
+            has_oof = oof_importance_df is not None and len(oof_importance_df) > 0
+        if model_essentiality:
+            essentiality_df = model_essentiality.get(model_name)
+            has_essentiality = essentiality_df is not None and len(essentiality_df) > 0
 
         # Compute composite ranking
         ranking_df = compute_per_model_ranking(
             stability_df=stable_df,
-            rfe_ranking=rfe_ranking,
-            rfe_weight=rfe_weight,
             stability_col="selection_fraction",
             oof_importance_df=oof_importance_df,
             essentiality_df=essentiality_df,
-            use_stringent_ranking=use_stringent_ranking,
+            oof_weight=oof_weight,
+            essentiality_weight=essentiality_weight,
+            stability_weight=stability_weight,
         )
 
         per_model_rankings[model_name] = ranking_df
 
         model_stats[model_name] = {
             "n_stable_proteins": len(stable_df),
-            "has_rfe": has_rfe,
-            "n_rfe_proteins": len(rfe_ranking) if has_rfe else 0,
             "has_oof_importance": has_oof,
             "has_essentiality": has_essentiality,
         }
 
-        if use_stringent_ranking:
-            logger.info(
-                f"Model {model_name}: {len(stable_df)} stable proteins, "
-                f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
-            )
-        else:
-            logger.info(
-                f"Model {model_name}: {len(stable_df)} stable proteins, "
-                f"RFE={'yes' if has_rfe else 'no'}"
-            )
+        logger.info(
+            f"Model {model_name}: {len(stable_df)} stable proteins, "
+            f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
+        )
 
     if len(per_model_rankings) < 2:
         raise ValueError(
@@ -743,8 +643,10 @@ def build_consensus_panel(
                     "protein": row["protein"],
                     "stability_freq": row["stability_freq"],
                     "stability_rank": row["stability_rank"],
-                    "rfe_importance": row.get("rfe_importance"),
-                    "rfe_rank": row.get("rfe_rank"),
+                    "oof_importance": row.get("oof_importance"),
+                    "oof_rank": row.get("oof_rank"),
+                    "essentiality": row.get("essentiality"),
+                    "essentiality_rank": row.get("essentiality_rank"),
                     "composite_score": row["composite_score"],
                     "final_rank": row["final_rank"],
                 }
@@ -762,7 +664,11 @@ def build_consensus_panel(
             "stability_threshold": stability_threshold,
             "corr_threshold": corr_threshold,
             "target_size": target_size,
-            "rfe_weight": rfe_weight,
+            "composite_ranking": {
+                "oof_weight": oof_weight,
+                "essentiality_weight": essentiality_weight,
+                "stability_weight": stability_weight,
+            },
             "rra_method": rra_method,
             "corr_method": corr_method,
         },

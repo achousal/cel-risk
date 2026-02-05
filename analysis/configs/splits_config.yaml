@@ -11,8 +11,8 @@ test_size: 0.25
 holdout_size: 0.30  # Only used when mode=holdout
 
 # Repeated splits
-n_splits: 5  # Single split for 1-hour multi-objective run
-seed_start: 0
+n_splits: 30  # Single split for 1-hour multi-objective run
+seed_start: 100
 
 # Prevalent case handling
 prevalent_train_only: true  # Only include prevalent in TRAIN (not VAL/TEST)

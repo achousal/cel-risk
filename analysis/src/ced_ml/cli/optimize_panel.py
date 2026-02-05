@@ -32,16 +32,6 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from ced_ml.data.schema import TARGET_COL, get_positive_label
-from ced_ml.features.corr_prune import (
-    build_correlation_graph,
-    compute_correlation_matrix,
-    find_connected_components,
-)
-from ced_ml.features.drop_column import (
-    aggregate_drop_column_results,
-    compute_drop_column_importance,
-)
 from ced_ml.features.rfe import (
     RFEResult,
     aggregate_rfe_results,
@@ -419,12 +409,11 @@ def run_optimize_panel_aggregated(
                     )
             else:
                 logger.warning(
-                    f"No significance data found for {model_name}, " "skipping significance check"
+                    f"No significance data found for {model_name}, skipping significance check"
                 )
         else:
             logger.warning(
-                f"No aggregated significance data found in {run_dir}, "
-                "skipping significance check"
+                f"No aggregated significance data found in {run_dir}, skipping significance check"
             )
 
     # Load aggregated stability panel
@@ -503,8 +492,7 @@ def run_optimize_panel_aggregated(
     initial_proteins = [p for p in stable_proteins if p in df.columns]
     if len(initial_proteins) < min_size:
         raise ValueError(
-            f"Only {len(initial_proteins)} stable proteins available, "
-            f"less than min_size={min_size}"
+            f"Only {len(initial_proteins)} stable proteins available, less than min_size={min_size}"
         )
 
     filtered_cat_cols = [c for c in cat_cols if c in df.columns]
@@ -590,26 +578,26 @@ def run_optimize_panel_aggregated(
             from sklearn.utils.parallel import Parallel, delayed
 
             logger.info(
-                f"\n{'='*60}\n"
+                f"\n{'=' * 60}\n"
                 f"Multi-seed RFE execution\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
                 f"Total seeds: {len(split_dirs)}\n"
                 f"Parallel seed jobs: {seed_jobs}\n"
                 f"Optuna jobs per seed: {optuna_jobs}\n"
                 f"Starting panel: {len(initial_proteins)} proteins\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
             )
             per_seed_results: list[RFEResult] = Parallel(n_jobs=seed_jobs)(
                 delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
             )
         else:
             logger.info(
-                f"\n{'='*60}\n"
+                f"\n{'=' * 60}\n"
                 f"Sequential RFE execution\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
                 f"Total seeds: {len(split_dirs)}\n"
                 f"Starting panel: {len(initial_proteins)} proteins\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
             )
             per_seed_results = []
             for idx, sd in enumerate(split_dirs, 1):
@@ -623,11 +611,11 @@ def run_optimize_panel_aggregated(
     mean_auroc = np.mean([r.max_auroc for r in per_seed_results])
     std_auroc = np.std([r.max_auroc for r in per_seed_results])
     logger.info(
-        f"\n{'='*60}\n"
+        f"\n{'=' * 60}\n"
         f"All seeds completed\n"
-        f"Total time: {multi_seed_elapsed/60:.1f} min\n"
-        f"Average per seed: {multi_seed_elapsed/len(split_dirs)/60:.1f} min\n"
-        f"{'='*60}\n"
+        f"Total time: {multi_seed_elapsed / 60:.1f} min\n"
+        f"Average per seed: {multi_seed_elapsed / len(split_dirs) / 60:.1f} min\n"
+        f"{'=' * 60}\n"
     )
 
     # Aggregate across seeds
@@ -640,7 +628,7 @@ def run_optimize_panel_aggregated(
         f"\nAggregated RFE ({n_seeds} seeds):\n"
         f"  Mean best AUROC: {mean_auroc:.3f} +/- {std_auroc:.3f}\n"
         f"  Recommended: {rec_summary}\n"
-        f"  Wall time: {multi_seed_elapsed/60:.1f} min ({n_jobs} cores)"
+        f"  Wall time: {multi_seed_elapsed / 60:.1f} min ({n_jobs} cores)"
     )
     logger.info(
         f"Aggregation complete:\n"
@@ -716,129 +704,6 @@ def run_optimize_panel_aggregated(
         outdir=Path(outdir),
         aggregated=True,
     )
-
-    # --- Drop-column essentiality validation per recommended panel threshold ---
-    try:
-        logger.info("\n" + "=" * 60)
-        logger.info("Running drop-column essentiality validation on recommended panels...")
-        logger.info("=" * 60)
-
-        # Create binary target vector (needed for drop-column validation)
-        if TARGET_COL not in df.columns:
-            raise ValueError(f"Target column '{TARGET_COL}' not found in data")
-
-        positive_label = get_positive_label(scenario)
-        y_all = (df[TARGET_COL] == positive_label).astype(int).values
-        logger.info(
-            f"Target vector created: {y_all.sum()} positive cases out of {len(y_all)} samples"
-        )
-
-        # Create essentiality output directory
-        essentiality_dir = outdir / "essentiality"
-        essentiality_dir.mkdir(parents=True, exist_ok=True)
-
-        # Extract feature ranking for panel extraction
-        all_features = [row["feature"] for row in result.feature_ranking]
-
-        # Summary storage for all thresholds
-        essentiality_summaries = []
-
-        # Run essentiality validation for each recommended panel threshold
-        for threshold_name, panel_size in result.recommended_panels.items():
-            logger.info(f"\n--- Essentiality validation: {threshold_name} (size={panel_size}) ---")
-
-            # Extract panel features (top-k by elimination order)
-            panel_features = all_features[:panel_size]
-            logger.info(f"Panel features: {len(panel_features)}")
-
-            # Build correlation clusters for this panel
-            first_split = split_dirs[0]
-            seed = int(first_split.name.replace("split_seed", ""))
-            train_file = Path(split_dir) / f"train_idx_{scenario}_seed{seed}.csv"
-            train_idx = pd.read_csv(train_file).squeeze().values
-
-            X_corr = df.iloc[train_idx][panel_features]
-            corr_matrix = compute_correlation_matrix(X_corr, panel_features, method=corr_method)
-            adj_graph = build_correlation_graph(corr_matrix, threshold=corr_threshold)
-            clusters = find_connected_components(adj_graph)
-            logger.info(f"Found {len(clusters)} correlation clusters for {threshold_name}")
-
-            # Run drop-column across all folds
-            drop_column_results_per_fold = []
-            for split_dir_path in split_dirs:
-                seed = int(split_dir_path.name.replace("split_seed", ""))
-                model_path = split_dir_path / "core" / f"{model_name}__final_model.joblib"
-
-                train_file = Path(split_dir) / f"train_idx_{scenario}_seed{seed}.csv"
-                val_file = Path(split_dir) / f"val_idx_{scenario}_seed{seed}.csv"
-                train_idx = pd.read_csv(train_file).squeeze().values
-                val_idx = pd.read_csv(val_file).squeeze().values
-
-                bundle = joblib.load(model_path)
-                pipeline = bundle.get("model")
-
-                if pipeline is None:
-                    logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
-                    continue
-
-                X_train_seed = df.iloc[train_idx][panel_features]
-                y_train_seed = y_all[train_idx]
-                X_val_seed = df.iloc[val_idx][panel_features]
-                y_val_seed = y_all[val_idx]
-
-                fold_results = compute_drop_column_importance(
-                    estimator=pipeline,
-                    X_train=X_train_seed,
-                    y_train=y_train_seed,
-                    X_val=X_val_seed,
-                    y_val=y_val_seed,
-                    feature_clusters=clusters,
-                    random_state=seed,
-                )
-                drop_column_results_per_fold.append(fold_results)
-
-            # Aggregate and save per-threshold results
-            drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
-
-            # Clean threshold name for filename (e.g., "95%" -> "95pct")
-            threshold_clean = threshold_name.replace("%", "pct").replace(" ", "_").lower()
-            threshold_path = essentiality_dir / f"panel_{threshold_clean}_essentiality.csv"
-            drop_column_df.to_csv(threshold_path, index=False)
-            logger.info(f"Saved {threshold_name} essentiality to {threshold_path}")
-
-            # Collect summary stats
-            essentiality_summaries.append(
-                {
-                    "threshold": threshold_name,
-                    "panel_size": panel_size,
-                    "n_clusters": len(clusters),
-                    "mean_delta_auroc": drop_column_df["mean_delta_auroc"].mean(),
-                    "max_delta_auroc": drop_column_df["mean_delta_auroc"].max(),
-                    "top_cluster_id": drop_column_df.iloc[0]["cluster_id"],
-                    "top_cluster_delta": drop_column_df.iloc[0]["mean_delta_auroc"],
-                }
-            )
-
-        # Save essentiality summary
-        summary_df = pd.DataFrame(essentiality_summaries)
-        summary_path = essentiality_dir / "essentiality_summary.csv"
-        summary_df.to_csv(summary_path, index=False)
-        logger.info(f"Saved essentiality summary to {summary_path}")
-
-        # Print summary
-        print("\nDrop-column essentiality validation complete:")
-        print(f"  Validated {len(result.recommended_panels)} recommended panels")
-        print(f"  Across {len(split_dirs)} folds")
-        print(f"  Results saved to: {essentiality_dir}")
-        for row in essentiality_summaries:
-            print(
-                f"    - {row['threshold']}: {row['n_clusters']} clusters, "
-                f"top delta={row['top_cluster_delta']:+.4f}"
-            )
-
-    except Exception as e:
-        logger.warning(f"Drop-column essentiality validation failed: {e}", exc_info=True)
-        logger.info("Continuing without essentiality validation results")
 
     logger.info("Aggregated panel optimization completed successfully")
 

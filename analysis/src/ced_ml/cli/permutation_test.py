@@ -95,7 +95,7 @@ def find_trained_model_path(
 def run_permutation_test_cli(
     run_id: str | None = None,
     model: str | None = None,
-    split_seed: int = 0,
+    split_seeds: list[int] | None = None,
     n_perms: int = 200,
     perm_index: int | None = None,
     metric: str = "auroc",
@@ -104,7 +104,7 @@ def run_permutation_test_cli(
     random_state: int = 42,
     log_level: int | None = None,
 ) -> None:
-    """Run permutation test for trained model(s).
+    """Run permutation test for trained model(s) across one or more split seeds.
 
     Tests null hypothesis that model performance is no better than chance
     by comparing observed AUROC against null distribution from label permutations.
@@ -112,8 +112,8 @@ def run_permutation_test_cli(
     Args:
         run_id: Run ID to test (required for auto-discovery)
         model: Specific model to test (default: all models with results)
-        split_seed: Split seed to use (default: 0)
-        n_perms: Number of permutations (default: 200)
+        split_seeds: List of split seeds to test (default: [0])
+        n_perms: Number of permutations per seed (default: 200)
         perm_index: Single permutation index for HPC job arrays (optional)
         metric: Metric to use (default: 'auroc', only AUROC supported per ADR-007)
         n_jobs: Parallel jobs for in-process parallelization (default: 1)
@@ -125,6 +125,8 @@ def run_permutation_test_cli(
         FileNotFoundError: If model artifacts or data not found
         ValueError: If invalid parameters provided
     """
+    if split_seeds is None:
+        split_seeds = [0]
     if log_level is None:
         log_level = logging.INFO
 
@@ -153,42 +155,19 @@ def run_permutation_test_cli(
         outdir=run_path,
         run_id=run_id,
         model=model or "all",
-        split_seed=split_seed,
+        split_seed=split_seeds[0],
         logger_name=f"ced_ml.permutation_test.{run_id}",
     )
 
     logger.info(
         f"Starting permutation test: run_id={run_id}, models={models_to_test}, "
-        f"split_seed={split_seed}, n_perms={n_perms}, n_jobs={n_jobs}"
+        f"split_seeds={split_seeds}, n_perms={n_perms}, n_jobs={n_jobs}"
     )
 
     for model_name in models_to_test:
         logger.info(f"\n{'='*60}\nTesting model: {model_name}\n{'='*60}")
 
-        model_path = find_trained_model_path(run_id, model_name, split_seed)
-        logger.info(f"Loading model from: {model_path}")
-
-        bundle = joblib.load(model_path)
-        if not isinstance(bundle, dict):
-            raise ValueError("Model bundle must be a dictionary")
-
-        pipeline = bundle.get("model")
-        resolved_cols = bundle.get("resolved_columns", {})
-        scenario = bundle.get("scenario", "IncidentOnly")
-
-        if pipeline is None:
-            raise ValueError(f"Model bundle missing 'model' key: {model_path}")
-
-        protein_cols = resolved_cols.get("protein_cols", [])
-        cat_cols = resolved_cols.get("categorical_metadata", [])
-        meta_num_cols = resolved_cols.get("numeric_metadata", [])
-
-        if not protein_cols:
-            raise ValueError("Model bundle missing protein_cols")
-
-        logger.info(f"Model metadata: {len(protein_cols)} proteins, scenario={scenario}")
-
-        # Check for pre-computed HPC permutation results
+        # Check for pre-computed HPC permutation results (per-model check)
         sig_dir = run_path / model_name / "significance"
         perm_files = list(sig_dir.glob("perm_*.joblib")) if sig_dir.exists() else []
 
@@ -196,21 +175,18 @@ def run_permutation_test_cli(
             # HPC results exist - aggregate and skip local execution
             logger.info(f"Found {len(perm_files)} pre-computed permutation results from HPC")
 
-            df = load_hpc_permutation_results(sig_dir)
+            df_hpc = load_hpc_permutation_results(sig_dir)
 
-            # Need to add observed AUROC from training results
-            # Load from validation metrics or training output
             val_metrics_file = (
                 run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
             )
             if val_metrics_file.exists():
                 val_df = pd.read_csv(val_metrics_file)
                 if "auroc" in val_df.columns:
-                    df["observed_auroc"] = float(val_df["auroc"].iloc[0])
+                    df_hpc["observed_auroc"] = float(val_df["auroc"].iloc[0])
 
-            result = pool_null_distribution(df, model=model_name, alpha=0.05)
+            result = pool_null_distribution(df_hpc, model=model_name, alpha=0.05)
 
-            # Save aggregated result
             agg_df = pd.DataFrame(
                 [
                     {
@@ -228,7 +204,6 @@ def run_permutation_test_cli(
             agg_path = sig_dir / "aggregated_significance.csv"
             agg_df.to_csv(agg_path, index=False)
 
-            # Print summary and return early
             print(f"\n{'='*60}")
             print(f"Aggregated HPC Permutation Results: {model_name}")
             print(f"{'='*60}")
@@ -240,6 +215,24 @@ def run_permutation_test_cli(
             print(f"{'='*60}\n")
 
             continue  # Skip to next model
+
+        # Load first seed's model bundle to get column metadata and scenario
+        first_model_path = find_trained_model_path(run_id, model_name, split_seeds[0])
+        first_bundle = joblib.load(first_model_path)
+        if not isinstance(first_bundle, dict):
+            raise ValueError("Model bundle must be a dictionary")
+
+        resolved_cols = first_bundle.get("resolved_columns", {})
+        scenario = first_bundle.get("scenario", "IncidentOnly")
+
+        protein_cols = resolved_cols.get("protein_cols", [])
+        cat_cols = resolved_cols.get("categorical_metadata", [])
+        meta_num_cols = resolved_cols.get("numeric_metadata", [])
+
+        if not protein_cols:
+            raise ValueError("Model bundle missing protein_cols")
+
+        logger.info(f"Model metadata: {len(protein_cols)} proteins, scenario={scenario}")
 
         # Auto-detect data file and split directory from run metadata
         metadata_file = run_path / "run_metadata.json"
@@ -274,29 +267,13 @@ def run_permutation_test_cli(
         logger.info(f"Input file: {infile}")
         logger.info(f"Split dir: {split_dir}")
 
-        # Load data
+        # Load data once per model (shared across seeds)
         logger.info("Loading data...")
         df_raw = read_proteomics_file(infile, validate=True)
 
         df, filter_stats = apply_row_filters(df_raw, meta_num_cols=meta_num_cols)
         logger.info(f"Filtered: {filter_stats['n_in']:,} -> {filter_stats['n_out']:,} rows")
 
-        # Load split indices
-        split_path = Path(split_dir)
-        train_file = split_path / f"train_idx_{scenario}_seed{split_seed}.csv"
-        val_file = split_path / f"val_idx_{scenario}_seed{split_seed}.csv"
-
-        if not train_file.exists() or not val_file.exists():
-            raise FileNotFoundError(
-                f"Split files not found: {train_file}, {val_file}\n"
-                f"Run 'ced save-splits' to generate splits with scenario={scenario}"
-            )
-
-        logger.info(f"Loading split indices from {split_path}")
-        train_idx = pd.read_csv(train_file).squeeze().values
-        val_idx = pd.read_csv(val_file).squeeze().values
-
-        # Prepare data
         feature_cols = protein_cols + cat_cols + meta_num_cols
         missing = [c for c in feature_cols if c not in df.columns]
         if missing:
@@ -308,148 +285,181 @@ def run_permutation_test_cli(
 
         positive_label = get_positive_label(scenario)
         y_all = (df[TARGET_COL] == positive_label).astype(int).values
+        X_all = df[feature_cols]
 
-        X_all = df[feature_cols]  # Keep as DataFrame for ScreeningTransformer
-
-        logger.info(f"Train: {len(train_idx)} samples, {y_all[train_idx].sum()} cases")
-        logger.info(f"Val: {len(val_idx)} samples, {y_all[val_idx].sum()} cases")
+        split_path = Path(split_dir)
 
         # Determine output directory
         if outdir is None:
-            outdir = run_path / model_name / "significance"
+            seed_outdir = run_path / model_name / "significance"
         else:
-            outdir = Path(outdir)
+            seed_outdir = Path(outdir)
+        seed_outdir.mkdir(parents=True, exist_ok=True)
 
-        outdir.mkdir(parents=True, exist_ok=True)
+        # -- Per-seed loop --
+        for split_seed in split_seeds:
+            logger.info(f"\n{'-'*40}\n" f"  Split seed: {split_seed}\n" f"{'-'*40}")
 
-        # HPC single-permutation mode
-        if perm_index is not None:
-            logger.info(f"HPC mode: Running single permutation {perm_index}")
+            # Load model bundle for this seed
+            model_path = find_trained_model_path(run_id, model_name, split_seed)
+            logger.info(f"Loading model from: {model_path}")
 
-            perm_seed = random_state + perm_index
-            auroc = run_permutation_for_fold(
+            bundle = joblib.load(model_path)
+            if not isinstance(bundle, dict):
+                raise ValueError("Model bundle must be a dictionary")
+
+            pipeline = bundle.get("model")
+            if pipeline is None:
+                raise ValueError(f"Model bundle missing 'model' key: {model_path}")
+
+            # Load split indices for this seed
+            train_file = split_path / f"train_idx_{scenario}_seed{split_seed}.csv"
+            val_file = split_path / f"val_idx_{scenario}_seed{split_seed}.csv"
+
+            if not train_file.exists() or not val_file.exists():
+                raise FileNotFoundError(
+                    f"Split files not found: {train_file}, {val_file}\n"
+                    f"Run 'ced save-splits' to generate splits with scenario={scenario}"
+                )
+
+            train_idx = pd.read_csv(train_file).squeeze().values
+            val_idx = pd.read_csv(val_file).squeeze().values
+
+            logger.info(f"Train: {len(train_idx)} samples, {y_all[train_idx].sum()} cases")
+            logger.info(f"Val: {len(val_idx)} samples, {y_all[val_idx].sum()} cases")
+
+            # HPC single-permutation mode
+            if perm_index is not None:
+                logger.info(f"HPC mode: Running single permutation {perm_index}")
+
+                perm_seed = random_state + perm_index
+                auroc = run_permutation_for_fold(
+                    pipeline=pipeline,
+                    X_train=X_all.iloc[train_idx],
+                    y_train=y_all[train_idx],
+                    X_test=X_all.iloc[val_idx],
+                    y_test=y_all[val_idx],
+                    random_state=random_state,
+                    perm_idx=perm_index,
+                )
+
+                result_dict = {
+                    "model": model_name,
+                    "split_seed": split_seed,
+                    "outer_fold": 0,
+                    "perm_index": perm_index,
+                    "perm_seed": perm_seed,
+                    "null_auroc": auroc,
+                }
+
+                result_path = seed_outdir / f"perm_{perm_index}.joblib"
+                joblib.dump(result_dict, result_path)
+                logger.info(f"Saved permutation result to {result_path}")
+
+                print(f"\nPermutation {perm_index} complete:")
+                print(f"  Model: {model_name}")
+                print(f"  Split seed: {split_seed}")
+                print(f"  Null AUROC: {auroc:.4f}")
+                print(f"  Saved to: {result_path}")
+
+                return
+
+            # Local parallel mode: run full permutation test
+            logger.info(f"Local mode: Running {n_perms} permutations with {n_jobs} jobs")
+
+            result = run_permutation_test(
                 pipeline=pipeline,
-                X_train=X_all.iloc[train_idx],
-                y_train=y_all[train_idx],
-                X_test=X_all.iloc[val_idx],
-                y_test=y_all[val_idx],
+                X=X_all,
+                y=y_all,
+                train_idx=train_idx,
+                test_idx=val_idx,
+                model_name=model_name,
+                split_seed=split_seed,
+                outer_fold=0,
+                n_perms=n_perms,
+                n_jobs=n_jobs,
                 random_state=random_state,
-                perm_idx=perm_index,
             )
 
-            result = {
-                "model": model_name,
-                "split_seed": split_seed,
-                "outer_fold": 0,
-                "perm_index": perm_index,
-                "perm_seed": perm_seed,
-                "null_auroc": auroc,
-            }
+            results = [result]
 
-            result_path = outdir / f"perm_{perm_index}.joblib"
-            joblib.dump(result, result_path)
-            logger.info(f"Saved permutation result to {result_path}")
+            summary_df = aggregate_permutation_results(results)
+            summary_path = seed_outdir / f"permutation_test_results_seed{split_seed}.csv"
+            summary_df.to_csv(summary_path, index=False)
+            logger.info(f"Saved summary to {summary_path}")
 
-            print(f"\nPermutation {perm_index} complete:")
-            print(f"  Model: {model_name}")
-            print(f"  Split seed: {split_seed}")
-            print(f"  Null AUROC: {auroc:.4f}")
-            print(f"  Saved to: {result_path}")
+            null_path = seed_outdir / f"null_distribution_seed{split_seed}.csv"
+            save_null_distributions(results, str(null_path))
 
-            return
-
-        # Local parallel mode: run full permutation test
-        logger.info(f"Local mode: Running {n_perms} permutations with {n_jobs} jobs")
-
-        result = run_permutation_test(
-            pipeline=pipeline,
-            X=X_all,
-            y=y_all,
-            train_idx=train_idx,
-            test_idx=val_idx,
-            model_name=model_name,
-            split_seed=split_seed,
-            outer_fold=0,
-            n_perms=n_perms,
-            n_jobs=n_jobs,
-            random_state=random_state,
-        )
-
-        results = [result]
-
-        summary_df = aggregate_permutation_results(results)
-        summary_path = outdir / "permutation_test_results.csv"
-        summary_df.to_csv(summary_path, index=False)
-        logger.info(f"Saved summary to {summary_path}")
-
-        null_path = outdir / "null_distribution.csv"
-        save_null_distributions(results, str(null_path))
-
-        print(f"\n{'='*60}")
-        print(f"Permutation Test Results: {model_name}")
-        print(f"{'='*60}")
-        print(f"Observed AUROC: {result.observed_auroc:.4f}")
-        print(f"p-value: {result.p_value:.4f}")
-        print("Null distribution:")
-        print(f"  Mean: {np.mean(result.null_aurocs):.4f}")
-        print(f"  Std: {np.std(result.null_aurocs):.4f}")
-        print(f"  Min: {np.min(result.null_aurocs):.4f}")
-        print(f"  Max: {np.max(result.null_aurocs):.4f}")
-        print(f"  Median: {np.median(result.null_aurocs):.4f}")
-        print("\nInterpretation:")
-        if result.p_value < 0.05:
-            print(
-                f"  Strong evidence that model generalizes above chance "
-                f"(p={result.p_value:.4f} < 0.05)"
-            )
-        elif result.p_value < 0.10:
-            print(f"  Marginal evidence of generalization (p={result.p_value:.4f} < 0.10)")
-        else:
-            print(f"  No evidence of generalization above chance (p={result.p_value:.4f} >= 0.10)")
-        print(f"\nResults saved to: {outdir}")
-        print(f"  - {summary_path.name}")
-        print(f"  - {null_path.name}")
-        print(f"{'='*60}\n")
-
-        # Auto-aggregate if we have results across multiple seeds
-        try:
-            aggregated = detect_and_aggregate(run_path, model=model_name, alpha=0.05)
-
-            if aggregated:
-                result_agg = aggregated[model_name]
-
-                # Save aggregated result
-                sig_outdir = run_path / model_name / "significance"
-                sig_outdir.mkdir(parents=True, exist_ok=True)
-
-                agg_df = pd.DataFrame(
-                    [
-                        {
-                            "model": result_agg.model,
-                            "observed_auroc": result_agg.observed_auroc,
-                            "empirical_p_value": result_agg.empirical_p_value,
-                            "n_seeds": result_agg.n_seeds,
-                            "n_perms_total": result_agg.n_perms_total,
-                            "significant": result_agg.significant,
-                            "alpha": result_agg.alpha,
-                            **result_agg.summary_stats(),
-                        }
-                    ]
+            print(f"\n{'='*60}")
+            print(f"Permutation Test Results: {model_name} (seed {split_seed})")
+            print(f"{'='*60}")
+            print(f"Observed AUROC: {result.observed_auroc:.4f}")
+            print(f"p-value: {result.p_value:.4f}")
+            print("Null distribution:")
+            print(f"  Mean: {np.mean(result.null_aurocs):.4f}")
+            print(f"  Std: {np.std(result.null_aurocs):.4f}")
+            print(f"  Min: {np.min(result.null_aurocs):.4f}")
+            print(f"  Max: {np.max(result.null_aurocs):.4f}")
+            print(f"  Median: {np.median(result.null_aurocs):.4f}")
+            print("\nInterpretation:")
+            if result.p_value < 0.05:
+                print(
+                    f"  Strong evidence that model generalizes above chance "
+                    f"(p={result.p_value:.4f} < 0.05)"
                 )
-                agg_path = sig_outdir / "aggregated_significance.csv"
-                agg_df.to_csv(agg_path, index=False)
-
-                logger.info(
-                    f"Auto-aggregated permutation results: p={result_agg.empirical_p_value:.4f}, "
-                    f"significant={result_agg.significant}"
+            elif result.p_value < 0.10:
+                print(f"  Marginal evidence of generalization (p={result.p_value:.4f} < 0.10)")
+            else:
+                print(
+                    f"  No evidence of generalization above chance "
+                    f"(p={result.p_value:.4f} >= 0.10)"
                 )
+            print(f"\nResults saved to: {seed_outdir}")
+            print(f"  - {summary_path.name}")
+            print(f"  - {null_path.name}")
+            print(f"{'='*60}\n")
 
-                print(f"\nPooled significance (across {result_agg.n_seeds} seeds):")
-                print(f"  Empirical p-value: {result_agg.empirical_p_value:.4f}")
-                print(f"  Significant (alpha=0.05): {result_agg.significant}")
-                print(f"  Total permutations pooled: {result_agg.n_perms_total}")
-                print(f"  Saved to: {agg_path}")
-        except Exception as e:
-            logger.debug(f"Auto-aggregation skipped: {e}")
+        # Auto-aggregate across seeds (after seed loop)
+        if len(split_seeds) > 1:
+            try:
+                aggregated = detect_and_aggregate(run_path, model=model_name, alpha=0.05)
+
+                if aggregated:
+                    result_agg = aggregated[model_name]
+
+                    sig_outdir = run_path / model_name / "significance"
+                    sig_outdir.mkdir(parents=True, exist_ok=True)
+
+                    agg_df = pd.DataFrame(
+                        [
+                            {
+                                "model": result_agg.model,
+                                "observed_auroc": result_agg.observed_auroc,
+                                "empirical_p_value": result_agg.empirical_p_value,
+                                "n_seeds": result_agg.n_seeds,
+                                "n_perms_total": result_agg.n_perms_total,
+                                "significant": result_agg.significant,
+                                "alpha": result_agg.alpha,
+                                **result_agg.summary_stats(),
+                            }
+                        ]
+                    )
+                    agg_path = sig_outdir / "aggregated_significance.csv"
+                    agg_df.to_csv(agg_path, index=False)
+
+                    logger.info(
+                        f"Auto-aggregated permutation results: "
+                        f"p={result_agg.empirical_p_value:.4f}, "
+                        f"significant={result_agg.significant}"
+                    )
+
+                    print(f"\nPooled significance (across {result_agg.n_seeds} seeds):")
+                    print(f"  Empirical p-value: {result_agg.empirical_p_value:.4f}")
+                    print(f"  Significant (alpha=0.05): {result_agg.significant}")
+                    print(f"  Total permutations pooled: {result_agg.n_perms_total}")
+                    print(f"  Saved to: {agg_path}")
+            except Exception as e:
+                logger.debug(f"Auto-aggregation skipped: {e}")
 
     logger.info("Permutation testing completed successfully")

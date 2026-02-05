@@ -263,8 +263,9 @@ ced permutation-test [OPTIONS]
 |--------|------|---------|-------------|
 | `--run-id` | TEXT | **Required** | Run ID to test |
 | `--model` | TEXT | All | Specific model (default: all base models) |
-| `--split-seed` | INT | 0 | Split seed to use |
-| `--n-perms` | INT | 200 | Number of permutations |
+| `--split-seed-start` | INT | 0 | First split seed to test |
+| `--n-split-seeds` | INT | 1 | Number of consecutive seeds to test |
+| `--n-perms` | INT | 200 | Number of permutations per seed |
 | `--perm-index` | INT | - | Single permutation index (HPC mode) |
 | `--metric` | TEXT | `auroc` | Metric (only `auroc` supported) |
 | `--n-jobs` | INT | 1 | Parallel jobs |

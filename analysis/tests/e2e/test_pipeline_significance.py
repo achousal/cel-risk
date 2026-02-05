@@ -223,7 +223,7 @@ class TestE2EPermutationTest:
                 run_id,
                 "--model",
                 "LR_EN",
-                "--split-seed",
+                "--split-seed-start",
                 "42",
                 "--n-perms",
                 "5",  # Small B for fast CI
@@ -340,7 +340,7 @@ class TestE2EPermutationTest:
                 run_id,
                 "--model",
                 "LR_EN",
-                "--split-seed",
+                "--split-seed-start",
                 "42",
                 "--perm-index",
                 "0",  # Single permutation
