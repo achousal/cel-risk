@@ -90,6 +90,8 @@ _PIPELINE_DEFAULTS: dict[str, Any] = {
     "consensus": True,
     "optimize_panel": True,
     "permutation_test": False,  # Disabled by default (computationally expensive)
+    "permutation_n_perms": 200,  # Default permutations for significance testing
+    "permutation_n_jobs": 1,  # Default jobs for parallelization
     "dry_run": False,
 }
 
