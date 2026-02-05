@@ -9,7 +9,7 @@ class FeatureConfig(BaseModel):
     """Configuration for feature selection methods.
 
     Two mutually exclusive strategies:
-    1. hybrid_stability (default): screen -> kbest (tuned) -> stability -> model
+    1. multi_stage (default): screen -> kbest (tuned) -> stability -> model
        - Robust, interpretable, uses k_grid tuning
        - Best for: production models, reproducibility
     2. rfecv: screen -> light kbest cap -> RFECV -> model
@@ -20,11 +20,11 @@ class FeatureConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     # Feature selection strategy (mutually exclusive paths)
-    feature_selection_strategy: Literal["hybrid_stability", "rfecv", "fixed_panel", "none"] = Field(
-        default="hybrid_stability",
+    feature_selection_strategy: Literal["multi_stage", "rfecv", "fixed_panel", "none"] = Field(
+        default="multi_stage",
         description=(
             "Feature selection strategy:\n"
-            "  - hybrid_stability: screen -> kbest (tuned) -> stability -> model\n"
+            "  - multi_stage: screen -> kbest (tuned) -> stability -> model\n"
             "  - rfecv: screen -> light kbest cap -> RFECV -> model\n"
             "  - fixed_panel: use pre-specified feature panel from CSV file\n"
             "  - none: no feature selection"
@@ -35,11 +35,11 @@ class FeatureConfig(BaseModel):
     screen_method: Literal["mannwhitney", "f_classif"] = "mannwhitney"
     screen_top_n: int = Field(default=0, ge=0)
 
-    # Hybrid+Stability strategy parameters (used when strategy="hybrid_stability")
+    # Multi-stage strategy parameters (used when strategy="multi_stage")
     kbest_max: int = Field(default=500, ge=1)
     k_grid: list[int] = Field(
         default_factory=lambda: [50, 100, 200, 500],
-        description="k values for SelectKBest tuning (hybrid_stability strategy only)",
+        description="k values for SelectKBest tuning (multi_stage strategy only)",
     )
     stability_thresh: float = Field(
         default=0.70,
@@ -130,12 +130,12 @@ class FeatureConfig(BaseModel):
         default=True, description="Also save Gini/gain importance for tree models"
     )
 
-    # Model-specific selector (hybrid_stability only, opt-in)
+    # Model-specific selector (multi_stage only, opt-in)
     model_selector: bool = Field(
         default=False,
         description=(
             "Enable model-specific feature selection step between KBest and classifier. "
-            "Only active under hybrid_stability strategy. Each model type uses its own "
+            "Only active under multi_stage strategy. Each model type uses its own "
             "inductive bias (L1 coefs, tree importances) to further prune features."
         ),
     )

@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -29,7 +31,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture
@@ -96,7 +97,7 @@ def panel_training_config(tmp_path):
         },
         "optuna": {"enabled": False},
         "features": {
-            "feature_selection_strategy": "hybrid_stability",
+            "feature_selection_strategy": "multi_stage",
             "screen_method": "mannwhitney",
             "screen_top_n": 12,
             "k_grid": [5],
@@ -145,6 +146,8 @@ class TestPanelExtraction:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -238,6 +241,8 @@ class TestPanelExtraction:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -335,6 +340,8 @@ class TestFixedPanelTraining:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -413,6 +420,8 @@ class TestFixedPanelTraining:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -490,6 +499,8 @@ class TestFixedPanelTraining:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -566,6 +577,8 @@ class TestUnbiasedPanelValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -637,6 +650,8 @@ class TestUnbiasedPanelValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -699,6 +714,8 @@ class TestUnbiasedPanelValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -714,6 +731,8 @@ class TestUnbiasedPanelValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -776,6 +795,8 @@ class TestPanelFormatValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",
@@ -838,6 +859,8 @@ class TestPanelFormatValidation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(panel_proteomics_data),
                 "--outdir",

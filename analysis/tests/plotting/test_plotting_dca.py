@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.plotting.dca import apply_plot_metadata, plot_dca, plot_dca_curve
 
 

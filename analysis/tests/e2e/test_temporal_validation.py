@@ -8,8 +8,9 @@ Run with: pytest tests/e2e/test_temporal_validation.py -v
 import pandas as pd
 import pytest
 import yaml
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestE2ETemporalValidation:

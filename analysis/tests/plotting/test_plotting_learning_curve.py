@@ -3,6 +3,10 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.plotting.learning_curve import (
     _normalize_metric_scores,
     aggregate_learning_curve_runs,
@@ -11,9 +15,6 @@ from ced_ml.plotting.learning_curve import (
     plot_learning_curve_summary,
     save_learning_curve_csv,
 )
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 
 @pytest.fixture

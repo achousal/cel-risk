@@ -3,6 +3,7 @@ Tests for configuration system.
 """
 
 import pytest
+
 from ced_ml.config.defaults import DEFAULT_SPLITS_CONFIG
 from ced_ml.config.loader import apply_overrides
 from ced_ml.config.schema import CVConfig, SplitsConfig
@@ -13,7 +14,7 @@ def test_splits_config_defaults():
     config = SplitsConfig(**DEFAULT_SPLITS_CONFIG)
 
     assert config.mode == "development"
-    assert config.scenarios == ["IncidentOnly"]
+    assert config.scenarios == ["IncidentPlusPrevalent"]
     assert config.n_splits == 1
     assert config.val_size == 0.0
     assert config.test_size == 0.30
@@ -252,7 +253,7 @@ def test_feature_selection_strategy_validation():
     from ced_ml.config.schema import FeatureConfig, TrainingConfig
 
     # Valid strategies should work
-    for strategy in ["hybrid_stability", "rfecv", "none"]:
+    for strategy in ["multi_stage", "rfecv", "none"]:
         config = TrainingConfig(
             infile="/tmp/test.parquet",
             features=FeatureConfig(feature_selection_strategy=strategy),

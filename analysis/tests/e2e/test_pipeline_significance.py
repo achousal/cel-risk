@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -23,7 +25,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture
@@ -244,11 +245,11 @@ class TestE2EPermutationTest:
         significance_dir = run_dirs[0] / "LR_EN" / "significance"
         assert significance_dir.exists(), f"Significance dir not found: {significance_dir}"
 
-        results_csv = significance_dir / "permutation_test_results.csv"
-        null_csv = significance_dir / "null_distribution.csv"
+        results_csv = significance_dir / "permutation_test_results_seed42.csv"
+        null_csv = significance_dir / "null_distribution_seed42.csv"
 
-        assert results_csv.exists(), "permutation_test_results.csv not found"
-        assert null_csv.exists(), "null_distribution.csv not found"
+        assert results_csv.exists(), "permutation_test_results_seed42.csv not found"
+        assert null_csv.exists(), "null_distribution_seed42.csv not found"
 
         # Validate results structure
         df_results = pd.read_csv(results_csv)
@@ -395,6 +396,8 @@ class TestE2EOOFImportance:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(significance_proteomics_data),
                 "--outdir",
@@ -476,6 +479,8 @@ class TestE2EAggregatedImportance:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(significance_proteomics_data),
                 "--outdir",
@@ -692,6 +697,8 @@ class TestPermutationTestEdgeCases:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(significance_proteomics_data),
                 "--outdir",
@@ -759,6 +766,8 @@ class TestPermutationTestEdgeCases:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(significance_proteomics_data),
                 "--outdir",

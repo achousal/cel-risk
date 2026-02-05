@@ -236,7 +236,7 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
     Check for feature selection config options that are set but not wired into the pipeline.
 
     Validates that feature selection parameters are consistent with the selected strategy:
-    - hybrid_stability: Uses k_grid, stability_thresh, stable_corr_thresh (all wired)
+    - multi_stage: Uses k_grid, stability_thresh, stable_corr_thresh (all wired)
     - rfecv: Uses rfe_* parameters (all wired)
     - none: No feature selection (only warns about unused params)
 
@@ -253,8 +253,8 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
     DEFAULT_STABLE_CORR_THRESH = 0.80
 
     # Strategy-specific validation
-    if strategy == "hybrid_stability":
-        # All hybrid_stability parameters ARE wired into the pipeline
+    if strategy == "multi_stage":
+        # All multi_stage parameters ARE wired into the pipeline
         # k_grid: tuned via hyperparameter search (hyperparams.py)
         # stability_thresh: used in post-hoc panel extraction (intended behavior)
         # stable_corr_thresh: used in post-hoc panel building (intended behavior)
@@ -263,14 +263,14 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
         # Validate required parameters
         if not config.features.k_grid:
             issues.append(
-                "feature_selection_strategy='hybrid_stability' requires features.k_grid to be set"
+                "feature_selection_strategy='multi_stage' requires features.k_grid to be set"
             )
 
     elif strategy == "rfecv":
         # All RFECV parameters ARE wired into the pipeline
         # rfe_target_size, rfe_step_strategy, rfe_cv_folds, etc. are all used
 
-        # Warn if hybrid_stability-specific params are set (ignored during RFECV)
+        # Warn if multi_stage-specific params are set (ignored during RFECV)
         if config.features.k_grid != DEFAULT_K_GRID:
             unwired_settings.append(
                 f"k_grid={config.features.k_grid} (ignored with feature_selection_strategy='rfecv')"

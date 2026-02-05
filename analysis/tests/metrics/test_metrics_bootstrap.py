@@ -11,12 +11,13 @@ Covers:
 
 import numpy as np
 import pytest
+from sklearn.metrics import brier_score_loss, roc_auc_score
+
 from ced_ml.metrics.bootstrap import (
     _safe_metric,
     stratified_bootstrap_ci,
     stratified_bootstrap_diff_ci,
 )
-from sklearn.metrics import brier_score_loss, roc_auc_score
 
 
 class TestSafeMetric:

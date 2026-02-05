@@ -22,7 +22,7 @@ VALID_MODELS = [m.value for m in ModelName]
 # Default split configuration (matches save_splits.py)
 DEFAULT_SPLITS_CONFIG: dict[str, Any] = {
     "mode": "development",
-    "scenarios": ["IncidentOnly"],
+    "scenarios": ["IncidentPlusPrevalent"],
     "n_splits": 1,
     "val_size": 0.0,
     "test_size": 0.30,
@@ -51,7 +51,7 @@ DEFAULT_CV_CONFIG: dict[str, Any] = {
 
 # Default feature selection configuration
 DEFAULT_FEATURE_CONFIG: dict[str, Any] = {
-    "feature_selection_strategy": "hybrid_stability",  # Use new parameter (not deprecated feature_select)
+    "feature_selection_strategy": "multi_stage",  # Use new parameter (not deprecated feature_select)
     "screen_method": "mannwhitney",
     "screen_top_n": 0,
     "kbest_max": 500,

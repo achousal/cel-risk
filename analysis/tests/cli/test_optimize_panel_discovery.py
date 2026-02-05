@@ -3,6 +3,7 @@ Tests for optimize_panel auto-discovery by run_id.
 """
 
 import pytest
+
 from ced_ml.cli.optimize_panel import discover_models_by_run_id
 
 

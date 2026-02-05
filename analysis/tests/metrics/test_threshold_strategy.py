@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError
 
 import numpy as np
 import pytest
+
 from ced_ml.config.calibration_schema import ThresholdConfig
 from ced_ml.metrics.threshold_strategy import (
     FixedPPVThreshold,

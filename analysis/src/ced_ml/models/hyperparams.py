@@ -72,15 +72,13 @@ def get_param_distributions(
 
     # Feature selection parameters (if applicable)
     strategy = config.features.feature_selection_strategy
-    if strategy == "hybrid_stability":
+    if strategy == "multi_stage":
         k_grid = config.features.k_grid
         if not k_grid:
-            raise ValueError(
-                "feature_selection_strategy='hybrid_stability' requires features.k_grid"
-            )
+            raise ValueError("feature_selection_strategy='multi_stage' requires features.k_grid")
 
         # Always use 'sel' step name
-        param_dists["sel__k"] = k_grid
+        param_dists["sel__selector__k"] = k_grid
 
     # Model-specific parameters
     if model_name in (ModelName.LR_EN, ModelName.LR_L1):
@@ -128,11 +126,11 @@ def get_param_distributions_optuna(
 
     # Feature selection parameters (if applicable)
     strategy = config.features.feature_selection_strategy
-    if strategy == "hybrid_stability":
+    if strategy == "multi_stage":
         k_grid = config.features.k_grid
         if k_grid:
             # Use the k_grid as categorical for feature selection
-            optuna_dists["sel__k"] = {"type": "categorical", "choices": k_grid}
+            optuna_dists["sel__selector__k"] = {"type": "categorical", "choices": k_grid}
 
     # Model-specific parameters with native Optuna ranges
     if model_name in ("LR_EN", "LR_L1"):

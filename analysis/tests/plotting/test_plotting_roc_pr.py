@@ -4,6 +4,7 @@ Tests for ROC and PR curve plotting.
 
 import numpy as np
 import pytest
+
 from ced_ml.plotting.roc_pr import plot_pr_curve, plot_roc_curve
 
 
@@ -453,6 +454,7 @@ class TestPlotMetadataHelper:
     def test_metadata_with_lines(self, tmp_path):
         """Test metadata application with lines."""
         import matplotlib.pyplot as plt
+
         from ced_ml.plotting.dca import apply_plot_metadata
 
         fig, ax = plt.subplots()
@@ -466,6 +468,7 @@ class TestPlotMetadataHelper:
     def test_metadata_without_lines(self):
         """Test metadata application without lines."""
         import matplotlib.pyplot as plt
+
         from ced_ml.plotting.dca import apply_plot_metadata
 
         fig, ax = plt.subplots()
@@ -477,6 +480,7 @@ class TestPlotMetadataHelper:
     def test_metadata_empty_list(self):
         """Test metadata with empty list."""
         import matplotlib.pyplot as plt
+
         from ced_ml.plotting.dca import apply_plot_metadata
 
         fig, ax = plt.subplots()
@@ -488,6 +492,7 @@ class TestPlotMetadataHelper:
     def test_metadata_caps_at_30_percent(self):
         """Test metadata margin caps at 30%."""
         import matplotlib.pyplot as plt
+
         from ced_ml.plotting.dca import apply_plot_metadata
 
         fig, ax = plt.subplots()

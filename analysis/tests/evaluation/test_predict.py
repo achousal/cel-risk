@@ -6,6 +6,10 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.evaluation.predict import (
     export_predictions,
     generate_predictions,
@@ -15,9 +19,6 @@ from ced_ml.evaluation.predict import (
     predict_on_validation,
 )
 from ced_ml.models.prevalence import PrevalenceAdjustedModel
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 
 @pytest.fixture

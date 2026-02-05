@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+
 from ced_ml.features.nested_rfe import (
     NestedRFECVResult,
     RFECVFoldResult,
@@ -14,9 +18,6 @@ from ced_ml.features.nested_rfe import (
     run_rfecv_within_fold,
     save_nested_rfecv_results,
 )
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
 
 
 @pytest.fixture

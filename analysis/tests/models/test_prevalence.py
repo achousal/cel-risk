@@ -6,14 +6,15 @@ Tests prevalence adjustment logic and PrevalenceAdjustedModel wrapper.
 
 import numpy as np
 import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+
 from ced_ml.models.prevalence import (
     PrevalenceAdjustedModel,
     _inv_logit,
     _logit,
     adjust_probabilities_for_prevalence,
 )
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 # =============================================================================
 # Logit/Inverse Logit Tests

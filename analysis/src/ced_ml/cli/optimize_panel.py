@@ -210,8 +210,9 @@ def run_optimize_panel_single_seed(
     log_hpc_context(logger)
 
     stability_file = results_path / "panels" / "feature_stability_summary.csv"
+    importance_file = results_path / "importance" / f"oof_importance__{model_name}.csv"
     stable_proteins, selection_freq = load_stability_panel(
-        stability_file, stability_threshold, start_size
+        stability_file, stability_threshold, start_size, importance_file=importance_file
     )
 
     run_dir = results_path.parent
@@ -416,12 +417,13 @@ def run_optimize_panel_aggregated(
                 f"No aggregated significance data found in {run_dir}, skipping significance check"
             )
 
-    # Load aggregated stability panel
+    # Load aggregated stability panel (ranked by OOF importance when available)
     from ced_ml.cli.panel_optimization_helpers import load_stability_panel
 
     stability_file = results_path / "panels" / "feature_stability_summary.csv"
+    importance_file = results_path / "importance" / f"oof_importance__{model_name}.csv"
     stable_proteins, selection_freq = load_stability_panel(
-        stability_file, stability_threshold, start_size
+        stability_file, stability_threshold, start_size, importance_file=importance_file
     )
 
     # Discover available split seeds

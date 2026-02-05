@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.features.screening import screen_proteins
 from ced_ml.features.screening_cache import get_screening_cache
 

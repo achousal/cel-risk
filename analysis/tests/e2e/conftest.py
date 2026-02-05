@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+
 from ced_ml.data.schema import (
     CONTROL_LABEL,
     ID_COL,
@@ -288,7 +289,7 @@ def fast_training_config(tmp_path):
     2-fold CV, single repeat, no Optuna, minimal features.
     """
     config = {
-        "scenario": "IncidentOnly",  # Match default splits_config (IncidentOnly)
+        "scenario": "IncidentOnly",  # Explicit override (default is IncidentPlusPrevalent)
         "cv": {
             "folds": 2,
             "repeats": 1,
@@ -463,3 +464,179 @@ def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed:
     assert "timestamp" in model_entry
 
     assert model_entry["split_seed"] == expected_split_seed
+
+
+@pytest.fixture
+def ultra_fast_training_config(tmp_path):
+    """
+    Training config optimised for maximum speed across all pipeline stages.
+
+    2-fold CV, no Optuna, minimal feature grids, small estimators.
+    Supports ensemble (LR_EN + RF) so full pipeline stages can run.
+    """
+    config = {
+        "scenario": "IncidentOnly",
+        "cv": {
+            "folds": 2,
+            "repeats": 1,
+            "inner_folds": 2,
+            "scoring": "roc_auc",
+            "n_jobs": 1,
+            "random_state": 42,
+        },
+        "optuna": {"enabled": False},
+        "features": {
+            "feature_select": "hybrid",
+            "kbest_scope": "protein",
+            "screen_method": "mannwhitney",
+            "screen_top_n": 6,
+            "k_grid": [3],
+            "stability_thresh": 0.5,
+            "corr_thresh": 0.95,
+        },
+        "calibration": {
+            "enabled": True,
+            "method": "isotonic",
+            "strategy": "oof_posthoc",
+        },
+        "thresholds": {
+            "objective": "youden",
+            "fixed_spec": 0.95,
+        },
+        "lr": {
+            "C_min": 0.1,
+            "C_max": 10.0,
+            "C_points": 2,
+            "l1_ratio": [0.5],
+            "solver": "saga",
+            "max_iter": 500,
+        },
+        "rf": {
+            "n_estimators_grid": [30],
+            "max_depth_grid": [3],
+            "min_samples_split_grid": [2],
+            "min_samples_leaf_grid": [1],
+            "max_features_grid": [0.5],
+        },
+        "xgboost": {
+            "n_estimators_grid": [30],
+            "max_depth_grid": [3],
+            "learning_rate_grid": [0.1],
+            "subsample_grid": [0.8],
+            "colsample_bytree_grid": [0.8],
+        },
+        "ensemble": {
+            "method": "stacking",
+            "base_models": ["LR_EN", "RF"],
+            "meta_model": {
+                "type": "logistic_regression",
+                "penalty": "l2",
+                "C": 1.0,
+            },
+        },
+    }
+
+    config_path = tmp_path / "ultra_fast_training_config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump(config, f)
+
+    return config_path
+
+
+@pytest.fixture
+def fixed_panel_training_config(tmp_path):
+    """
+    Training config with fixed_panel feature selection strategy.
+
+    Uses a pre-specified panel of 3 proteins, bypassing feature selection.
+    """
+    panel_csv = tmp_path / "fixed_panel.csv"
+    panel_csv.write_text("feature\nPROT_000_resid\nPROT_001_resid\nPROT_002_resid\n")
+
+    config = {
+        "scenario": "IncidentOnly",
+        "cv": {
+            "folds": 2,
+            "repeats": 1,
+            "inner_folds": 2,
+            "scoring": "roc_auc",
+            "n_jobs": 1,
+            "random_state": 42,
+        },
+        "optuna": {"enabled": False},
+        "features": {
+            "feature_selection_strategy": "fixed_panel",
+            "fixed_panel_csv": str(panel_csv),
+        },
+        "calibration": {
+            "enabled": True,
+            "method": "isotonic",
+            "strategy": "oof_posthoc",
+        },
+        "thresholds": {
+            "objective": "youden",
+            "fixed_spec": 0.95,
+        },
+        "lr": {
+            "C_min": 0.1,
+            "C_max": 10.0,
+            "C_points": 2,
+            "l1_ratio": [0.5],
+            "solver": "saga",
+            "max_iter": 500,
+        },
+        "rf": {
+            "n_estimators_grid": [30],
+            "max_depth_grid": [3],
+            "min_samples_split_grid": [2],
+            "min_samples_leaf_grid": [1],
+            "max_features_grid": [0.5],
+        },
+    }
+
+    config_path = tmp_path / "fixed_panel_training_config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump(config, f)
+
+    return config_path
+
+
+@pytest.fixture
+def tiny_proteomics_data(tmp_path):
+    """
+    Extremely small dataset for testing early-failure paths.
+
+    20 samples: 15 controls, 3 incident, 2 prevalent, 5 proteins.
+    Too small for proper stratified splits -- used to test error handling.
+    """
+    rng = np.random.default_rng(42)
+
+    n_controls = 15
+    n_incident = 3
+    n_prevalent = 2
+    n_total = n_controls + n_incident + n_prevalent
+    n_proteins = 5
+
+    labels = (
+        [CONTROL_LABEL] * n_controls
+        + [INCIDENT_LABEL] * n_incident
+        + [PREVALENT_LABEL] * n_prevalent
+    )
+
+    data = {
+        ID_COL: [f"SAMPLE_{i:04d}" for i in range(n_total)],
+        TARGET_COL: labels,
+        "age": rng.integers(25, 75, n_total),
+        "BMI": rng.uniform(18, 35, n_total),
+        "sex": rng.choice(["M", "F"], n_total),
+        "Genetic ethnic grouping": rng.choice(["White", "Asian"], n_total),
+    }
+
+    for i in range(n_proteins):
+        data[f"PROT_{i:03d}_resid"] = rng.standard_normal(n_total)
+
+    df = pd.DataFrame(data)
+    parquet_path = tmp_path / "tiny_proteomics.parquet"
+    df.to_parquet(parquet_path, index=False)
+
+    return parquet_path

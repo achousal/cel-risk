@@ -223,7 +223,7 @@ def run_permutation_test_cli(
             raise ValueError("Model bundle must be a dictionary")
 
         resolved_cols = first_bundle.get("resolved_columns", {})
-        scenario = first_bundle.get("scenario", "IncidentOnly")
+        scenario = first_bundle.get("scenario", "IncidentPlusPrevalent")
 
         protein_cols = resolved_cols.get("protein_cols", [])
         cat_cols = resolved_cols.get("categorical_metadata", [])

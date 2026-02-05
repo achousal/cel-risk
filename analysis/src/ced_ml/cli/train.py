@@ -43,6 +43,33 @@ from ced_ml.utils.logging import log_section, setup_logger
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Picklable column selectors for ColumnTransformer
+# (closures inside build_preprocessor cannot be pickled by joblib)
+# ---------------------------------------------------------------------------
+
+
+class _ProteinColumnSelector:
+    """Select protein columns by suffix. Picklable for model persistence."""
+
+    def __init__(self, suffix: str = "_resid"):
+        self.suffix = suffix
+
+    def __call__(self, df: pd.DataFrame) -> list[str]:
+        return [c for c in df.columns if c.endswith(self.suffix)]
+
+
+class _CovariateNumSelector:
+    """Select numeric non-protein columns. Picklable for model persistence."""
+
+    def __init__(self, suffix: str = "_resid"):
+        self.suffix = suffix
+
+    def __call__(self, df: pd.DataFrame) -> list[str]:
+        proteins = {c for c in df.columns if c.endswith(self.suffix)}
+        return [c for c in df.select_dtypes(include="number").columns if c not in proteins]
+
+
 def validate_protein_columns(
     df: pd.DataFrame,
     protein_cols: list[str],
@@ -88,32 +115,41 @@ def validate_protein_columns(
         logger.info("Protein columns validated: all numeric, no NaN values")
 
 
-def build_preprocessor(cat_cols: list[str]) -> ColumnTransformer:
-    """
-    Build preprocessing pipeline for model training.
+def build_preprocessor(
+    cat_cols: list[str],
+    protein_suffix: str = "_resid",
+) -> ColumnTransformer:
+    """Build two-branch preprocessing pipeline for model training.
 
-    Uses sklearn.compose.make_column_selector to dynamically select numeric and
-    categorical columns at fit time, making the preprocessor robust to upstream
-    feature screening that reduces the protein column set.
+    Creates separate branches for protein features and covariate features so
+    that downstream feature selection (SelectKBest, ModelSpecificSelector) can
+    operate exclusively on the protein branch while covariates pass through.
+
+    Branch layout:
+        - **prot**: StandardScaler on protein columns (identified by *protein_suffix*)
+        - **cov**: StandardScaler on remaining numeric columns (age, BMI, etc.)
+        - **cat**: OneHotEncoder on categorical columns (sex, ethnicity, etc.)
+
+    Output order: [protein_features..., covariate_features..., categorical_features...]
+
+    The returned ColumnTransformer uses ``set_output(transform="pandas")`` so
+    that downstream steps receive a DataFrame with column names (required by
+    :class:`ProteinOnlySelector`).
 
     Args:
-        cat_cols: List of categorical column names
+        cat_cols: List of categorical column names.
+        protein_suffix: Suffix identifying protein columns (default ``"_resid"``).
 
     Returns:
-        ColumnTransformer with StandardScaler for numeric and OneHotEncoder for categorical
+        ColumnTransformer with pandas output and three named branches.
     """
-    from sklearn.compose import make_column_selector
 
-    # Dynamic selector: scale all numeric columns present at fit time
-    # This handles cases where screening reduces protein columns
-    numeric_selector = make_column_selector(dtype_include="number")
-
-    transformers = [
-        ("num", StandardScaler(), numeric_selector),
+    transformers: list[tuple] = [
+        ("prot", StandardScaler(), _ProteinColumnSelector(protein_suffix)),
+        ("cov", StandardScaler(), _CovariateNumSelector(protein_suffix)),
     ]
 
     if cat_cols:
-        # Categorical columns are explicit (not reduced by screening)
         transformers.append(
             (
                 "cat",
@@ -122,7 +158,9 @@ def build_preprocessor(cat_cols: list[str]) -> ColumnTransformer:
             )
         )
 
-    return ColumnTransformer(transformers=transformers, verbose_feature_names_out=False)
+    ct = ColumnTransformer(transformers=transformers, verbose_feature_names_out=False)
+    ct.set_output(transform="pandas")
+    return ct
 
 
 def build_training_pipeline(
@@ -134,50 +172,36 @@ def build_training_pipeline(
 ) -> Pipeline:
     """Build complete training pipeline with preprocessing, feature selection, and classifier.
 
+    Feature selection steps (SelectKBest, ModelSpecificSelector) are wrapped in
+    :class:`ProteinOnlySelector` so they operate exclusively on protein features.
+    Covariate columns (age, BMI, one-hot demographics) pass through unchanged
+    and are always available to the classifier.
+
     Two mutually exclusive feature selection strategies:
-    1. hybrid_stability: screen → kbest (tuned k_grid) → stability → model
-    2. rfecv: screen → (light kbest cap) → RFECV (within CV) → model
+    1. multi_stage: screen -> pre -> sel (protein-only kbest) -> [model_sel] -> clf
+    2. rfecv: screen -> pre -> clf (RFECV runs within CV loop)
 
-    Pipeline order (hybrid_stability):
-    1. Screening: Univariate Mann-Whitney/F-test → keep top-N proteins (operates on raw DataFrame)
-    2. Preprocessing: StandardScaler + OneHotEncoder (adds metadata columns)
-    3. SelectKBest: Tuned k value (from k_grid) during CV
-    4. Classifier
-
-    Pipeline order (rfecv):
-    1. Screening: Univariate Mann-Whitney/F-test → keep top-N proteins
-    2. Preprocessing: StandardScaler + OneHotEncoder
-    3. (Optional light kbest cap if enabled)
-    4. RFECV (handled within CV loop, not as pipeline step)
-    5. Classifier
+    HP tuning parameter path for k:
+        ``sel__selector__k`` (ProteinOnlySelector wraps the inner SelectKBest)
 
     Args:
         config: TrainingConfig object
         classifier: Unfitted sklearn classifier
         protein_cols: List of protein column names
         cat_cols: List of categorical column names
+        model_name: Model identifier (for model-specific selector, optional)
 
     Returns:
-        Pipeline with named steps: [screen], pre, [sel], clf
-
-    Example (hybrid_stability):
-        >>> config.features.feature_selection_strategy = "hybrid_stability"
-        >>> config.features.screen_top_n = 1000
-        >>> config.features.k_grid = [25, 50, 100, 200, 400, 800]
-        Pipeline stages: screen → pre → sel → clf
-
-    Example (rfecv):
-        >>> config.features.feature_selection_strategy = "rfecv"
-        >>> config.features.screen_top_n = 1000
-        Pipeline stages: screen → pre → clf (RFECV runs within CV loop)
+        Pipeline with named steps: [screen], pre, [sel], [model_sel], clf
     """
+    from ced_ml.features.protein_selector import ProteinOnlySelector
+
     logger = logging.getLogger(__name__)
 
     strategy = config.features.feature_selection_strategy
     steps = []
 
     # Stage 0: Screening (BEFORE preprocessing, operates on raw DataFrame)
-    # Common to both strategies
     screen_top_n = getattr(config.features, "screen_top_n", 0)
     screen_method = getattr(config.features, "screen_method", "mannwhitney")
 
@@ -190,56 +214,53 @@ def build_training_pipeline(
             protein_cols=protein_cols,
         )
         steps.append(("screen", screener))
-        logger.debug(f"Feature screening: {screen_method} → top {screen_top_n} features")
+        logger.debug(f"Feature screening: {screen_method} -> top {screen_top_n} features")
 
-    # Stage 1: Preprocessing (StandardScaler + OneHotEncoder)
-    # Note: If screening is enabled, protein_cols will be reduced by screener
+    # Stage 1: Preprocessing (two-branch ColumnTransformer, pandas output)
     preprocessor = build_preprocessor(cat_cols)
     steps.append(("pre", preprocessor))
 
-    # Stage 2: Strategy-specific feature selection
-    if strategy == "hybrid_stability":
-        # Hybrid+Stability: SelectKBest with k_grid tuning
+    # Stage 2: Strategy-specific feature selection (protein-only)
+    if strategy == "multi_stage":
         k_grid = getattr(config.features, "k_grid", None)
         if k_grid:
-            # Use first k value as default (will be tuned during CV)
             k_default = k_grid[0] if isinstance(k_grid, list | tuple) else k_grid
             kbest = build_kbest_pipeline_step(k=k_default)
-            steps.append(("sel", kbest))
-            logger.debug(f"Feature selection: hybrid_stability with k_grid={k_grid}")
         else:
-            # Fallback: use kbest_max as fixed k (no tuning)
             k_val = getattr(config.features, "kbest_max", 500)
             kbest = build_kbest_pipeline_step(k=k_val)
-            steps.append(("sel", kbest))
-            logger.debug(f"Feature selection: hybrid_stability with fixed k={k_val}")
+
+        sel = ProteinOnlySelector(selector=kbest)
+        steps.append(("sel", sel))
+        logger.debug(
+            "Feature selection: multi_stage (protein-only), k_grid=%s",
+            k_grid or "fixed",
+        )
 
     elif strategy == "rfecv":
-        # RFECV: No SelectKBest here (RFECV runs within CV loop in training.py)
-        # Optional: add a light kbest cap if you want to limit RFECV search space
-        # For now, RFECV operates on all screened features
         logger.debug("Feature selection: rfecv (RFECV runs within CV loop)")
 
     elif strategy == "none":
         logger.debug("Feature selection: none")
 
-    # Stage 2b: Model-specific selector (hybrid_stability only, opt-in)
+    # Stage 2b: Model-specific selector (multi_stage only, opt-in, protein-only)
     if (
-        strategy == "hybrid_stability"
+        strategy == "multi_stage"
         and getattr(config.features, "model_selector", False)
         and model_name is not None
     ):
         from ced_ml.features.model_selector import ModelSpecificSelector
 
-        model_sel = ModelSpecificSelector(
+        inner_model_sel = ModelSpecificSelector(
             model_name=model_name,
             threshold=getattr(config.features, "model_selector_threshold", "median"),
             max_features=getattr(config.features, "model_selector_max_features", None),
             min_features=getattr(config.features, "model_selector_min_features", 10),
         )
+        model_sel = ProteinOnlySelector(selector=inner_model_sel)
         steps.append(("model_sel", model_sel))
         logger.debug(
-            "Model-specific selector: %s (threshold=%s, min=%d)",
+            "Model-specific selector (protein-only): %s (threshold=%s, min=%d)",
             model_name,
             config.features.model_selector_threshold,
             config.features.model_selector_min_features,

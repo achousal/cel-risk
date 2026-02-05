@@ -12,8 +12,9 @@ Run slow tests: pytest tests/e2e/test_pipeline_ensemble.py -v -m slow
 """
 
 import pytest
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestE2EEnsembleWorkflow:
@@ -40,6 +41,8 @@ class TestE2EEnsembleWorkflow:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(minimal_proteomics_data),
                 "--outdir",
@@ -154,6 +157,8 @@ class TestE2EEnsembleWorkflow:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(minimal_proteomics_data),
                 "--outdir",

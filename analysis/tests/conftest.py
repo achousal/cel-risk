@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.datasets import make_classification
+
 from ced_ml.data.schema import (
     CED_DATE_COL,
     CONTROL_LABEL,
@@ -15,7 +17,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from sklearn.datasets import make_classification
 
 
 @pytest.fixture

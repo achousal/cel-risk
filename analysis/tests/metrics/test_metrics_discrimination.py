@@ -13,6 +13,13 @@ Tests cover:
 
 import numpy as np
 import pytest
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    log_loss,
+    roc_auc_score,
+)
+
 from ced_ml.metrics.discrimination import (
     alpha_sensitivity_at_specificity,
     auroc,
@@ -21,12 +28,6 @@ from ced_ml.metrics.discrimination import (
     compute_log_loss,
     prauc,
     youden_j,
-)
-from sklearn.metrics import (
-    average_precision_score,
-    brier_score_loss,
-    log_loss,
-    roc_auc_score,
 )
 
 

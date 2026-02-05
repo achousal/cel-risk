@@ -1,6 +1,7 @@
 """Tests for enhanced category breakdown in metadata annotations."""
 
 import pandas as pd
+
 from ced_ml.utils.metadata import (
     build_aggregated_metadata,
     build_plot_metadata,

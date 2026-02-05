@@ -413,7 +413,7 @@ def run_consensus_panel(
         raise ValueError("Model bundle must be a dictionary")
 
     resolved_cols = bundle.get("resolved_columns", {})
-    scenario = bundle.get("scenario", "IncidentOnly")
+    scenario = bundle.get("scenario", "IncidentPlusPrevalent")
     meta_num_cols = resolved_cols.get("numeric_metadata", [])
 
     # Apply row filters

@@ -23,16 +23,25 @@ def load_stability_panel(
     stability_file: Path,
     stability_threshold: float,
     start_size: int | None = None,
+    importance_file: Path | None = None,
 ) -> tuple[list[str], dict[str, float]]:
     """Load and filter stability panel from aggregated results.
+
+    Proteins are filtered by stability (selection_fraction >= threshold), then
+    ranked by OOF grouped importance when available. The returned score dict
+    is used downstream for correlation-cluster representative selection.
 
     Args:
         stability_file: Path to feature_stability_summary.csv
         stability_threshold: Minimum selection frequency threshold
-        start_size: Cap to top N proteins by selection frequency (None = no cap)
+        start_size: Cap to top N proteins by ranking metric (None = no cap)
+        importance_file: Path to aggregated OOF importance CSV. When provided,
+            ranking and representative selection use mean_importance instead
+            of selection_fraction.
 
     Returns:
-        Tuple of (stable_proteins, selection_freq_dict)
+        Tuple of (stable_proteins, score_dict) where score_dict maps
+        protein -> float (importance or selection_fraction, higher = better).
 
     Raises:
         FileNotFoundError: If stability file not found
@@ -57,20 +66,62 @@ def load_stability_panel(
             f"Try lowering --stability-threshold."
         )
 
+    # Load OOF importance for ranking (if available)
+    importance_df = None
+    ranking_col = "selection_fraction"
+    if importance_file is not None and importance_file.exists():
+        importance_df = pd.read_csv(importance_file)
+        # Standardize column name
+        if "feature" in importance_df.columns and "protein" not in importance_df.columns:
+            importance_df = importance_df.rename(columns={"feature": "protein"})
+        if "mean_importance" in importance_df.columns:
+            ranking_col = "mean_importance"
+            logger.info(f"Ranking by OOF importance from {importance_file.name}")
+        else:
+            logger.warning(
+                "Importance file missing 'mean_importance' column, "
+                "falling back to selection_fraction"
+            )
+            importance_df = None
+    elif importance_file is not None:
+        logger.warning(
+            f"Importance file not found: {importance_file}, " f"falling back to selection_fraction"
+        )
+
+    # Merge importance into stability for unified ranking
+    if importance_df is not None and ranking_col == "mean_importance":
+        merged = stability_df.merge(
+            importance_df[["protein", "mean_importance"]],
+            on="protein",
+            how="left",
+        )
+    else:
+        merged = stability_df
+
+    # Apply start_size cap using selected ranking metric
     if start_size and start_size > 0 and len(stable_proteins) > start_size:
-        stable_sorted = stability_df[stability_df["protein"].isin(stable_proteins)].sort_values(
-            "selection_fraction", ascending=False
+        stable_sorted = merged[merged["protein"].isin(stable_proteins)].sort_values(
+            ranking_col, ascending=False
         )
         stable_proteins = stable_sorted["protein"].head(start_size).tolist()
-        logger.info(f"Capped {len(stable_sorted)} stable proteins to start_size={start_size}")
+        logger.info(
+            f"Capped {len(stable_sorted)} stable proteins to start_size={start_size} "
+            f"(ranked by {ranking_col})"
+        )
 
-    selection_freq = dict(
-        zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
-    )
+    # Build score dict for downstream representative selection
+    if importance_df is not None and ranking_col == "mean_importance":
+        score_dict = dict(
+            zip(merged["protein"], merged["mean_importance"].fillna(0.0), strict=False)
+        )
+    else:
+        score_dict = dict(
+            zip(stability_df["protein"], stability_df["selection_fraction"], strict=False)
+        )
 
     logger.info(f"Loaded {len(stable_proteins)} stable proteins (>={stability_threshold:.2f})")
 
-    return stable_proteins, selection_freq
+    return stable_proteins, score_dict
 
 
 def load_model_bundle(model_path: Path) -> dict[str, Any]:

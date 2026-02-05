@@ -12,8 +12,9 @@ Run slow tests: pytest tests/e2e/test_pipeline_aggregation.py -v -m slow
 
 import pytest
 import yaml
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestE2EAggregationWorkflow:
@@ -40,6 +41,8 @@ class TestE2EAggregationWorkflow:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(minimal_proteomics_data),
                 "--outdir",

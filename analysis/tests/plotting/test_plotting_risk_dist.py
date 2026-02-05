@@ -14,6 +14,7 @@ from pathlib import Path
 import matplotlib
 import numpy as np
 import pytest
+
 from ced_ml.plotting.risk_dist import (
     compute_distribution_stats,
     plot_risk_distribution,

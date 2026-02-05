@@ -10,6 +10,8 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -17,7 +19,6 @@ from ced_ml.data.schema import (
     INCIDENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 class TestE2EFullPipeline:
@@ -262,6 +263,8 @@ class TestE2EFullPipeline:
                 str(minimal_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
                 "--val-size",
@@ -352,6 +355,8 @@ class TestE2EErrorHandling:
                 str(minimal_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
             ],

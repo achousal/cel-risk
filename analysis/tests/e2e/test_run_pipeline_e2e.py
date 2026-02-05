@@ -14,8 +14,9 @@ import os
 import pandas as pd
 import pytest
 import yaml
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestRunPipelineE2E:
@@ -40,6 +41,48 @@ class TestRunPipelineE2E:
         splits_dir.mkdir()
         results_dir.mkdir()
 
+        # Create splits config with IncidentOnly scenario to match training config
+        splits_config = {
+            "mode": "development",
+            "scenarios": ["IncidentOnly"],
+            "n_splits": 1,
+            "seed_start": 0,
+            "val_size": 0.25,
+            "test_size": 0.25,
+            "prevalent_train_only": True,
+            "prevalent_train_frac": 0.5,
+            "train_control_per_case": 5,
+            "eval_control_per_case": 5,
+            "overwrite": True,
+        }
+        splits_config_path = tmp_path / "splits_config.yaml"
+        with open(splits_config_path, "w") as f:
+            yaml.dump(splits_config, f)
+
+        # Create minimal pipeline config pointing to splits config
+        pipeline_config = {
+            "environment": "local",
+            "paths": {
+                "infile": str(small_proteomics_data),
+                "splits_dir": str(splits_dir),
+                "results_dir": str(results_dir),
+            },
+            "configs": {
+                "training": str(fast_training_config),
+                "splits": str(splits_config_path),
+            },
+            "pipeline": {
+                "models": ["LR_EN"],
+                "ensemble": False,
+                "consensus": False,
+                "optimize_panel": False,
+                "permutation_test": False,
+            },
+        }
+        pipeline_config_path = tmp_path / "pipeline_config.yaml"
+        with open(pipeline_config_path, "w") as f:
+            yaml.dump(pipeline_config, f)
+
         env = os.environ.copy()
         env["CED_RESULTS_DIR"] = str(results_dir)
 
@@ -48,22 +91,10 @@ class TestRunPipelineE2E:
             cli,
             [
                 "run-pipeline",
-                "--infile",
-                str(small_proteomics_data),
-                "--split-dir",
-                str(splits_dir),
-                "--outdir",
-                str(results_dir),
-                "--config",
-                str(fast_training_config),
-                "--models",
-                "LR_EN",
+                "--pipeline-config",
+                str(pipeline_config_path),
                 "--split-seeds",
-                "0",  # Use seed 0 to match default splits_config generation
-                "--no-ensemble",
-                "--no-consensus",
-                "--no-optimize-panel",
-                "--no-permutation-test",
+                "0",
             ],
             catch_exceptions=False,
         )
@@ -269,6 +300,48 @@ class TestRunPipelineWithAggregation:
         splits_dir.mkdir()
         results_dir.mkdir()
 
+        # Create splits config with IncidentOnly scenario to match training config
+        splits_config = {
+            "mode": "development",
+            "scenarios": ["IncidentOnly"],
+            "n_splits": 2,
+            "seed_start": 0,
+            "val_size": 0.25,
+            "test_size": 0.25,
+            "prevalent_train_only": True,
+            "prevalent_train_frac": 0.5,
+            "train_control_per_case": 5,
+            "eval_control_per_case": 5,
+            "overwrite": True,
+        }
+        splits_config_path = tmp_path / "splits_config.yaml"
+        with open(splits_config_path, "w") as f:
+            yaml.dump(splits_config, f)
+
+        # Create minimal pipeline config
+        pipeline_config = {
+            "environment": "local",
+            "paths": {
+                "infile": str(small_proteomics_data),
+                "splits_dir": str(splits_dir),
+                "results_dir": str(results_dir),
+            },
+            "configs": {
+                "training": str(fast_training_config),
+                "splits": str(splits_config_path),
+            },
+            "pipeline": {
+                "models": ["LR_EN"],
+                "ensemble": False,
+                "consensus": False,
+                "optimize_panel": False,
+                "permutation_test": False,
+            },
+        }
+        pipeline_config_path = tmp_path / "pipeline_config.yaml"
+        with open(pipeline_config_path, "w") as f:
+            yaml.dump(pipeline_config, f)
+
         env = os.environ.copy()
         env["CED_RESULTS_DIR"] = str(results_dir)
 
@@ -277,22 +350,10 @@ class TestRunPipelineWithAggregation:
             cli,
             [
                 "run-pipeline",
-                "--infile",
-                str(small_proteomics_data),
-                "--split-dir",
-                str(splits_dir),
-                "--outdir",
-                str(results_dir),
-                "--config",
-                str(fast_training_config),
-                "--models",
-                "LR_EN",
+                "--pipeline-config",
+                str(pipeline_config_path),
                 "--split-seeds",
-                "0,1",  # Two seeds for aggregation (matches default splits_config)
-                "--no-ensemble",
-                "--no-consensus",
-                "--no-optimize-panel",
-                "--no-permutation-test",
+                "0,1",
             ],
             catch_exceptions=False,
         )
@@ -346,6 +407,48 @@ class TestFullWorkflowIntegration:
         splits_dir.mkdir()
         results_dir.mkdir()
 
+        # Create splits config with IncidentOnly scenario to match training config
+        splits_config = {
+            "mode": "development",
+            "scenarios": ["IncidentOnly"],
+            "n_splits": 2,
+            "seed_start": 0,
+            "val_size": 0.25,
+            "test_size": 0.25,
+            "prevalent_train_only": True,
+            "prevalent_train_frac": 0.5,
+            "train_control_per_case": 5,
+            "eval_control_per_case": 5,
+            "overwrite": True,
+        }
+        splits_config_path = tmp_path / "splits_config.yaml"
+        with open(splits_config_path, "w") as f:
+            yaml.dump(splits_config, f)
+
+        # Create minimal pipeline config
+        pipeline_config = {
+            "environment": "local",
+            "paths": {
+                "infile": str(small_proteomics_data),
+                "splits_dir": str(splits_dir),
+                "results_dir": str(results_dir),
+            },
+            "configs": {
+                "training": str(fast_training_config),
+                "splits": str(splits_config_path),
+            },
+            "pipeline": {
+                "models": ["LR_EN", "RF"],
+                "ensemble": False,
+                "consensus": False,
+                "optimize_panel": False,
+                "permutation_test": False,
+            },
+        }
+        pipeline_config_path = tmp_path / "pipeline_config.yaml"
+        with open(pipeline_config_path, "w") as f:
+            yaml.dump(pipeline_config, f)
+
         env = os.environ.copy()
         env["CED_RESULTS_DIR"] = str(results_dir)
 
@@ -356,22 +459,10 @@ class TestFullWorkflowIntegration:
             cli,
             [
                 "run-pipeline",
-                "--infile",
-                str(small_proteomics_data),
-                "--split-dir",
-                str(splits_dir),
-                "--outdir",
-                str(results_dir),
-                "--config",
-                str(fast_training_config),
-                "--models",
-                "LR_EN,RF",
+                "--pipeline-config",
+                str(pipeline_config_path),
                 "--split-seeds",
-                "0,1",  # Match default splits_config generation
-                "--no-ensemble",
-                "--no-consensus",
-                "--no-optimize-panel",
-                "--no-permutation-test",
+                "0,1",
             ],
             catch_exceptions=False,
         )
@@ -416,7 +507,7 @@ class TestFullWorkflowIntegration:
 
         runner = CliRunner()
 
-        # Generate splits once (shared) - use IncidentPlusPrevalent to match fast_training_config
+        # Generate splits once (shared) - use IncidentOnly to match fast_training_config
         runner.invoke(
             cli,
             [
@@ -428,7 +519,7 @@ class TestFullWorkflowIntegration:
                 "--mode",
                 "development",
                 "--scenarios",
-                "IncidentPlusPrevalent",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
                 "--seed-start",

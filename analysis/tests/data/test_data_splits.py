@@ -5,6 +5,7 @@ Tests for data splitting module.
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.data.schema import TARGET_COL
 from ced_ml.data.splits import (
     add_prevalent_to_train,

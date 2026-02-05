@@ -3,8 +3,6 @@ Path utilities for standardized file/directory operations.
 
 This module provides path resolution for CLI commands.
 
-**IMPORTANT**: All CLI commands must be run from the project root (CeliacRisks/).
-
 Project structure:
     CeliacRisks/                    <- Project root (run ced here)
     ├── data/                       <- Input data
@@ -17,13 +15,23 @@ Project structure:
 
 Path resolution:
     - Run from CeliacRisks/: paths like "data/" resolve correctly
+    - Run from CeliacRisks/analysis/: root auto-detected by walking up
     - Paths in configs are relative to analysis/ directory
 """
 
 from pathlib import Path
 
+# Maximum number of parent directories to search when locating the project root.
+_MAX_SEARCH_DEPTH = 5
+
+
+def _is_project_root(path: Path) -> bool:
+    """Return True if *path* looks like the CeliacRisks project root."""
+    return (path / "data").is_dir() and (path / "analysis").is_dir()
+
+
 # ============================================================================
-# Path Resolution (must run from project root)
+# Path Resolution
 # ============================================================================
 
 
@@ -31,29 +39,38 @@ def get_project_root() -> Path:
     """
     Get the project root directory (CeliacRisks/).
 
-    **IMPORTANT**: This assumes you are running from the project root.
-    If cwd is not the project root, raises an error.
+    Resolution order:
+        1. Current working directory (CWD)
+        2. Walk up from CWD (up to 5 levels) looking for a directory
+           that contains both ``data/`` and ``analysis/`` subdirectories.
 
     Returns:
-        Path to project root (current working directory)
+        Resolved Path to the project root.
 
     Raises:
-        RuntimeError: If current directory doesn't look like project root
+        RuntimeError: If the project root cannot be found.
     """
     cwd = Path.cwd()
 
-    # Check for expected project structure
-    has_data = (cwd / "data").is_dir()
-    has_analysis = (cwd / "analysis").is_dir()
+    # Fast path: CWD is the project root
+    if _is_project_root(cwd):
+        return cwd
 
-    if not (has_data and has_analysis):
-        raise RuntimeError(
-            f"Must run 'ced' commands from project root (CeliacRisks/).\n"
-            f"Current directory: {cwd}\n"
-            f"Expected structure: data/, analysis/, splits/, results/"
-        )
+    # Walk up the directory tree
+    candidate = cwd
+    for _ in range(_MAX_SEARCH_DEPTH):
+        candidate = candidate.parent
+        if candidate == candidate.parent:
+            break  # reached filesystem root
+        if _is_project_root(candidate):
+            return candidate
 
-    return cwd
+    raise RuntimeError(
+        f"Could not locate project root (CeliacRisks/).\n"
+        f"Current directory: {cwd}\n"
+        f"Searched {_MAX_SEARCH_DEPTH} levels up.\n"
+        f"Expected structure: data/, analysis/, splits/, results/"
+    )
 
 
 def get_analysis_dir() -> Path:

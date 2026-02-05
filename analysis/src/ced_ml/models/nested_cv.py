@@ -931,7 +931,7 @@ def _extract_selected_proteins_from_fold(
         # Fallback: if no consensus panel, return empty (screening is not the final selection)
         return []
 
-    if strategy in ("hybrid_stability", "rfecv"):
+    if strategy in ("multi_stage", "rfecv"):
         if "sel" in pipeline.named_steps:
             # K-best selection
             kbest_proteins = _extract_from_kbest_transformed(pipeline, protein_cols)
@@ -948,32 +948,38 @@ def _extract_selected_proteins_from_fold(
     # Strategy 1b: Extract from model-specific selector (if present)
     if "model_sel" in pipeline.named_steps:
         model_sel_step = pipeline.named_steps["model_sel"]
-        if hasattr(model_sel_step, "get_feature_names_out"):
+
+        # Preferred: ProteinOnlySelector tracks proteins directly
+        if hasattr(model_sel_step, "selected_proteins_"):
+            model_sel_proteins = {p for p in model_sel_step.selected_proteins_ if p in protein_cols}
+            if model_sel_proteins:
+                return sorted(model_sel_proteins)
+
+        # Fallback: get_feature_names_out with name mapping
+        elif hasattr(model_sel_step, "get_feature_names_out"):
             sel_names = model_sel_step.get_feature_names_out()
-            # Map back to protein names
             model_sel_proteins = set()
             for name in sel_names:
                 if name in protein_cols:
                     model_sel_proteins.add(name)
-                elif name.startswith("num__"):
-                    orig = name[len("num__") :]
+                else:
+                    orig = extract_protein_name(name)
                     if orig in protein_cols:
                         model_sel_proteins.add(orig)
             if model_sel_proteins:
-                # model_sel is the final selection -- override kbest output
                 return sorted(model_sel_proteins)
 
     # Strategy 2: Extract from model coefficients (linear models)
-    # Only relevant for hybrid_stability strategy
-    if strategy == "hybrid_stability":
+    # Only relevant for multi_stage strategy
+    if strategy == "multi_stage":
         model_proteins = _extract_from_model_coefficients(
             pipeline, model_name, protein_cols, config
         )
         if model_proteins:
             selected_proteins.update(model_proteins)
 
-    # Strategy 3: Permutation importance for RF (if enabled and hybrid mode)
-    if strategy == "hybrid_stability" and model_name == "RF" and config.features.rf_use_permutation:
+    # Strategy 3: Permutation importance for RF (if enabled and multi_stage mode)
+    if strategy == "multi_stage" and model_name == "RF" and config.features.rf_use_permutation:
         perm_proteins = _extract_from_rf_permutation(
             pipeline, X_train, y_train, protein_cols, config, random_state
         )
@@ -984,23 +990,35 @@ def _extract_selected_proteins_from_fold(
 
 
 def _extract_from_kbest_transformed(pipeline: Pipeline, protein_cols: list[str]) -> set:
-    """Extract protein names from SelectKBest in transformed space."""
+    """Extract protein names from SelectKBest in transformed space.
+
+    Handles both:
+    - ProteinOnlySelector wrapper (has ``selected_proteins_`` attribute)
+    - Legacy bare SelectKBest (uses ``get_support`` on preprocessor names)
+    """
     if "sel" not in pipeline.named_steps:
         return set()
 
-    # Get feature names from preprocessing step
-    pre = pipeline.named_steps["pre"]
-    if not hasattr(pre, "get_feature_names_out"):
+    sel_step = pipeline.named_steps["sel"]
+
+    # Preferred path: ProteinOnlySelector tracks selected proteins directly
+    if hasattr(sel_step, "selected_proteins_"):
+        return {p for p in sel_step.selected_proteins_ if p in protein_cols}
+
+    # Legacy fallback: bare SelectKBest on preprocessor output
+    pre = pipeline.named_steps.get("pre")
+    if pre is None or not hasattr(pre, "get_feature_names_out"):
         return set()
 
     feature_names = pre.get_feature_names_out()
-    support = pipeline.named_steps["sel"].get_support()
+    if not hasattr(sel_step, "get_support"):
+        return set()
+
+    support = sel_step.get_support()
     selected_names = feature_names[support]
 
-    # Extract protein columns (handle different feature naming patterns)
     proteins = set()
     for name in selected_names:
-        # Handle different feature naming patterns via extract_protein_name
         if name in protein_cols:
             proteins.add(name)
         else:

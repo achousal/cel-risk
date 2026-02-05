@@ -128,6 +128,7 @@ def test_fixed_panel_disables_optimization_and_consensus(tmp_path):
     when using a pre-specified panel.
     """
     import yaml
+
     from ced_ml.cli.run_pipeline import _detect_fixed_panel_strategy
 
     # Create a mock config file with fixed_panel strategy
@@ -163,13 +164,14 @@ def test_non_fixed_panel_strategy_detection(tmp_path):
     Test that other strategies are correctly NOT detected as fixed_panel.
     """
     import yaml
+
     from ced_ml.cli.run_pipeline import _detect_fixed_panel_strategy
 
-    # Test hybrid_stability strategy
+    # Test multi_stage strategy
     config_path = tmp_path / "training_config.yaml"
     config_data = {
         "features": {
-            "feature_selection_strategy": "hybrid_stability",
+            "feature_selection_strategy": "multi_stage",
             "k_grid": [25, 50, 100],
             "screen_method": "mannwhitney",
             "screen_top_n": 1000,
@@ -189,7 +191,7 @@ def test_non_fixed_panel_strategy_detection(tmp_path):
 
     # Should NOT detect fixed_panel strategy
     result = _detect_fixed_panel_strategy(config_path, logger)
-    assert result is False, "Should NOT detect fixed_panel for hybrid_stability strategy"
+    assert result is False, "Should NOT detect fixed_panel for multi_stage strategy"
 
 
 def test_missing_config_returns_false(tmp_path):

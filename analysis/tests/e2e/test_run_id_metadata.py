@@ -12,8 +12,9 @@ import json
 from pathlib import Path
 
 import pytest
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 SHARED_RUN_ID = "20260128_E2ETEST"
 """Fixed run_id shared across all train calls within a test, so downstream
@@ -75,6 +76,8 @@ class TestRunIdMetadataCreation:
                 str(small_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
                 "--seed-start",
@@ -140,6 +143,8 @@ class TestRunIdMetadataCreation:
                 str(small_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "2",
                 "--seed-start",

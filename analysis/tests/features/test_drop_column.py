@@ -13,14 +13,15 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.features.drop_column import (
     DropColumnResult,
     aggregate_drop_column_results,
     compute_drop_column_importance,
 )
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 # =============================================================================
 # Fixtures

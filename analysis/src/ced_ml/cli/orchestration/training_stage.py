@@ -11,8 +11,13 @@ This module handles:
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
 
 from ced_ml.cli.train import build_training_pipeline
 from ced_ml.models.calibration import OOFCalibratedModel
@@ -32,6 +37,93 @@ if TYPE_CHECKING:
     from ced_ml.cli.orchestration.context import TrainingContext
 
 logger = logging.getLogger(__name__)
+
+# HP parameter key for k inside ProteinOnlySelector wrapper
+_SEL_K_PARAM = "sel__selector__k"
+
+
+def _extract_k_from_best_params(best_params_df: pd.DataFrame) -> pd.Series | None:
+    """Extract per-fold k values from the JSON ``best_params`` column.
+
+    The nested CV loop stores hyperparameters as a JSON string. This helper
+    parses that string and extracts the k value for each fold.
+
+    Returns
+    -------
+    Series of int k values (one per fold), or None if k was not tuned.
+    """
+    if "best_params" not in best_params_df.columns:
+        return None
+
+    k_values = []
+    for _, row in best_params_df.iterrows():
+        try:
+            params = json.loads(row["best_params"])
+        except (json.JSONDecodeError, TypeError):
+            params = {}
+        k = params.get(_SEL_K_PARAM)
+        if k is not None:
+            k_values.append(int(k))
+
+    if not k_values:
+        return None
+
+    return pd.Series(k_values, name="k")
+
+
+def _save_k_summary(
+    best_params_df: pd.DataFrame,
+    output_dir: str | Path,
+) -> None:
+    """Save k distribution + inner-CV AUROC sensitivity summary (Patch C).
+
+    Produces ``k_summary.csv`` with columns: k, n_folds, mean_auroc, std_auroc.
+    Helps reviewers assess whether the chosen k is brittle.
+    """
+    k_series = _extract_k_from_best_params(best_params_df)
+    if k_series is None or k_series.empty:
+        return
+
+    # Parse inner-CV score alongside k
+    rows = []
+    for _, row in best_params_df.iterrows():
+        try:
+            params = json.loads(row["best_params"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        k = params.get(_SEL_K_PARAM)
+        if k is None:
+            continue
+        rows.append({"k": int(k), "inner_auroc": float(row.get("best_score_inner", np.nan))})
+
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    summary = (
+        df.groupby("k")["inner_auroc"]
+        .agg(n_folds="count", mean_auroc="mean", std_auroc="std")
+        .reset_index()
+        .sort_values("n_folds", ascending=False)
+    )
+
+    out_path = Path(output_dir) / "k_summary.csv"
+    summary.to_csv(out_path, index=False)
+    logger.info(
+        "Saved k-selection summary (%d unique values) to %s",
+        len(summary),
+        out_path,
+    )
+
+    # Log top entries for quick inspection
+    for _, r in summary.head(3).iterrows():
+        logger.info(
+            "  k=%d: used in %d folds, inner AUROC=%.4f +/- %.4f",
+            int(r["k"]),
+            int(r["n_folds"]),
+            r["mean_auroc"],
+            r["std_auroc"] if np.isfinite(r["std_auroc"]) else 0.0,
+        )
 
 
 def train_models(ctx: TrainingContext) -> TrainingContext:
@@ -147,25 +239,29 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
         model_name=config.model,
     )
 
-    # Determine best k value for final model (if using hybrid_stability with k_grid)
-    if strategy == "hybrid_stability" and "sel__k" in best_params_df.columns:
+    # Determine best k value for final model (if using multi_stage with k_grid)
+    # Parse k from the JSON best_params column (fixes previous bug where
+    # "sel__k" was checked as a DataFrame column name but params are stored as JSON)
+    if strategy == "multi_stage":
+        k_series = _extract_k_from_best_params(best_params_df)
         k_grid = getattr(config.features, "k_grid", None)
 
-        if k_grid and len(k_grid) > 1:
-            # Multiple k values were tuned: use most frequently selected k (mode)
-            best_k = int(best_params_df["sel__k"].mode()[0])
-            logger.info(f"Multiple k values tuned: using mode k={best_k} for final model")
-        elif k_grid and len(k_grid) == 1:
-            # Single k value: use that value
-            best_k = k_grid[0]
-            logger.info(f"Single k value in config: using k={best_k} for final model")
-        else:
-            # Fallback: use first k from CV results
-            best_k = int(best_params_df["sel__k"].iloc[0])
-            logger.info(f"Using k={best_k} from CV results for final model")
+        if k_series is not None and not k_series.empty:
+            if k_grid and len(k_grid) > 1:
+                best_k = int(k_series.mode()[0])
+                logger.info(f"Multiple k values tuned: using mode k={best_k} for final model")
+            elif k_grid and len(k_grid) == 1:
+                best_k = k_grid[0]
+                logger.info(f"Single k value in config: using k={best_k} for final model")
+            else:
+                best_k = int(k_series.iloc[0])
+                logger.info(f"Using k={best_k} from CV results for final model")
 
-        final_pipeline.set_params(sel__k=best_k)
-        logger.info(f"Final model k-best set to k={best_k}")
+            final_pipeline.set_params(**{_SEL_K_PARAM: best_k})
+            logger.info(f"Final model k-best set to k={best_k}")
+
+        # Save k selection summary artifact (Patch C)
+        _save_k_summary(best_params_df, ctx.outdirs.cv)
 
     final_pipeline.fit(ctx.X_train, ctx.y_train)
     logger.info("Final model fitted")

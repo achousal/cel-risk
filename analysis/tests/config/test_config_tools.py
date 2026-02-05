@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from ced_ml.cli.config_tools import (
     diff_configs,
     validate_config_file,

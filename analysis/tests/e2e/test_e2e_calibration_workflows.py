@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -29,7 +31,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture
@@ -209,6 +210,8 @@ class TestOOFPosthocCalibration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -273,6 +276,8 @@ class TestOOFPosthocCalibration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -339,6 +344,8 @@ class TestOOFPosthocCalibration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -419,6 +426,8 @@ class TestPerFoldCalibration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -475,6 +484,8 @@ class TestPerFoldCalibration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -541,6 +552,8 @@ class TestCalibrationStrategyComparison:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -635,6 +648,8 @@ class TestCalibrationStrategyComparison:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -722,6 +737,8 @@ class TestCalibrationPlotGeneration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -783,6 +800,8 @@ class TestCalibrationAggregation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",
@@ -866,6 +885,8 @@ class TestCalibrationMetadataRecording:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(calibration_proteomics_data),
                 "--outdir",

@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+
 from ced_ml.models.stacking import StackingEnsemble
 
 

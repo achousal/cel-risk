@@ -12,6 +12,11 @@ Tests cover:
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.significance.permutation_test import (
     PermutationTestResult,
     aggregate_permutation_results,
@@ -20,10 +25,6 @@ from ced_ml.significance.permutation_test import (
     run_permutation_test,
     save_null_distributions,
 )
-from sklearn.datasets import make_classification
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 # =============================================================================
 # Fixtures

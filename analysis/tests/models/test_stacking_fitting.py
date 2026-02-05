@@ -10,6 +10,7 @@ Tests cover:
 
 import numpy as np
 import pytest
+
 from ced_ml.models.stacking import StackingEnsemble
 
 

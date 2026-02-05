@@ -9,6 +9,10 @@ Tests cover:
 
 import numpy as np
 import pytest
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+
 from ced_ml.config.schema import TrainingConfig
 from ced_ml.models.registry import (
     XGBOOST_AVAILABLE,
@@ -26,9 +30,6 @@ from ced_ml.models.registry import (
     make_logspace,
     parse_class_weight_options,
 )
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 
 # ----------------------------

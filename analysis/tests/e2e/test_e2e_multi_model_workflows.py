@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -31,7 +33,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture
@@ -159,6 +160,8 @@ class TestSharedRunIdCoordination:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -231,6 +234,8 @@ class TestSharedRunIdCoordination:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -321,6 +326,8 @@ class TestCrossModelAggregation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -406,6 +413,8 @@ class TestCrossModelAggregation:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -495,6 +504,8 @@ class TestConsensusPanelIntegration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -599,6 +610,8 @@ class TestConsensusPanelIntegration:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -705,6 +718,8 @@ class TestEnsembleMultiModelWorkflow:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -789,6 +804,8 @@ class TestEnsembleMultiModelWorkflow:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -867,6 +884,8 @@ class TestMultiModelPanelOptimization:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",
@@ -976,6 +995,8 @@ class TestMultiModelMetadataConsistency:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(multi_model_proteomics_data),
                 "--outdir",

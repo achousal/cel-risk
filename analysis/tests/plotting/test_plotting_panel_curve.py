@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.plotting.panel_curve import (
     plot_feature_ranking,
     plot_pareto_curve,

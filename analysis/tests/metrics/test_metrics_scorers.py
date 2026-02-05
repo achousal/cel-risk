@@ -3,14 +3,15 @@ Tests for custom scorers (metrics/scorers.py).
 """
 
 import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+
 from ced_ml.metrics.scorers import (
     get_scorer,
     make_tpr_at_fpr_scorer,
     tpr_at_fpr_score,
 )
-from sklearn.datasets import make_classification
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score
 
 
 class TestTPRAtFPRScore:

@@ -9,6 +9,7 @@ Coverage areas:
 
 import numpy as np
 import pytest
+
 from ced_ml.utils.math_utils import (
     EPSILON_BOUNDS,
     EPSILON_LOGIT,

@@ -18,8 +18,9 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestE2EFullPipeline:
@@ -279,6 +280,8 @@ class TestE2EFullPipeline:
                 str(minimal_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
                 "--val-size",
@@ -526,6 +529,8 @@ class TestE2EErrorHandling:
                 str(minimal_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
             ],

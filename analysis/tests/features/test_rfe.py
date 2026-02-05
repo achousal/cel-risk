@@ -7,6 +7,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.features.rfe import (
     RFEResult,
     aggregate_rfe_results,
@@ -16,9 +20,6 @@ from ced_ml.features.rfe import (
     find_recommended_panels,
     save_rfe_results,
 )
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 
 class TestComputeEvalSizes:

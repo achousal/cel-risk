@@ -10,6 +10,8 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -18,7 +20,6 @@ from ced_ml.data.schema import (
     PREVALENT_LABEL,
     TARGET_COL,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import numpy as np
+
 from ced_ml.models.stacking import StackingEnsemble
 
 

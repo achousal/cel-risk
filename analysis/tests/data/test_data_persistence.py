@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
 from ced_ml.data.persistence import (
     check_split_files_exist,
     load_split_metadata,

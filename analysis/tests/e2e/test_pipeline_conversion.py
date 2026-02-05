@@ -13,9 +13,10 @@ Run with: pytest tests/e2e/test_pipeline_conversion.py -v
 import numpy as np
 import pandas as pd
 import pytest
+from click.testing import CliRunner
+
 from ced_ml.cli.main import cli
 from ced_ml.data.schema import CONTROL_LABEL, ID_COL, INCIDENT_LABEL, TARGET_COL
-from click.testing import CliRunner
 
 
 class TestE2EDataConversion:

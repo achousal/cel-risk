@@ -105,7 +105,7 @@ def build_plot_metadata(
         ...     n_train=1000,
         ...     n_train_pos=150,
         ...     n_features=200,
-        ...     feature_method="hybrid"
+        ...     feature_method="multi_stage"
         ... )
     """
     lines = []

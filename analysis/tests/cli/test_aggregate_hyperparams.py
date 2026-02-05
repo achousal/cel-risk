@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.cli.aggregation.collection import (
     collect_best_hyperparams,
     collect_ensemble_hyperparams,
@@ -53,7 +54,7 @@ def mock_hyperparams_data():
                     "clf__C": 10.0,
                     "clf__l1_ratio": 0.5,
                     "clf__class_weight": "balanced",
-                    "sel__k": 50,
+                    "sel__selector__k": 50,
                 }
             ),
             "optuna_n_trials": 100,
@@ -70,7 +71,7 @@ def mock_hyperparams_data():
                     "clf__C": 15.0,
                     "clf__l1_ratio": 0.4,
                     "clf__class_weight": "balanced",
-                    "sel__k": 60,
+                    "sel__selector__k": 60,
                 }
             ),
             "optuna_n_trials": 100,
@@ -142,7 +143,7 @@ def test_aggregate_hyperparams_summary_numeric_params():
         "split_seed": [0, 0, 1],
         "clf__C": [10.0, 15.0, 12.0],
         "clf__l1_ratio": [0.5, 0.4, 0.6],
-        "sel__k": [50, 60, 55],
+        "sel__selector__k": [50, 60, 55],
     }
     df = pd.DataFrame(data)
 
@@ -342,7 +343,7 @@ def test_optuna_trials_aggregation_with_model_prefix(temp_results_dir):
             "number": list(range(10)),
             "value": np.random.uniform(0.7, 0.9, 10),
             "params_clf__estimator__C": np.random.uniform(0.001, 100, 10),
-            "params_sel__k": [100] * 10,
+            "params_sel__selector__k": [100] * 10,
             "state": ["COMPLETE"] * 10,
         }
         df = pd.DataFrame(trials_data)

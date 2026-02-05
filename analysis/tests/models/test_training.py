@@ -16,6 +16,13 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import make_mock_config
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from ced_ml.models.registry import compute_scale_pos_weight_from_y
 from ced_ml.models.training import (
     _apply_per_fold_calibration,
@@ -24,12 +31,6 @@ from ced_ml.models.training import (
     _get_search_n_jobs,
     oof_predictions_with_nested_cv,
 )
-from conftest import make_mock_config
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 
 @pytest.fixture
@@ -403,13 +404,15 @@ def test_extract_from_model_coefficients_high_threshold(toy_data, minimal_config
 
 
 def test_oof_predictions_with_kbest(toy_data, minimal_config):
-    """Test OOF predictions with K-best feature selection."""
+    """Test OOF predictions with K-best feature selection (protein-only)."""
     from sklearn.feature_selection import SelectKBest, f_classif
+
+    from ced_ml.features.protein_selector import ProteinOnlySelector
 
     X, y, protein_cols = toy_data
 
     # Set feature_selection_strategy (new API) to enable k tuning
-    minimal_config.features.feature_selection_strategy = "hybrid_stability"
+    minimal_config.features.feature_selection_strategy = "multi_stage"
     minimal_config.features.k_grid = [5, 10]
     minimal_config.features.kbest_scope = "transformed"
 
@@ -419,11 +422,12 @@ def test_oof_predictions_with_kbest(toy_data, minimal_config):
         ],
         remainder="drop",
     )
+    preprocessor.set_output(transform="pandas")
 
     pipeline = Pipeline(
         [
             ("pre", preprocessor),
-            ("sel", SelectKBest(score_func=f_classif, k=10)),
+            ("sel", ProteinOnlySelector(selector=SelectKBest(score_func=f_classif, k=10))),
             (
                 "clf",
                 LogisticRegression(
@@ -440,7 +444,7 @@ def test_oof_predictions_with_kbest(toy_data, minimal_config):
     # Check that k was tuned
     assert len(best_params_df) > 0
     best_params_sample = json.loads(best_params_df.iloc[0]["best_params"])
-    assert "sel__k" in best_params_sample
+    assert "sel__selector__k" in best_params_sample
 
 
 def test_oof_predictions_tracks_selected_proteins(toy_data, minimal_config):
@@ -538,13 +542,14 @@ def test_oof_predictions_no_inner_tuning(toy_data, simple_pipeline, minimal_conf
 
 def test_fixed_panel_bypasses_feature_selection(tmp_path):
     """Test that fixed panel mode disables feature selection."""
+    from conftest import make_mock_config
+
     from ced_ml.cli.train import build_training_pipeline
     from ced_ml.models.registry import build_models
-    from conftest import make_mock_config
 
     # Create minimal config
     config = make_mock_config()
-    config.features.feature_selection_strategy = "hybrid_stability"
+    config.features.feature_selection_strategy = "multi_stage"
     config.features.screen_top_n = 100
     config.features.k_grid = [10, 20]
 
@@ -610,8 +615,9 @@ def test_rfecv_kbest_prefilter_config_defaults():
 
 def test_rfecv_kbest_prefilter_config_validation():
     """Test that k-best pre-filter config validates correctly."""
-    from ced_ml.config.schema import FeatureConfig
     from pydantic import ValidationError
+
+    from ced_ml.config.schema import FeatureConfig
 
     # Valid config
     config = FeatureConfig(rfe_kbest_k=50)
@@ -629,8 +635,9 @@ def test_rfecv_extracts_screening_proteins_when_no_kbest_step():
     when the pipeline had screening but no 'prot_sel' k-best step, causing
     _extract_selected_proteins_from_fold() to return an empty list.
     """
-    from ced_ml.models.training import _extract_selected_proteins_from_fold
     from sklearn.base import BaseEstimator, TransformerMixin
+
+    from ced_ml.models.training import _extract_selected_proteins_from_fold
 
     # Mock screening transformer with selected_proteins_ attribute
     class MockScreener(BaseEstimator, TransformerMixin):
@@ -693,9 +700,10 @@ def test_rfecv_extracts_screening_proteins_when_no_kbest_step():
 
 def test_rfecv_uses_consensus_panel_when_provided():
     """Test that RFECV strategy uses consensus panel from nested CV when provided."""
+    from sklearn.base import BaseEstimator, TransformerMixin
+
     from ced_ml.features.nested_rfe import NestedRFECVResult
     from ced_ml.models.training import _extract_selected_proteins_from_fold
-    from sklearn.base import BaseEstimator, TransformerMixin
 
     # Mock screening transformer
     class MockScreener(BaseEstimator, TransformerMixin):
@@ -772,10 +780,11 @@ def test_rfecv_actually_reduces_features():
     - Model is retrained on ONLY those proteins + metadata
     - features_in_model matches RFECV selection size + metadata columns
     """
+    from sklearn.datasets import make_classification
+
     from ced_ml.cli.train import build_training_pipeline
     from ced_ml.models.registry import build_models
     from ced_ml.models.training import oof_predictions_with_nested_cv
-    from sklearn.datasets import make_classification
 
     # Generate larger dataset for realistic RFECV
     X_arr, y = make_classification(
@@ -858,7 +867,7 @@ def test_final_model_kbest_selection_multiple_k():
 
     # Create mock config with multiple k values
     config = make_mock_config()
-    config.features.feature_selection_strategy = "hybrid_stability"
+    config.features.feature_selection_strategy = "multi_stage"
     config.features.k_grid = [25, 50, 100]
     config.features.screen_top_n = 0  # Disable screening for simplicity
 
@@ -868,7 +877,7 @@ def test_final_model_kbest_selection_multiple_k():
             "model": ["LR_EN"] * 6,
             "repeat": [0, 0, 1, 1, 2, 2],
             "outer_split": [0, 1, 2, 3, 4, 5],
-            "sel__k": [100, 100, 50, 100, 100, 100],  # Mode = 100
+            "sel__selector__k": [100, 100, 50, 100, 100, 100],  # Mode = 100
         }
     )
 
@@ -879,22 +888,23 @@ def test_final_model_kbest_selection_multiple_k():
 
     # Apply k selection logic (same as in train.py)
     strategy = config.features.feature_selection_strategy
-    if strategy == "hybrid_stability" and "sel__k" in best_params_df.columns:
+    if strategy == "multi_stage" and "sel__selector__k" in best_params_df.columns:
         k_grid = getattr(config.features, "k_grid", None)
 
         if k_grid and len(k_grid) > 1:
-            best_k = int(best_params_df["sel__k"].mode()[0])
+            best_k = int(best_params_df["sel__selector__k"].mode()[0])
         elif k_grid and len(k_grid) == 1:
             best_k = k_grid[0]
         else:
-            best_k = int(best_params_df["sel__k"].iloc[0])
+            best_k = int(best_params_df["sel__selector__k"].iloc[0])
 
-        pipeline.set_params(sel__k=best_k)
+        pipeline.set_params(sel__selector__k=best_k)
 
     # Verify final pipeline has k=100 (mode)
-    assert (
-        pipeline.named_steps["sel"].k == 100
-    ), f"Expected k=100 (mode), got {pipeline.named_steps['sel'].k}"
+    # ProteinOnlySelector wraps SelectKBest; k is on the inner selector
+    sel_step = pipeline.named_steps["sel"]
+    inner_k = sel_step.selector.k
+    assert inner_k == 100, f"Expected k=100 (mode), got {inner_k}"
 
 
 def test_final_model_kbest_selection_single_k():
@@ -904,7 +914,7 @@ def test_final_model_kbest_selection_single_k():
 
     # Create mock config with single k value
     config = make_mock_config()
-    config.features.feature_selection_strategy = "hybrid_stability"
+    config.features.feature_selection_strategy = "multi_stage"
     config.features.k_grid = [100]  # Single value
     config.features.screen_top_n = 0
 
@@ -914,7 +924,7 @@ def test_final_model_kbest_selection_single_k():
             "model": ["LR_EN"] * 3,
             "repeat": [0, 0, 1],
             "outer_split": [0, 1, 2],
-            "sel__k": [100, 100, 100],
+            "sel__selector__k": [100, 100, 100],
         }
     )
 
@@ -925,22 +935,22 @@ def test_final_model_kbest_selection_single_k():
 
     # Apply k selection logic
     strategy = config.features.feature_selection_strategy
-    if strategy == "hybrid_stability" and "sel__k" in best_params_df.columns:
+    if strategy == "multi_stage" and "sel__selector__k" in best_params_df.columns:
         k_grid = getattr(config.features, "k_grid", None)
 
         if k_grid and len(k_grid) > 1:
-            best_k = int(best_params_df["sel__k"].mode()[0])
+            best_k = int(best_params_df["sel__selector__k"].mode()[0])
         elif k_grid and len(k_grid) == 1:
             best_k = k_grid[0]
         else:
-            best_k = int(best_params_df["sel__k"].iloc[0])
+            best_k = int(best_params_df["sel__selector__k"].iloc[0])
 
-        pipeline.set_params(sel__k=best_k)
+        pipeline.set_params(sel__selector__k=best_k)
 
     # Verify final pipeline has k=100
-    assert (
-        pipeline.named_steps["sel"].k == 100
-    ), f"Expected k=100 (from config), got {pipeline.named_steps['sel'].k}"
+    sel_step = pipeline.named_steps["sel"]
+    inner_k = sel_step.selector.k
+    assert inner_k == 100, f"Expected k=100 (from config), got {inner_k}"
 
 
 def test_extract_proteins_from_oof_calibrated_model(toy_data):
@@ -950,9 +960,10 @@ def test_extract_proteins_from_oof_calibrated_model(toy_data):
     the final pipeline in OOFCalibratedModel, causing protein extraction to fail
     and log "Final test panel: 0 proteins selected".
     """
+    from sklearn.feature_selection import SelectKBest, f_classif
+
     from ced_ml.models.calibration import OOFCalibratedModel, OOFCalibrator
     from ced_ml.models.training import _extract_selected_proteins_from_fold
-    from sklearn.feature_selection import SelectKBest, f_classif
 
     X, y, protein_cols = toy_data
 
@@ -986,7 +997,7 @@ def test_extract_proteins_from_oof_calibrated_model(toy_data):
 
     # Create config
     config = make_mock_config()
-    config.features.feature_selection_strategy = "hybrid_stability"
+    config.features.feature_selection_strategy = "multi_stage"
     config.features.kbest_scope = "transformed"
 
     # Extract proteins from wrapped model

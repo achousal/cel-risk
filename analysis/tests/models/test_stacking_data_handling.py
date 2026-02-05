@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.models.stacking import (
     StackingEnsemble,
     collect_oof_predictions,

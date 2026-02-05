@@ -11,13 +11,14 @@ Tests cover:
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+
 from ced_ml.features.grouped_importance import (
     build_feature_clusters,
     compute_grouped_permutation_importance,
     compute_permutation_importance,
 )
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 # =============================================================================
 # Fixtures

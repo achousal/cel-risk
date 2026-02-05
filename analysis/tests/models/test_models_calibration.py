@@ -13,6 +13,11 @@ Coverage areas:
 
 import numpy as np
 import pytest
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+
 from ced_ml.models.calibration import (
     OOFCalibratedModel,
     OOFCalibrator,
@@ -30,10 +35,6 @@ from ced_ml.models.prevalence import (
     PrevalenceAdjustedModel,
     adjust_probabilities_for_prevalence,
 )
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
 
 # ============================================================================
 # Calibration Metrics Tests

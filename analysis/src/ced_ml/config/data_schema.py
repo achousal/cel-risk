@@ -19,7 +19,7 @@ class SplitsConfig(BaseModel):
     """Configuration for data split generation."""
 
     mode: Literal["development", "holdout"] = "development"
-    scenarios: list[str] = Field(default_factory=lambda: ["IncidentOnly"])
+    scenarios: list[str] = Field(default_factory=lambda: ["IncidentPlusPrevalent"])
     n_splits: int = Field(default=1, ge=1)
     val_size: float = Field(default=0.0, ge=0.0, le=1.0)
     test_size: float = Field(default=0.30, ge=0.0, le=1.0)

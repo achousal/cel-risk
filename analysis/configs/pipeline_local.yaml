@@ -27,7 +27,7 @@ pipeline:
   consensus: true
   optimize_panel: true
   permutation_test: false  # Disabled by default (computationally expensive)
-  permutation_n_perms: 200  # Number of label permutations
-  permutation_n_jobs: -1  # Parallel jobs (-1 = all cores)
-  n_boot: 200  # Bootstrap iterations (adequate for ranking)
+  # Note: Scientific parameters are defined in their respective configs:
+  #   - n_boot: training_config*.yaml (evaluation.n_boot)
+  #   - permutation_n_perms, n_jobs: permutation_test.yaml
   dry_run: false

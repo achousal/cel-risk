@@ -12,8 +12,9 @@ Run slow tests: pytest tests/e2e/test_pipeline_holdout.py -v -m slow
 
 import pandas as pd
 import pytest
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 
 class TestE2EHoldoutEvaluation:

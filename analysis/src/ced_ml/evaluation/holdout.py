@@ -384,7 +384,7 @@ def evaluate_holdout(
     # Load model artifact
     bundle = load_model_artifact(model_artifact_path)
     model = bundle["model"]
-    scenario_final = scenario or bundle.get("scenario", "IncidentOnly")
+    scenario_final = scenario or bundle.get("scenario", "IncidentPlusPrevalent")
 
     # Load data (supports both CSV and Parquet)
     positive_label = get_positive_label(scenario_final)

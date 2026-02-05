@@ -3,11 +3,12 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.feature_selection import f_classif
+
 from ced_ml.features.kbest import (
     compute_f_classif_scores,
     rank_features_by_score,
 )
-from sklearn.feature_selection import f_classif
 
 
 @pytest.fixture

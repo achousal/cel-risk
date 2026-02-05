@@ -8,6 +8,7 @@ Coverage areas:
 """
 
 import pytest
+
 from ced_ml.utils.feature_names import extract_protein_name
 
 

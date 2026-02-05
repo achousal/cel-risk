@@ -57,6 +57,7 @@ def _get_final_feature_names(pipeline: Pipeline) -> np.ndarray | None:
     """Extract feature names from pipeline after all transformations.
 
     Handles sklearn pipelines with preprocessing and feature selection steps.
+    Supports both ProteinOnlySelector wrappers and bare selectors.
 
     Args:
         pipeline: Fitted sklearn Pipeline
@@ -83,7 +84,10 @@ def _get_final_feature_names(pipeline: Pipeline) -> np.ndarray | None:
     # Apply K-best selector mask if present
     if "sel" in pipeline.named_steps:
         sel = pipeline.named_steps["sel"]
-        if hasattr(sel, "get_support"):
+        # ProteinOnlySelector exposes get_feature_names_out directly
+        if hasattr(sel, "selected_proteins_"):
+            feature_names = sel.get_feature_names_out()
+        elif hasattr(sel, "get_support"):
             support = sel.get_support()
             feature_names = feature_names[support]
         else:
@@ -92,7 +96,9 @@ def _get_final_feature_names(pipeline: Pipeline) -> np.ndarray | None:
     # Apply model-specific selector mask if present
     if "model_sel" in pipeline.named_steps:
         model_sel = pipeline.named_steps["model_sel"]
-        if hasattr(model_sel, "get_support"):
+        if hasattr(model_sel, "selected_proteins_"):
+            feature_names = model_sel.get_feature_names_out()
+        elif hasattr(model_sel, "get_support"):
             support = model_sel.get_support()
             feature_names = feature_names[support]
         else:
@@ -414,7 +420,8 @@ def _compute_grouped_permutation_importance(
         )
 
     # Compute baseline performance
-    y_pred_proba = estimator.predict_proba(X_val[valid_features])[:, 1]
+    # Pass full X_val to Pipeline so pre/sel steps can transform correctly
+    y_pred_proba = estimator.predict_proba(X_val)[:, 1]
     baseline_auroc = auroc(y_clean, y_pred_proba)
     logger.info(f"Baseline AUROC for grouped permutation importance: {baseline_auroc:.4f}")
 
@@ -433,8 +440,8 @@ def _compute_grouped_permutation_importance(
         importance_scores = []
 
         for _repeat in range(n_repeats):
-            # Create permuted copy
-            X_permuted = X_val[valid_features].copy()
+            # Create permuted copy (full DataFrame so Pipeline pre/sel steps work)
+            X_permuted = X_val.copy()
 
             # Permute all features in the cluster together
             # Use the same permutation indices for all cluster members
@@ -700,6 +707,45 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
 
     # Filter out empty DataFrames
     valid_dfs = [df for df in fold_importances if not df.empty]
+    if not valid_dfs:
+        return pd.DataFrame(
+            columns=[
+                "feature",
+                "mean_importance",
+                "std_importance",
+                "n_folds_nonzero",
+                "importance_type",
+            ]
+        )
+
+    # Expand grouped (cluster-level) DataFrames to feature-level if needed.
+    # Grouped DataFrames have 'cluster_features' (JSON list) and 'mean_importance'
+    # but no 'feature' column. Expand each cluster row into one row per feature.
+    expanded_dfs = []
+    for df in valid_dfs:
+        if "cluster_features" in df.columns and "feature" not in df.columns:
+            rows = []
+            imp_col = "mean_importance" if "mean_importance" in df.columns else "importance"
+            imp_type = (
+                df["importance_type"].iloc[0]
+                if "importance_type" in df.columns
+                else "grouped_permutation"
+            )
+            for _, row in df.iterrows():
+                cluster_feats = json.loads(row["cluster_features"])
+                for feat in cluster_feats:
+                    rows.append(
+                        {
+                            "feature": feat,
+                            "importance": float(row[imp_col]),
+                            "importance_type": imp_type,
+                        }
+                    )
+            expanded_dfs.append(pd.DataFrame(rows) if rows else df)
+        else:
+            expanded_dfs.append(df)
+    valid_dfs = [df for df in expanded_dfs if not df.empty and "feature" in df.columns]
+
     if not valid_dfs:
         return pd.DataFrame(
             columns=[

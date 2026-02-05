@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from ced_ml.features.consensus import (
     ConsensusResult,
     build_consensus_panel,

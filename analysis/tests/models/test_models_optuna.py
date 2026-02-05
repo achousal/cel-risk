@@ -11,10 +11,11 @@ This provides basic smoke testing to prevent regressions.
 
 import logging
 
-from ced_ml.models.optuna_search import OptunaSearchCV
-from ced_ml.models.optuna_utils import DEFAULT_SEED_FALLBACK
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
+
+from ced_ml.models.optuna_search import OptunaSearchCV
+from ced_ml.models.optuna_utils import DEFAULT_SEED_FALLBACK
 
 
 class TestOptunaSearchCVBasic:

@@ -1,4 +1,4 @@
-"""Model-specific feature selector for hybrid_stability pipeline.
+"""Model-specific feature selector for multi_stage pipeline.
 
 Adds a model-aware feature selection step between KBest and the classifier.
 Each model type uses its own inductive bias (L1 coefficients, tree importances)
@@ -134,11 +134,11 @@ class ModelSpecificSelector(SelectorMixin, BaseEstimator):
         -------
         self
         """
-        X = check_array(X, accept_sparse=False, ensure_min_features=1)
-
-        # Store feature names if available (pandas DataFrame)
+        # Store feature names BEFORE check_array converts DataFrame to ndarray
         if hasattr(X, "columns"):
             self.feature_names_in_ = np.array(X.columns, dtype=object)
+
+        X = check_array(X, accept_sparse=False, ensure_min_features=1)
 
         n_features = X.shape[1]
 

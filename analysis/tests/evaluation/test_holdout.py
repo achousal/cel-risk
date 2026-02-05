@@ -15,6 +15,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+
 from ced_ml.data.schema import TARGET_COL
 from ced_ml.evaluation.holdout import (
     compute_holdout_metrics,
@@ -25,8 +28,6 @@ from ced_ml.evaluation.holdout import (
     load_model_artifact,
     save_holdout_predictions,
 )
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 
 class TestLoadHoldoutIndices:

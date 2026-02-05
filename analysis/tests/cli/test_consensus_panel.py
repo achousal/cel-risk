@@ -2,6 +2,7 @@
 
 import pandas as pd
 import pytest
+
 from ced_ml.cli.consensus_panel import (
     discover_models_with_aggregated_results,
     load_model_stability,

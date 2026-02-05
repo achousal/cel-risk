@@ -9,8 +9,9 @@ Run slow tests: pytest tests/e2e/test_run_id_aggregation.py -v -m slow
 """
 
 import pytest
-from ced_ml.cli.main import cli
 from click.testing import CliRunner
+
+from ced_ml.cli.main import cli
 
 SHARED_RUN_ID = "20260128_E2ETEST"
 """Fixed run_id shared across all train calls within a test, so downstream
@@ -41,6 +42,8 @@ class TestAggregateWithRunId:
             cli,
             [
                 "save-splits",
+                "--scenarios",
+                "IncidentOnly",
                 "--infile",
                 str(small_proteomics_data),
                 "--outdir",

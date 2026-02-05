@@ -7,6 +7,7 @@ Tests cover:
 """
 
 import pytest
+
 from ced_ml.models.stacking import StackingEnsemble
 
 

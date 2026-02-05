@@ -4,6 +4,7 @@ Tests for data.columns module (column resolution logic).
 
 import pandas as pd
 import pytest
+
 from ced_ml.config.schema import ColumnsConfig
 from ced_ml.data.columns import resolve_columns
 from ced_ml.data.schema import CAT_COLS, META_NUM_COLS

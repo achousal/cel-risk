@@ -1,6 +1,7 @@
 """Tests for ensemble-specific plotting functions."""
 
 import numpy as np
+
 from ced_ml.plotting.ensemble import (
     plot_aggregated_weights,
     plot_meta_learner_weights,

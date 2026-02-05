@@ -10,10 +10,11 @@ Tests cover:
 """
 
 import pytest
-from ced_ml.config.schema import OptunaConfig
-from ced_ml.models.optuna_search import OptunaSearchCV
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
+
+from ced_ml.config.schema import OptunaConfig
+from ced_ml.models.optuna_search import OptunaSearchCV
 
 
 @pytest.fixture

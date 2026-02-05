@@ -227,7 +227,7 @@ def training_config(tmp_path):
         "cv": {"n_outer": 3, "n_repeats": 1, "n_inner": 2},
         "optuna": {"enabled": True, "n_trials": 5, "sampler": "tpe"},
         "features": {
-            "feature_selection_strategy": "hybrid_stability",
+            "feature_selection_strategy": "multi_stage",
             "screen_top_n": 10,
             "k_grid": [5],
             "stability_thresh": 0.5,

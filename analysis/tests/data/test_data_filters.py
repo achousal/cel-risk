@@ -4,6 +4,7 @@ Tests for data filtering module.
 
 import pandas as pd
 import pytest
+
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.schema import (
     CED_DATE_COL,

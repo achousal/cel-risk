@@ -13,6 +13,9 @@ Coverage areas:
 
 import numpy as np
 import pytest
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import LogisticRegression
+
 from ced_ml.config.calibration_schema import CalibrationConfig
 from ced_ml.models.calibration_strategy import (
     CalibrationStrategy,
@@ -24,8 +27,6 @@ from ced_ml.models.calibration_strategy import (
     get_calibration_strategy,
     get_strategy_display_name,
 )
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import LogisticRegression
 
 # ============================================================================
 # Protocol Compliance Tests

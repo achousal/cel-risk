@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 import pytest
 import sklearn
-from ced_ml.utils.serialization import load_joblib, load_json, save_joblib, save_json
 from sklearn.linear_model import LogisticRegression
+
+from ced_ml.utils.serialization import load_joblib, load_json, save_joblib, save_json
 
 
 class TestJoblibSerialization:
