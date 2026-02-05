@@ -28,6 +28,13 @@ Runs the complete ML pipeline: splits, training, aggregation, and optional evalu
 ced run-pipeline [OPTIONS]
 ```
 
+**HPC Mode Logging:**
+When running in HPC mode (`--hpc`), a detailed submission log is automatically created at:
+```
+logs/submissions/submission_{RUN_ID}.log
+```
+This log captures all job submission details, dependency chains, and job IDs for monitoring.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--config`, `-c` | PATH | - | Training config YAML |

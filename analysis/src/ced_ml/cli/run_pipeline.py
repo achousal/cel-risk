@@ -349,6 +349,7 @@ def _run_hpc_mode(
         submit_hpc_pipeline,
     )
 
+    # Setup initial logger (will be replaced with file logger after run_id is generated)
     hpc_logger = setup_logger("ced_ml.hpc", level=log_level)
 
     # Detect if using fixed panel strategy and auto-disable optimization/consensus
@@ -411,6 +412,31 @@ def _run_hpc_mode(
     split_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Replace console logger with file-based logger now that we have run_id
+    submission_log_dir = logs_dir / "submissions"
+    submission_log_dir.mkdir(parents=True, exist_ok=True)
+    submission_log_file = submission_log_dir / f"submission_{run_id}.log"
+
+    # Reconfigure logger with file output
+    import logging
+
+    for handler in hpc_logger.handlers[:]:
+        hpc_logger.removeHandler(handler)
+
+    file_handler = logging.FileHandler(submission_log_file)
+    file_handler.setLevel(log_level)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+    hpc_logger.addHandler(file_handler)
+
+    # Also keep console output
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    hpc_logger.addHandler(console_handler)
+
+    hpc_logger.info(f"HPC submission log: {submission_log_file}")
+
     # Generate splits locally (fast, no HPC job needed)
     _ensure_splits_exist(
         split_dir=split_dir,
@@ -440,6 +466,7 @@ def _run_hpc_mode(
     hpc_logger.info("CeD-ML HPC Pipeline Submission")
     hpc_logger.info("=" * 70)
     hpc_logger.info(f"Run ID: {run_id}")
+    hpc_logger.info(f"Submission log: {submission_log_file}")
     hpc_logger.info(f"Models: {', '.join(models)}")
     hpc_logger.info(f"Split seeds: {split_seeds}")
     hpc_logger.info(
@@ -494,6 +521,9 @@ def _run_hpc_mode(
     if result.get("permutation_jobs"):
         hpc_logger.info(f"Permutation test jobs: {len(result['permutation_jobs'])}")
 
+    hpc_logger.info("")
+    hpc_logger.info("Submission log:")
+    hpc_logger.info(f"  cat {submission_log_file}")
     hpc_logger.info("")
     hpc_logger.info("Monitor jobs:")
     hpc_logger.info("  bjobs -w | grep CeD_")
