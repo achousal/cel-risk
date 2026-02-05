@@ -36,6 +36,12 @@ from ced_ml.config.model_schema import LRConfig, RFConfig, SVMConfig, XGBoostCon
 # Output and strictness
 from ced_ml.config.output_schema import OutputConfig, StrictnessConfig
 
+# Permutation testing
+from ced_ml.config.permutation_schema import (
+    PermutationAggregationConfig,
+    PermutationTestConfig,
+)
+
 # Root config
 from ced_ml.config.root_schema import RootConfig
 
@@ -65,6 +71,9 @@ __all__ = [
     # Output and strictness
     "OutputConfig",
     "StrictnessConfig",
+    # Permutation testing
+    "PermutationTestConfig",
+    "PermutationAggregationConfig",
     # Compute and HPC
     "ComputeConfig",
     "HPCResourceConfig",

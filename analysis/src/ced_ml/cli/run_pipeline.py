@@ -21,6 +21,7 @@ from ced_ml.cli.permutation_test import run_permutation_test_cli
 from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
+from ced_ml.config.loader import load_permutation_config, load_training_config
 from ced_ml.data.schema import ModelName
 from ced_ml.utils.logging import setup_command_logger, setup_logger
 from ced_ml.utils.paths import get_analysis_dir, get_project_root
@@ -81,15 +82,14 @@ def _ensure_splits_exist(
 
 
 # Hardcoded fallback defaults (used when no config and no CLI override)
+# Note: Scientific parameters (n_boot, permutation_n_perms, etc.) are loaded
+# from their respective config files, not from pipeline defaults
 _PIPELINE_DEFAULTS: dict[str, Any] = {
     "models": [ModelName.LR_EN, ModelName.RF, ModelName.XGBoost],
     "ensemble": True,
     "consensus": True,
     "optimize_panel": True,
     "permutation_test": False,  # Disabled by default (computationally expensive)
-    "permutation_n_perms": 200,
-    "permutation_n_jobs": -1,
-    "n_boot": 500,
     "dry_run": False,
 }
 
@@ -149,6 +149,8 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
         result["splits_config"] = (base_dir / configs["splits"]).resolve()
 
     # -- pipeline section (flat copy) ----------------------------------------
+    # Note: Only orchestration flags are loaded here. Scientific parameters
+    # (n_boot, permutation_n_perms, etc.) are loaded from their respective configs.
     pipeline = raw.get("pipeline", {})
     for key in (
         "models",
@@ -156,9 +158,6 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
         "consensus",
         "optimize_panel",
         "permutation_test",
-        "permutation_n_perms",
-        "permutation_n_jobs",
-        "n_boot",
         "dry_run",
     ):
         if key in pipeline:
@@ -419,6 +418,20 @@ def _run_hpc_mode(
         log_level=log_level,
         logger=hpc_logger,
     )
+
+    # Load permutation config to override parameters if enabled
+    if enable_permutation_test:
+        from ced_ml.config.loader import load_permutation_config
+
+        try:
+            perm_config = load_permutation_config()
+            permutation_n_perms = perm_config.n_perms
+            permutation_n_jobs = perm_config.n_jobs
+            hpc_logger.info(
+                f"Loaded permutation config: n_perms={permutation_n_perms}, n_jobs={permutation_n_jobs}"
+            )
+        except Exception as e:
+            hpc_logger.warning(f"Could not load permutation config, using parameters: {e}")
 
     # Log summary
     hpc_logger.info("=" * 70)
@@ -686,6 +699,24 @@ def run_pipeline(
     pipeline_t0 = time.monotonic()
     step_timings: list[tuple[str, float]] = []
 
+    # Load training config to extract n_boot
+    training_config = load_training_config(config_file=config_file, overrides=overrides)
+    n_boot = training_config.evaluation.n_boot
+    logger.debug(f"Loaded n_boot from training config: {n_boot}")
+
+    # Load permutation config to extract permutation params
+    try:
+        perm_config = load_permutation_config()
+        permutation_n_perms = perm_config.n_perms
+        permutation_n_jobs = perm_config.n_jobs
+        logger.debug(
+            f"Loaded permutation params from config: n_perms={permutation_n_perms}, "
+            f"n_jobs={permutation_n_jobs}"
+        )
+    except Exception as e:
+        logger.debug(f"Could not load permutation config, using defaults: {e}")
+        # Keep the function parameter values as fallback
+
     # Auto-discover input file if not provided
     if infile is None:
         logger.info("Auto-discovering input data file...")
@@ -795,7 +826,7 @@ def run_pipeline(
             stability_threshold=0.75,
             target_specificity=0.95,
             plot_formats=["png"],
-            n_boot=500,
+            n_boot=n_boot,
             log_level=log_level,
         )
     step_timings.append(("Aggregation", time.monotonic() - t0))
@@ -842,7 +873,7 @@ def run_pipeline(
             stability_threshold=0.75,
             target_specificity=0.95,
             plot_formats=["png"],
-            n_boot=500,
+            n_boot=n_boot,
             log_level=log_level,
         )
         step_timings.append(("Ensemble", time.monotonic() - t0))
