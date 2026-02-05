@@ -2,8 +2,6 @@
 # Model training for Celiac Disease risk prediction
 # This is the single source of truth -- HPC production values are the defaults.
 
-# NOTE: scenario is auto-detected from split files (set in splits_config.yaml)
-
 # Cross-validation
 cv:
   folds: 5
@@ -22,7 +20,7 @@ cv:
 # Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
 optuna:
   enabled: true  # Set to true to use Optuna instead of RandomizedSearchCV
-  n_trials: 40
+  n_trials: 60
     # Multi-objective optimization (optional)
   multi_objective: true  # Set to true to optimize multiple metrics
   objectives: ["roc_auc", "neg_brier_score"]  # Metrics to optimize (requires multi_objective=true and 2+ objectives)
@@ -33,7 +31,7 @@ optuna:
   pruner: hyperband  # Options: median, percentile, hyperband, none
   pruner_n_startup_trials: 20  # Trials before pruning starts
   pruner_percentile: 25.0  # Percentile for percentile pruner (0-100)
-  n_jobs: 1  # CRITICAL: Sequential trials required for (1) memory control with CalibratedClassifierCV
+  n_jobs: 1  # Sequential trials required for (1) memory control with CalibratedClassifierCV
             # and (2) effective Bayesian optimization - parallelization prevents TPE sampler from
             # using recent trial results to inform next hyperparameter choices
   save_study: true  # Save Optuna study object

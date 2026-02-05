@@ -49,6 +49,39 @@ from ced_ml.features.rfe import (
 )
 from ced_ml.plotting.panel_curve import plot_feature_ranking, plot_pareto_curve
 
+logger = logging.getLogger(__name__)
+
+
+def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
+    """Load aggregated significance results for all models in a run.
+
+    Args:
+        run_dir: Path to run directory (results/run_{ID}/)
+
+    Returns:
+        DataFrame with columns [model, empirical_p_value, significant, ...] or None if not found.
+    """
+    sig_files = list(run_dir.glob("*/significance/aggregated_significance.csv"))
+    if not sig_files:
+        return None
+
+    dfs = []
+    for f in sig_files:
+        try:
+            df = pd.read_csv(f)
+            if "model" not in df.columns:
+                # Extract model name from path
+                model_name = f.parent.parent.name
+                df["model"] = model_name
+            dfs.append(df)
+        except Exception as e:
+            logger.warning(f"Failed to load {f}: {e}")
+
+    if not dfs:
+        return None
+
+    return pd.concat(dfs, ignore_index=True)
+
 
 def _extract_model_name_from_aggregated_path(results_path: Path) -> str:
     """Extract model name from aggregated results path.
@@ -279,7 +312,9 @@ def run_optimize_panel_aggregated(
     corr_threshold: float = 0.80,
     corr_method: str = "spearman",
     rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
-) -> RFEResult:
+    require_significance: bool = False,
+    significance_alpha: float = 0.05,
+) -> RFEResult | None:
     """Run panel optimization using aggregated stability panel.
 
     Runs RFE independently on each available split seed, then aggregates
@@ -306,9 +341,12 @@ def run_optimize_panel_aggregated(
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
         n_jobs: Total parallel cores (auto-split between seeds and Optuna)
         retune_n_trials: Optuna trials per evaluation point for re-tuning
+        require_significance: If True, skip models that fail significance test
+        significance_alpha: P-value threshold for significance testing (default: 0.05)
 
     Returns:
-        RFEResult with optimization curve and recommendations
+        RFEResult with optimization curve and recommendations, or None if skipped
+        due to significance
 
     Raises:
         FileNotFoundError: If required files not found
@@ -351,6 +389,43 @@ def run_optimize_panel_aggregated(
     logger.info(f"Run ID: {_run_id or 'unknown'}")
     logger.info(f"Results dir: {results_dir}")
     log_hpc_context(logger)
+
+    # Significance gating
+    if require_significance:
+        if results_path.name == "aggregated":
+            run_dir = results_path.parent.parent
+        else:
+            run_dir = results_path.parent
+        sig_df = load_aggregated_significance(run_dir)
+
+        if sig_df is not None:
+            model_sig = sig_df[sig_df["model"] == model_name]
+            if len(model_sig) > 0:
+                p_value = model_sig["empirical_p_value"].iloc[0]
+                if p_value >= significance_alpha:
+                    logger.warning(
+                        f"Skipping {model_name}: p-value={p_value:.4f} >= "
+                        f"alpha={significance_alpha}. Model not significant."
+                    )
+                    print(
+                        f"\nSkipped {model_name}: not statistically significant "
+                        f"(p={p_value:.4f} >= {significance_alpha})"
+                    )
+                    return None
+                else:
+                    logger.info(
+                        f"{model_name} is significant (p={p_value:.4f} < "
+                        f"{significance_alpha}), proceeding with RFE"
+                    )
+            else:
+                logger.warning(
+                    f"No significance data found for {model_name}, " "skipping significance check"
+                )
+        else:
+            logger.warning(
+                f"No aggregated significance data found in {run_dir}, "
+                "skipping significance check"
+            )
 
     # Load aggregated stability panel
     from ced_ml.cli.panel_optimization_helpers import load_stability_panel
@@ -642,15 +717,11 @@ def run_optimize_panel_aggregated(
         aggregated=True,
     )
 
-    # --- Drop-column validation for final panel ---
+    # --- Drop-column essentiality validation per recommended panel threshold ---
     try:
         logger.info("\n" + "=" * 60)
-        logger.info("Running drop-column validation on final RFE panel...")
+        logger.info("Running drop-column essentiality validation on recommended panels...")
         logger.info("=" * 60)
-
-        # Extract final panel features from feature_ranking
-        final_panel = [row["feature"] for row in result.feature_ranking]
-        logger.info(f"Final panel size: {len(final_panel)} features")
 
         # Create binary target vector (needed for drop-column validation)
         if TARGET_COL not in df.columns:
@@ -662,91 +733,112 @@ def run_optimize_panel_aggregated(
             f"Target vector created: {y_all.sum()} positive cases out of {len(y_all)} samples"
         )
 
-        # Build feature clusters from correlation analysis on final panel
-        logger.info(
-            f"Building correlation clusters (threshold={corr_threshold}, method={corr_method})"
-        )
+        # Create essentiality output directory
+        essentiality_dir = outdir / "essentiality"
+        essentiality_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use first split's train data for correlation analysis
-        first_split = split_dirs[0]
-        seed = int(first_split.name.replace("split_seed", ""))
-        train_file = Path(split_dir) / f"train_idx_{scenario}_seed{seed}.csv"
-        train_idx = pd.read_csv(train_file).squeeze().values
+        # Extract feature ranking for panel extraction
+        all_features = [row["feature"] for row in result.feature_ranking]
 
-        # Get subset of data for correlation analysis
-        X_corr = df.iloc[train_idx][final_panel]
-        corr_matrix = compute_correlation_matrix(X_corr, final_panel, method=corr_method)
-        adj_graph = build_correlation_graph(corr_matrix, threshold=corr_threshold)
-        clusters = find_connected_components(adj_graph)
-        logger.info(f"Found {len(clusters)} correlation clusters")
+        # Summary storage for all thresholds
+        essentiality_summaries = []
 
-        # Load models for each split seed
-        drop_column_results_per_fold = []
-        for split_dir_path in split_dirs:
-            seed = int(split_dir_path.name.replace("split_seed", ""))
-            model_path = split_dir_path / "core" / f"{model_name}__final_model.joblib"
+        # Run essentiality validation for each recommended panel threshold
+        for threshold_name, panel_size in result.recommended_panels.items():
+            logger.info(f"\n--- Essentiality validation: {threshold_name} (size={panel_size}) ---")
 
-            # Load split indices
+            # Extract panel features (top-k by elimination order)
+            panel_features = all_features[:panel_size]
+            logger.info(f"Panel features: {len(panel_features)}")
+
+            # Build correlation clusters for this panel
+            first_split = split_dirs[0]
+            seed = int(first_split.name.replace("split_seed", ""))
             train_file = Path(split_dir) / f"train_idx_{scenario}_seed{seed}.csv"
-            val_file = Path(split_dir) / f"val_idx_{scenario}_seed{seed}.csv"
             train_idx = pd.read_csv(train_file).squeeze().values
-            val_idx = pd.read_csv(val_file).squeeze().values
 
-            # Load model bundle
-            bundle = joblib.load(model_path)
-            pipeline = bundle.get("model")
+            X_corr = df.iloc[train_idx][panel_features]
+            corr_matrix = compute_correlation_matrix(X_corr, panel_features, method=corr_method)
+            adj_graph = build_correlation_graph(corr_matrix, threshold=corr_threshold)
+            clusters = find_connected_components(adj_graph)
+            logger.info(f"Found {len(clusters)} correlation clusters for {threshold_name}")
 
-            if pipeline is None:
-                logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
-                continue
+            # Run drop-column across all folds
+            drop_column_results_per_fold = []
+            for split_dir_path in split_dirs:
+                seed = int(split_dir_path.name.replace("split_seed", ""))
+                model_path = split_dir_path / "core" / f"{model_name}__final_model.joblib"
 
-            # Prepare data subsets
-            X_train_seed = df.iloc[train_idx][final_panel]
-            y_train_seed = y_all[train_idx]
-            X_val_seed = df.iloc[val_idx][final_panel]
-            y_val_seed = y_all[val_idx]
+                train_file = Path(split_dir) / f"train_idx_{scenario}_seed{seed}.csv"
+                val_file = Path(split_dir) / f"val_idx_{scenario}_seed{seed}.csv"
+                train_idx = pd.read_csv(train_file).squeeze().values
+                val_idx = pd.read_csv(val_file).squeeze().values
 
-            logger.info(f"Seed {seed}: Running drop-column on {len(clusters)} clusters")
+                bundle = joblib.load(model_path)
+                pipeline = bundle.get("model")
 
-            # Run drop-column for this fold
-            fold_results = compute_drop_column_importance(
-                estimator=pipeline,
-                X_train=X_train_seed,
-                y_train=y_train_seed,
-                X_val=X_val_seed,
-                y_val=y_val_seed,
-                feature_clusters=clusters,
-                random_state=seed,
+                if pipeline is None:
+                    logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
+                    continue
+
+                X_train_seed = df.iloc[train_idx][panel_features]
+                y_train_seed = y_all[train_idx]
+                X_val_seed = df.iloc[val_idx][panel_features]
+                y_val_seed = y_all[val_idx]
+
+                fold_results = compute_drop_column_importance(
+                    estimator=pipeline,
+                    X_train=X_train_seed,
+                    y_train=y_train_seed,
+                    X_val=X_val_seed,
+                    y_val=y_val_seed,
+                    feature_clusters=clusters,
+                    random_state=seed,
+                )
+                drop_column_results_per_fold.append(fold_results)
+
+            # Aggregate and save per-threshold results
+            drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
+
+            # Clean threshold name for filename (e.g., "95%" -> "95pct")
+            threshold_clean = threshold_name.replace("%", "pct").replace(" ", "_").lower()
+            threshold_path = essentiality_dir / f"panel_{threshold_clean}_essentiality.csv"
+            drop_column_df.to_csv(threshold_path, index=False)
+            logger.info(f"Saved {threshold_name} essentiality to {threshold_path}")
+
+            # Collect summary stats
+            essentiality_summaries.append(
+                {
+                    "threshold": threshold_name,
+                    "panel_size": panel_size,
+                    "n_clusters": len(clusters),
+                    "mean_delta_auroc": drop_column_df["mean_delta_auroc"].mean(),
+                    "max_delta_auroc": drop_column_df["mean_delta_auroc"].max(),
+                    "top_cluster_id": drop_column_df.iloc[0]["cluster_id"],
+                    "top_cluster_delta": drop_column_df.iloc[0]["mean_delta_auroc"],
+                }
             )
-            drop_column_results_per_fold.append(fold_results)
 
-        # Aggregate across folds
-        logger.info("Aggregating drop-column results across folds...")
-        drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
+        # Save essentiality summary
+        summary_df = pd.DataFrame(essentiality_summaries)
+        summary_path = essentiality_dir / "essentiality_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        logger.info(f"Saved essentiality summary to {summary_path}")
 
-        # Save results
-        drop_column_path = outdir / "drop_column_validation.csv"
-        drop_column_df.to_csv(drop_column_path, index=False)
-        logger.info(f"Drop-column validation saved to {drop_column_path}")
-
-        # Log summary
-        top_5 = drop_column_df.head(5)
-        logger.info("\nTop 5 most important clusters:")
-        for _, row in top_5.iterrows():
-            logger.info(
-                f"  Cluster {row['cluster_id']:2d} ({row['n_features_in_cluster']:2d} features): "
-                f"delta_AUROC={row['mean_delta_auroc']:+.4f} +/- {row['std_delta_auroc']:.4f}"
-            )
-
-        print("\nDrop-column validation complete:")
-        print(f"  Evaluated {len(clusters)} correlation clusters")
+        # Print summary
+        print("\nDrop-column essentiality validation complete:")
+        print(f"  Validated {len(result.recommended_panels)} recommended panels")
         print(f"  Across {len(split_dirs)} folds")
-        print(f"  Results saved to: {drop_column_path}")
-        print("  See top clusters with highest delta_AUROC (importance when removed)")
+        print(f"  Results saved to: {essentiality_dir}")
+        for row in essentiality_summaries:
+            print(
+                f"    - {row['threshold']}: {row['n_clusters']} clusters, "
+                f"top delta={row['top_cluster_delta']:+.4f}"
+            )
 
     except Exception as e:
-        logger.warning(f"Drop-column validation failed: {e}", exc_info=True)
-        logger.info("Continuing without drop-column validation results")
+        logger.warning(f"Drop-column essentiality validation failed: {e}", exc_info=True)
+        logger.info("Continuing without essentiality validation results")
 
     logger.info("Aggregated panel optimization completed successfully")
 

@@ -1,12 +1,16 @@
-# ADR-016: Permutation Testing for Model Significance
+# ADR-011: Permutation Testing for Model Significance (Stage 1 Model Gate)
 
-**Status:** Accepted | **Date:** 2026-02-03
+**Status:** Accepted | **Date:** 2026-02-03 | **Updated:** 2026-02-04
 
 ## Decision
 
-**Use label-permutation testing to assess model generalization above chance level.**
+**Use label-permutation testing as Stage 1 model gate to filter models with real signal before consensus aggregation (ADR-004).**
 
 For each permutation, re-run the FULL inner pipeline (screening, feature selection, hyperparameter optimization) on permuted training labels to obtain a valid null distribution.
+
+**Workflow integration:**
+- **Before consensus:** Only models with `p < alpha` (default 0.05) proceed to Stage 2-3 (per-model evidence + RRA consensus)
+- **Prevents noise aggregation:** Ensures consensus panel aggregates only models with statistically significant signal
 
 ## Rationale
 
@@ -32,24 +36,6 @@ Compute p-value: p = (1 + #{null >= observed}) / (1 + B)
 ```
 
 The +1 correction ensures p-values are never exactly zero (per Phipson & Smyth 2010).
-
-## Alternatives
-
-| Alternative | Rejected Because |
-|-------------|------------------|
-| sklearn `permutation_test_score` | Doesn't re-run feature selection; invalid null distribution |
-| Bootstrap confidence intervals | Tests different hypothesis (CI width vs. chance level) |
-| Cross-validation variance | Measures split stability, not chance vs. real signal |
-| Fixed model permutation | Data leakage: features selected on real labels inform null |
-
-## Consequences
-
-| Positive | Negative |
-|----------|----------|
-| Valid null distribution | Computationally expensive (B x pipeline time) |
-| Robust p-values | HPC parallelization needed for B=200+ |
-| Detects overfitting | Requires trained model artifacts |
-| Formal statistical evidence | Only tests AUROC (per ADR-007) |
 
 ## Implementation
 
@@ -91,6 +77,6 @@ ced permutation-test --run-id <RUN_ID> --model LR_EN
 
 ## Related
 
-- Supports: ADR-007 (AUROC as primary metric - only AUROC tested)
-- Supports: ADR-006 (nested CV - respects outer fold structure)
-- Supports: ADR-004 (hybrid feature selection - re-run in permutation loop)
+- Part of: ADR-004 (Stage 1 model gate in three-stage workflow)
+- Supports: ADR-005 (nested CV - respects outer fold structure)
+- Enables: Stage 2-3 of ADR-004 (filters significant models before per-model evidence + consensus)

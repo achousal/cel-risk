@@ -44,7 +44,8 @@ plots:
   plot_learning_curve: true     # Learning curves (sample size vs performance)
   plot_oof_combined: true       # Combined out-of-fold predictions across CV folds
   plot_optuna: true             # Optuna hyperparameter optimization plots
-  optuna_plot_format: html      # Options: html (HPC-safe), png, pdf (require Kaleido/Chrome)
+  optuna_plot_format: png       # Local: png/pdf (require Kaleido)
+  optuna_plot_format_hpc: html  # HPC: html (no Chrome/Kaleido required)
 
   # Ensemble-specific plots
   plot_ensemble_weights: true   # Stacking ensemble meta-learner coefficients

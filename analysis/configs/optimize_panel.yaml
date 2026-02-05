@@ -1,14 +1,6 @@
 # Panel Optimization Configuration
 # Aggregated RFE to find optimal panel size trade-offs for clinical deployment
 #
-# USAGE (auto-detects paths from run metadata):
-#   ced optimize-panel --run-id 20260127_104409                # All models (RECOMMENDED)
-#   ced optimize-panel --run-id 20260127_104409 --model LR_EN  # Single model
-#
-# PRIORITY: This file is loaded first, CLI args override these values.
-#   When using `ced run-pipeline`, values from this file are used as defaults.
-#
-# Reference: docs/reference/FEATURE_SELECTION.md#aggregated-rfe-deployment-optimization
 
 # RFE Algorithm Parameters
 stability_threshold: 0.90    # Minimum selection fraction for stable proteins (default: 0.90)
@@ -19,7 +11,7 @@ cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended f
 step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # Per-k Hyperparameter Re-tuning
-retune_trials: 40            # Optuna trials per evaluation point (was 40; 60 for more reliable tuning)
+retune_trials: 60            # Optuna trials per evaluation point (was 40; 60 for more reliable tuning)
 retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # Correlation-Aware Pruning
@@ -45,3 +37,14 @@ rfe_tune_spaces:
   # RF and XGBoost: fixed HPs from full-feature training (no per-k re-tuning).
   # Tree ensembles are robust to feature count changes; re-tuning at each k
   # introduces noise and overfitting risk with small positive class.
+
+# Significance Gating
+significance:
+  require_significance: true    # Skip non-significant models
+  alpha: 0.05                   # Significance threshold
+
+# Drop-Column Essentiality Validation
+essentiality:
+  enabled: true                 # Auto-run after RFE
+  include_brier: false          # Include Brier score in output
+  corr_threshold: 0.85          # Correlation threshold for clustering

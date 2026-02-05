@@ -288,7 +288,7 @@ def fast_training_config(tmp_path):
     2-fold CV, single repeat, no Optuna, minimal features.
     """
     config = {
-        "scenario": "IncidentOnly",
+        "scenario": "IncidentOnly",  # Match default splits_config (IncidentOnly)
         "cv": {
             "folds": 2,
             "repeats": 1,

@@ -1,4 +1,4 @@
-# ADR-012: Fixed Specificity
+# ADR-010: Fixed Specificity
 
 **Status:** Accepted | **Date:** 2026-01-20
 

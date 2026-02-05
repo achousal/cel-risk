@@ -372,18 +372,12 @@ def tune_cell(
                 params = {
                     "n_estimators": trial.suggest_int("n_estimators", 100, 500),
                     "max_depth": trial.suggest_int("max_depth", 3, 10),
-                    "learning_rate": trial.suggest_float(
-                        "learning_rate", 0.01, 0.3, log=True
-                    ),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
                     "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-                    "colsample_bytree": trial.suggest_float(
-                        "colsample_bytree", 0.5, 1.0
-                    ),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
                     "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
                     "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-                    "reg_lambda": trial.suggest_float(
-                        "reg_lambda", 1e-8, 10.0, log=True
-                    ),
+                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
                     "eval_metric": "logloss",
                 }
                 pipe = Pipeline(
@@ -481,9 +475,7 @@ def tune_all_cells(
 # ---------------------------------------------------------------------------
 
 
-def calibration_slope_intercept(
-    y_true: np.ndarray, y_prob: np.ndarray
-) -> tuple[float, float]:
+def calibration_slope_intercept(y_true: np.ndarray, y_prob: np.ndarray) -> tuple[float, float]:
     """Compute calibration slope and intercept via logistic regression on logit(p)."""
     eps = 1e-15
     p = np.clip(y_prob, eps, 1 - eps)
@@ -553,9 +545,7 @@ def compute_score_distributions(
     prev_mask = labels_train == PREVALENT_LABEL
     mean_prevalent = float(prob_train[prev_mask].mean()) if prev_mask.any() else np.nan
 
-    score_gap = (
-        mean_incident - mean_prevalent if not np.isnan(mean_prevalent) else np.nan
-    )
+    score_gap = mean_incident - mean_prevalent if not np.isnan(mean_prevalent) else np.nan
 
     return {
         "mean_prob_incident": round(mean_incident, 6),
@@ -735,11 +725,7 @@ def run_experiment(
                 seed=seed,
             )
             X_train = df.iloc[cell_train_idx][panel].values
-            y_train = (
-                (df.iloc[cell_train_idx][TARGET_COL] == INCIDENT_LABEL)
-                .astype(int)
-                .values
-            )
+            y_train = (df.iloc[cell_train_idx][TARGET_COL] == INCIDENT_LABEL).astype(int).values
 
             for model_name in models:
                 t0 = time.perf_counter()

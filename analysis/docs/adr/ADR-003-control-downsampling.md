@@ -41,4 +41,3 @@
 ## Related
 
 - Depends: ADR-001 (split strategy)
-- Requires: ADR-010 (prevalence adjustment)

@@ -1,10 +1,5 @@
 # Consensus Panel Configuration
 # Configuration for cross-model consensus panel generation via Robust Rank Aggregation
-#
-# USAGE (auto-detects paths from run metadata):
-#   ced consensus-panel --run-id 20260127_115115  # All models (RECOMMENDED)
-#
-# All parameters can be overridden via CLI flags
 
 # Stability threshold: minimum selection fraction to include a protein
 # Proteins must be selected in >= this fraction of CV folds to be considered "stable"
@@ -13,7 +8,7 @@ stability_threshold: 0.90
 # Correlation threshold for clustering redundant proteins
 # Proteins with |correlation| >= this threshold are grouped, and one representative
 # per cluster is kept (the one with highest consensus score)
-corr_threshold: 0.85
+corr_threshold: 0.80
 
 # Target panel size after correlation pruning
 # This is the final number of proteins in the consensus panel
@@ -30,3 +25,14 @@ rfe_weight: 0.5
 #   - borda: Borda count (sum of (N - rank + 1) across models)
 #   - median: Median rank across models
 rra_method: geometric_mean
+
+# Significance Gating
+significance:
+  require_significance: true    # Only include significant models
+  alpha: 0.05                   # Significance threshold
+  min_significant_models: 2     # Minimum models required for consensus
+
+# Ranking Mode
+# - false (legacy): Stability + RFE weighting
+# - true (stringent): OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
+use_stringent_ranking: false

@@ -266,7 +266,7 @@ ced permutation-test [OPTIONS]
 | `--split-seed` | INT | 0 | Split seed to use |
 | `--n-perms` | INT | 200 | Number of permutations |
 | `--perm-index` | INT | - | Single permutation index (HPC mode) |
-| `--metric` | TEXT | `auroc` | Metric (only `auroc` supported per ADR-007) |
+| `--metric` | TEXT | `auroc` | Metric (only `auroc` supported) |
 | `--n-jobs` | INT | 1 | Parallel jobs |
 | `--outdir` | PATH | Auto | Output directory |
 | `--random-state` | INT | 42 | Random seed |
@@ -440,4 +440,4 @@ results/run_{YYYYMMDD_HHMMSS}/
 
 - [ARTIFACTS.md](ARTIFACTS.md) - Complete output file reference
 - [FEATURE_SELECTION.md](FEATURE_SELECTION.md) - Feature selection methods
-- [ADR-016](../adr/ADR-016-permutation-testing.md) - Permutation testing methodology
+- [ADR-011](../adr/ADR-011-permutation-testing.md) - Permutation testing methodology

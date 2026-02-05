@@ -205,7 +205,6 @@ def compute_and_save_pooled_metrics(
         compute_pooled_threshold_metrics,
         save_threshold_data,
     )
-    from ced_ml.evaluation.scoring import compute_selection_scores_for_models
 
     pooled_test_metrics: dict[str, dict[str, float]] = {}
     pooled_val_metrics: dict[str, dict[str, float]] = {}
@@ -258,22 +257,6 @@ def compute_and_save_pooled_metrics(
                     if brier is not None
                     else f"Pooled test [{model_name}] Brier: N/A"
                 )
-
-            # Selection scores
-            selection_scores = compute_selection_scores_for_models(pooled_test_metrics)
-            if selection_scores:
-                selection_df = pd.DataFrame(
-                    [
-                        {"model": model_name, "selection_score": score}
-                        for model_name, score in sorted(
-                            selection_scores.items(), key=lambda x: x[1], reverse=True
-                        )
-                    ]
-                )
-                save_metrics(selection_df, metrics_dir / "selection_scores.csv")
-                logger.info("Selection scores computed and saved")
-                for model_name, score in selection_scores.items():
-                    logger.info(f"Selection score [{model_name}]: {score:.4f}")
 
         # Threshold info
         for model_name in test_models:

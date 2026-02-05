@@ -1,4 +1,4 @@
-# ADR-008: Optuna Hyperparameter Optimization
+# ADR-006: Optuna Hyperparameter Optimization
 
 **Status:** Accepted | **Date:** 2026-01-20
 
@@ -22,7 +22,7 @@
 
 **Optuna advantages:**
 - Bayesian optimization (TPE learns from history)
-- Pruning stops unpromising trials early (2-5× speedup)
+- Pruning stops unpromising trials early
 - Adaptive sampling explores promising regions
 - Study persistence and parallel support
 
@@ -53,5 +53,4 @@
 
 ## Related
 
-- Depends: ADR-006 (nested CV, where Optuna applies)
-- Related: ADR-007 (AUROC optimization objective)
+- Depends: ADR-005 (nested CV, where Optuna applies)

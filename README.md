@@ -10,12 +10,12 @@
 ---
 
 **Core features:**
+- Three-stage feature selection: permutation-gated model filtering → four-strategy ranking (OOF importance, drop-column, RFE, stability) → cross-model consensus via robust rank aggregation
 - Nested cross-validation with Bayesian hyperparameter optimization
-- Five feature selection strategies (hybrid stability, nested RFECV, post-hoc RFE, cross-model consensus, fixed panel)
-- Permutation testing for statistical significance of predictive performance
-- Cross-model consensus panel generation via Robust Rank Aggregation
-- Multi-model ensemble with stacking (RF, XGBoost, SVM, Logistic Regression)
-- HPC-ready (LSF/Slurm) with full provenance tracking
+- Multi-model stacking ensemble with OOF-based calibration
+- Temporal validation with holdout test sets
+- Panel size optimization for biomarker discovery/deployment
+- HPC-ready (LSF/Slurm) with efficient parallelization
 
 ---
 

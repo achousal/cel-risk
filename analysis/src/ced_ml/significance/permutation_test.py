@@ -147,9 +147,9 @@ def compute_p_value(observed: float, null_distribution: list[float]) -> float:
 
 def run_permutation_for_fold(
     pipeline: Any,
-    X_train: np.ndarray,
+    X_train: "np.ndarray | pd.DataFrame",
     y_train: np.ndarray,
-    X_test: np.ndarray,
+    X_test: "np.ndarray | pd.DataFrame",
     y_test: np.ndarray,
     random_state: int,
     perm_idx: int,
@@ -164,11 +164,11 @@ def run_permutation_for_fold(
     ----------
     pipeline : sklearn.base.BaseEstimator
         Pipeline to clone and fit. Must implement fit() and predict_proba().
-    X_train : np.ndarray
+    X_train : np.ndarray or pd.DataFrame
         Training features (not permuted).
     y_train : np.ndarray
         Training labels (will be permuted).
-    X_test : np.ndarray
+    X_test : np.ndarray or pd.DataFrame
         Test features (not permuted).
     y_test : np.ndarray
         Test labels (not permuted).
@@ -298,12 +298,28 @@ def run_permutation_test(
         f"fold={outer_fold}, n_perms={n_perms}, n_jobs={n_jobs}"
     )
 
-    X_train = X[train_idx]
+    # Handle both DataFrame and numpy array inputs
+    if hasattr(X, "iloc"):
+        # DataFrame: use iloc for integer position indexing
+        X_train = X.iloc[train_idx]
+        X_test = X.iloc[test_idx]
+    else:
+        # NumPy array: use direct indexing
+        X_train = X[train_idx]
+        X_test = X[test_idx]
     y_train = y[train_idx]
-    X_test = X[test_idx]
     y_test = y[test_idx]
 
-    pipeline_clone = clone(pipeline)
+    # Extract base model if wrapped in OOFCalibratedModel
+    # Calibration is irrelevant for permutation testing (testing discrimination, not calibration)
+    from ced_ml.models.calibration import OOFCalibratedModel
+
+    base_pipeline = pipeline
+    if isinstance(pipeline, OOFCalibratedModel):
+        base_pipeline = pipeline.base_model
+        logger.info("Extracted base model from OOFCalibratedModel for permutation testing")
+
+    pipeline_clone = clone(base_pipeline)
     pipeline_clone.fit(X_train, y_train)
     y_pred_proba = pipeline_clone.predict_proba(X_test)[:, 1]
     observed_auroc = roc_auc_score(y_test, y_pred_proba)
@@ -313,7 +329,7 @@ def run_permutation_test(
 
     null_aurocs = Parallel(n_jobs=n_jobs, verbose=1)(
         delayed(run_permutation_for_fold)(
-            pipeline=pipeline,
+            pipeline=base_pipeline,
             X_train=X_train,
             y_train=y_train,
             X_test=X_test,

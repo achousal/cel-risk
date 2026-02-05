@@ -8,6 +8,8 @@ Parallelization strategy:
 - Post-processing: Single aggregation job (waits for all training)
 - Panel optimization: M x S seed jobs + M aggregation jobs
 - Consensus: Single job (waits for panel aggregation)
+- Permutation tests: M x S parallel jobs (one per model per seed)
+- Permutation aggregation: M jobs (one per model, aggregates per-seed results)
 
 Example: 4 models × 10 splits = 40 training jobs running simultaneously
 """
@@ -370,6 +372,64 @@ ced permutation-test \\
     return cmd
 
 
+def _build_permutation_test_full_command(
+    *,
+    run_id: str,
+    model: str,
+    split_seed: int = 0,
+    n_perms: int = 200,
+    n_jobs: int = -1,
+    random_state: int = 42,
+) -> str:
+    """Build full permutation test command (all permutations in one job).
+
+    Runs all permutations with internal parallelization via joblib.
+
+    Args:
+        run_id: Run identifier.
+        model: Model name.
+        split_seed: Split seed to use.
+        n_perms: Number of permutations.
+        n_jobs: Parallel jobs for internal parallelization (-1 = all cores).
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        A bash command string for running full permutation test.
+    """
+    cmd = f"""ced permutation-test \\
+  --run-id {run_id} \\
+  --model {model} \\
+  --split-seed {split_seed} \\
+  --n-perms {n_perms} \\
+  --n-jobs {n_jobs} \\
+  --random-state {random_state}"""
+    return cmd
+
+
+def _build_permutation_aggregation_command(
+    *,
+    run_id: str,
+    model: str,
+) -> str:
+    """Build permutation aggregation command (runs after job array completes).
+
+    This command aggregates individual perm_*.joblib files into a pooled
+    significance result.
+
+    Args:
+        run_id: Run identifier.
+        model: Model name.
+
+    Returns:
+        A bash command string for aggregating permutation results.
+    """
+    cmd = f"""echo "Aggregating permutation results for {model}..."
+ced permutation-test \\
+  --run-id {run_id} \\
+  --model {model}"""
+    return cmd
+
+
 def submit_hpc_pipeline(
     *,
     config_file: Path,
@@ -382,6 +442,9 @@ def submit_hpc_pipeline(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
+    enable_permutation_test: bool = False,
+    permutation_n_perms: int = 200,
+    permutation_n_jobs: int = -1,
     hpc_config: HPCConfig,
     logs_dir: Path,
     dry_run: bool,
@@ -389,13 +452,15 @@ def submit_hpc_pipeline(
 ) -> dict:
     """Submit complete HPC pipeline with dependency chains.
 
-    Job dependency architecture (OPTIMIZED FOR MAXIMUM PARALLELIZATION):
+    Job dependency architecture (OPTIMIZED FOR CORRECTNESS + PARALLELIZATION):
     1. Training jobs (M x S jobs: one per model per split, fully parallel)
        Example: 4 models x 10 splits = 40 parallel jobs
-    2. Post-processing job (aggregation + ensemble, depends on ALL training jobs)
-    3. Panel seed jobs (M x S jobs: one per model per seed, depends on post-processing)
-    4. Panel aggregation jobs (M jobs: one per model, depends on that model's seed jobs)
-    5. Consensus panel job (depends on post-processing + panel aggregation)
+    2. Post-processing job (aggregation + ensemble, depends on ALL training)
+    3. Permutation test jobs (M x S, depends on training - parallel w/ post)
+    4. Permutation aggregation (M jobs, depends on perm tests - produces sig)
+    5. Panel seed jobs (M x S, depends on post + perm agg for sig gating)
+    6. Panel aggregation jobs (M jobs, depends on that model's seed jobs)
+    7. Consensus panel (depends on post + panel agg + perm agg)
 
     Args:
         config_file: Path to training config YAML.
@@ -408,13 +473,17 @@ def submit_hpc_pipeline(
         enable_ensemble: Enable ensemble training in post-processing.
         enable_consensus: Enable consensus panel generation.
         enable_optimize_panel: Enable parallel panel optimization jobs.
+        enable_permutation_test: Enable permutation testing for significance.
+        permutation_n_perms: Number of permutations (default: 200).
+        permutation_n_jobs: Parallel jobs for permutation testing (-1 = all cores).
         hpc_config: HPCConfig schema instance.
         logs_dir: Directory for job logs.
         dry_run: Preview without submitting.
         pipeline_logger: Logger instance.
 
     Returns:
-        Dict with run_id, training_jobs, postprocessing_job, panel_jobs, consensus_job, logs_dir.
+        Dict with run_id, training_jobs, postprocessing_job, panel_jobs,
+        consensus_job, permutation_jobs, logs_dir.
     """
     base_dir = Path.cwd()
 
@@ -506,7 +575,96 @@ def submit_hpc_pipeline(
     elif dry_run:
         pipeline_logger.info(f"  [DRY RUN] Post-processing: {post_job_name}")
 
+    # Submit permutation test jobs BEFORE panel optimization (significance gating)
+    # Permutation jobs depend on training jobs (can run in parallel with post-processing)
+    # Permutation aggregation produces aggregated_significance.csv needed by panel optimization
+    permutation_job_names = []
+    permutation_agg_names: list[str] = []
+    if enable_permutation_test:
+        n_perm_jobs = len(models) * len(split_seeds)
+        pipeline_logger.info(
+            f"Submitting {n_perm_jobs} permutation test jobs "
+            f"({len(models)} models x {len(split_seeds)} seeds)..."
+        )
+
+        # Track permutation job names by model for aggregation dependencies
+        perm_names_by_model: dict[str, list[str]] = {m: [] for m in models}
+
+        for model in models:
+            for seed in split_seeds:
+                perm_job_name = f"CeD_{run_id}_perm_{model}_s{seed}"
+                permutation_job_names.append(perm_job_name)
+                perm_names_by_model[model].append(perm_job_name)
+
+                # Depend on the specific training job for this model/seed
+                training_job_name = f"CeD_{run_id}_{model}_s{seed}"
+                perm_dependency = f"done({training_job_name})"
+
+                perm_command = _build_permutation_test_full_command(
+                    run_id=run_id,
+                    model=model,
+                    split_seed=seed,
+                    n_perms=permutation_n_perms,
+                    n_jobs=permutation_n_jobs,
+                )
+
+                perm_script = build_job_script(
+                    job_name=perm_job_name,
+                    command=perm_command,
+                    dependency=perm_dependency,
+                    **bsub_params,
+                )
+
+                perm_job_id = submit_job(perm_script, dry_run=dry_run)
+                if perm_job_id:
+                    pipeline_logger.info(f"  Permutation test ({model} s{seed}): Job {perm_job_id}")
+                elif dry_run:
+                    pipeline_logger.info(
+                        f"  [DRY RUN] Permutation test ({model} s{seed}): {perm_job_name}"
+                    )
+                else:
+                    pipeline_logger.error(
+                        f"  Permutation test ({model} s{seed}): Submission failed"
+                    )
+
+        # Submit permutation aggregation jobs (one per model, depends on all
+        # perm jobs for that model)
+        pipeline_logger.info(f"Submitting {len(models)} permutation aggregation jobs...")
+        for model in models:
+            agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
+            model_perm_jobs = perm_names_by_model[model]
+
+            if model_perm_jobs:
+                # Depend on all permutation jobs for this model completing
+                agg_dependency = " && ".join(f"done({name})" for name in model_perm_jobs)
+
+                agg_command = _build_permutation_aggregation_command(
+                    run_id=run_id,
+                    model=model,
+                )
+
+                agg_script = build_job_script(
+                    job_name=agg_job_name,
+                    command=agg_command,
+                    dependency=agg_dependency,
+                    **bsub_params,
+                )
+
+                agg_job_id = submit_job(agg_script, dry_run=dry_run)
+                if agg_job_id:
+                    pipeline_logger.info(f"  Permutation aggregation ({model}): Job {agg_job_id}")
+                elif dry_run:
+                    pipeline_logger.info(
+                        f"  [DRY RUN] Permutation aggregation ({model}): " f"{agg_job_name}"
+                    )
+                else:
+                    pipeline_logger.error(f"  Permutation aggregation ({model}): Submission failed")
+
+                permutation_agg_names.append(agg_job_name)
+
     # Submit panel optimization jobs: M x S seed jobs + M aggregation jobs
+    # When permutation testing is enabled, panel optimization depends on permutation
+    # aggregation completing first (significance gating requires aggregated_significance.csv)
     panel_job_ids = []
     panel_agg_names: list[str] = []  # populated inside enable_optimize_panel block
     if enable_optimize_panel:
@@ -518,11 +676,20 @@ def submit_hpc_pipeline(
         )
 
         # Phase 1: Per-seed RFE jobs (M x S, parallel, depend on post-processing)
+        # When permutation testing is enabled, also depend on permutation aggregation
+        # so that significance data is available for gating
         panel_seed_names_by_model: dict[str, list[str]] = {m: [] for m in models}
         for model in models:
             for seed in split_seeds:
                 seed_job_name = f"CeD_{run_id}_panel_{model}_s{seed}"
-                seed_dependency = f"done({post_job_name})"
+                # Base dependency: post-processing must complete
+                seed_deps = [f"done({post_job_name})"]
+                # If permutation testing enabled, also depend on that model's perm aggregation
+                if enable_permutation_test and permutation_agg_names:
+                    model_perm_agg = f"CeD_{run_id}_perm_{model}_agg"
+                    if model_perm_agg in permutation_agg_names:
+                        seed_deps.append(f"done({model_perm_agg})")
+                seed_dependency = " && ".join(seed_deps)
 
                 seed_command = _build_panel_optimization_command(
                     run_id=run_id,
@@ -577,20 +744,22 @@ def submit_hpc_pipeline(
             elif dry_run:
                 pipeline_logger.info(f"  [DRY RUN] Panel aggregation ({model}): {agg_job_name}")
 
-    # Submit consensus panel job with dependency on post-processing + all panel optimization jobs
+    # Submit consensus panel job (depends on post + panel opt + permutation)
     consensus_job_id = None
     if enable_consensus:
         pipeline_logger.info("Submitting consensus panel job...")
         consensus_job_name = f"CeD_{run_id}_consensus"
 
-        # Consensus depends on post-processing (aggregation) AND panel optimization jobs
-        # (if enabled). Uses job names for robust dependency tracking.
-        post_dep = f"done({post_job_name})"
+        # Consensus depends on:
+        # - post-processing (aggregation)
+        # - panel optimization jobs (if enabled)
+        # - permutation aggregation jobs (if enabled, for significance filtering)
+        consensus_deps = [f"done({post_job_name})"]
         if enable_optimize_panel and panel_agg_names:
-            agg_deps = " && ".join(f"done({name})" for name in panel_agg_names)
-            consensus_dependency = f"{post_dep} && {agg_deps}"
-        else:
-            consensus_dependency = post_dep
+            consensus_deps.extend(f"done({name})" for name in panel_agg_names)
+        if enable_permutation_test and permutation_agg_names:
+            consensus_deps.extend(f"done({name})" for name in permutation_agg_names)
+        consensus_dependency = " && ".join(consensus_deps)
 
         consensus_command = _build_consensus_panel_command(run_id=run_id)
 
@@ -614,5 +783,7 @@ def submit_hpc_pipeline(
         "panel_optimization_jobs": panel_job_ids,
         "consensus_job": consensus_job_id
         or (f"DRYRUN_{consensus_job_name}" if enable_consensus else None),
+        "permutation_jobs": permutation_job_names,
+        "permutation_aggregation_jobs": permutation_agg_names,
         "logs_dir": run_logs_dir,
     }

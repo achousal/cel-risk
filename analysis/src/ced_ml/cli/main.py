@@ -208,8 +208,14 @@ def save_splits(ctx, config, **kwargs):
 @click.option(
     "--split-seed",
     type=int,
-    default=0,
-    help="Split seed to use (if multiple splits generated)",
+    default=None,
+    help="Split seed to use (if multiple splits generated). Mutually exclusive with --split-seeds.",
+)
+@click.option(
+    "--split-seeds",
+    type=str,
+    default=None,
+    help="Comma-separated list of split seeds (e.g., '0,1,2'). Mutually exclusive with --split-seed.",
 )
 @click.option(
     "--outdir",
@@ -230,26 +236,233 @@ def save_splits(ctx, config, **kwargs):
     help="Shared run ID (default: auto-generated timestamp). Use to group multiple splits/models under one run.",
 )
 @click.option(
+    "--hpc",
+    is_flag=True,
+    default=False,
+    help="Submit LSF jobs to HPC cluster instead of running locally",
+)
+@click.option(
+    "--hpc-config",
+    type=click.Path(exists=True),
+    default=None,
+    help="HPC config file (default: configs/pipeline_hpc.yaml)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview HPC job submission without executing (--hpc mode only)",
+)
+@click.option(
     "--override",
     multiple=True,
     help="Override config values (format: key=value or nested.key=value)",
 )
 @click.pass_context
-def train(ctx, config, **kwargs):
-    """Train machine learning models with nested cross-validation."""
+def train(ctx, config, split_seed, split_seeds, **kwargs):
+    """Train machine learning models with nested cross-validation.
+
+    LOCAL MODE (default):
+        Train a single model on a single split seed locally.
+
+    HPC MODE (--hpc):
+        Submit LSF job(s) to HPC cluster. Supports:
+        - Single seed: ced train --model LR_EN --split-seed 0 --hpc
+        - Multiple seeds: ced train --model LR_EN --split-seeds 0,1,2 --hpc
+
+    Examples:
+
+        # Local training (single model, single seed)
+        ced train --infile data/celiac.parquet --split-dir splits/ --model LR_EN --split-seed 0
+
+        # HPC: Submit single job
+        ced train --infile data/celiac.parquet --split-dir splits/ \\
+            --model LR_EN --split-seed 0 --hpc
+
+        # HPC: Submit multiple jobs for all seeds
+        ced train --infile data/celiac.parquet --split-dir splits/ \\
+            --model LR_EN --split-seeds 0,1,2,3,4 --hpc
+
+        # HPC: Preview without submitting
+        ced train --infile data/celiac.parquet --split-dir splits/ \\
+            --model LR_EN --split-seeds 0,1,2 --hpc --dry-run
+    """
+    from pathlib import Path
+
+    hpc_flag = kwargs.pop("hpc", False)
+    hpc_config_cli = kwargs.pop("hpc_config", None)
+    dry_run_flag = kwargs.pop("dry_run", False)
+
+    # Validate mutually exclusive options
+    if split_seed is not None and split_seeds is not None:
+        raise click.UsageError(
+            "--split-seed and --split-seeds are mutually exclusive. Use one or the other."
+        )
+
+    # Determine which seeds to process
+    if split_seeds is not None:
+        seed_list = [int(s.strip()) for s in split_seeds.split(",")]
+    elif split_seed is not None:
+        seed_list = [split_seed]
+    else:
+        # Default to seed 0 for local mode, require explicit seeds for HPC mode
+        if hpc_flag:
+            raise click.UsageError(
+                "HPC mode (--hpc) requires either --split-seed or --split-seeds. "
+                "Example: --split-seed 0 or --split-seeds 0,1,2,3,4"
+            )
+        seed_list = [0]
+
+    # HPC mode: submit jobs and exit
+    if hpc_flag:
+        from ced_ml.hpc.lsf import (
+            _build_training_command,
+            build_job_script,
+            detect_environment,
+            load_hpc_config,
+            submit_job,
+        )
+        from ced_ml.utils.paths import get_project_root
+
+        # Resolve paths
+        infile = Path(kwargs["infile"]).resolve()
+        split_dir = Path(kwargs["split_dir"]).resolve() if kwargs.get("split_dir") else None
+        outdir = Path(kwargs.get("outdir", "results")).resolve()
+        config_file = Path(config).resolve() if config else None
+        model = kwargs.get("model", ModelName.LR_EN)
+
+        if not split_dir:
+            raise click.UsageError("HPC mode requires --split-dir to be specified.")
+
+        # Generate run_id if not provided
+        run_id = kwargs.get("run_id")
+        if not run_id:
+            from datetime import datetime
+
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Load HPC config
+        if not hpc_config_cli:
+            root = get_project_root()
+            candidates = [
+                root / "configs" / "pipeline_hpc.yaml",
+                root / "analysis" / "configs" / "pipeline_hpc.yaml",
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    hpc_config_cli = str(candidate)
+                    break
+            else:
+                raise click.UsageError(
+                    "HPC mode requires --hpc-config or configs/pipeline_hpc.yaml to exist. "
+                    "Searched: configs/ and analysis/configs/"
+                )
+
+        hpc_config = load_hpc_config(Path(hpc_config_cli))
+        env_info = detect_environment(get_project_root())
+
+        # Build bsub parameters
+        default_resources = hpc_config.get_resources("default")
+        root = get_project_root()
+        log_dir = root / "logs" / "hpc" / "training" / f"run_{run_id}"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        bsub_params = {
+            "project": hpc_config.project,
+            "env_activation": env_info.activation_cmd,
+            "log_dir": log_dir,
+            **default_resources,
+        }
+
+        # Submit jobs
+        n_jobs = len(seed_list)
+        click.echo(f"\nSubmitting {n_jobs} training job(s) to HPC:")
+        click.echo(f"  Model: {model}")
+        click.echo(f"  Seeds: {seed_list}")
+        click.echo(f"  Run ID: {run_id}")
+        click.echo(f"  Output: {outdir}")
+
+        submitted_jobs = []
+        for seed in seed_list:
+            job_name = f"CeD_{run_id}_{model}_s{seed}"
+
+            # Build training command
+            cmd_kwargs = {
+                "infile": infile,
+                "split_dir": split_dir,
+                "outdir": outdir,
+                "model": model,
+                "split_seed": seed,
+                "run_id": run_id,
+            }
+            if config_file:
+                cmd_kwargs["config_file"] = config_file
+            else:
+                # Use a default config path if available
+                default_config = root / "configs" / "training_config.yaml"
+                if not default_config.exists():
+                    default_config = root / "analysis" / "configs" / "training_config.yaml"
+                if default_config.exists():
+                    cmd_kwargs["config_file"] = default_config
+                else:
+                    raise click.UsageError(
+                        "HPC mode requires --config or configs/training_config.yaml to exist."
+                    )
+
+            command = _build_training_command(**cmd_kwargs)
+
+            script = build_job_script(
+                job_name=job_name,
+                command=command,
+                **bsub_params,
+            )
+
+            job_id = submit_job(script, dry_run=dry_run_flag)
+
+            if job_id:
+                submitted_jobs.append((seed, job_id))
+                click.echo(f"  Submitted seed {seed}: job_id={job_id}")
+            elif dry_run_flag:
+                click.echo(f"  [DRY RUN] seed {seed}: {job_name}")
+            else:
+                click.echo(f"  seed {seed}: Submission failed", err=True)
+
+        if dry_run_flag:
+            click.echo("\n[DRY RUN] No jobs were actually submitted.")
+        elif submitted_jobs:
+            click.echo(f"\nSuccessfully submitted {len(submitted_jobs)} job(s)")
+            click.echo(f"Monitor with: bjobs -J 'CeD_{run_id}_{model}_*'")
+            click.echo(f"Logs in: {log_dir}")
+
+        return
+
+    # Local mode: run training directly
     from ced_ml.cli.train import run_train
 
-    # Collect CLI args
-    cli_args = {k: v for k, v in kwargs.items() if k != "override"}
-    overrides = list(kwargs.get("override", []))
+    # For local mode with multiple seeds, run sequentially
+    for i, seed in enumerate(seed_list):
+        if len(seed_list) > 1:
+            click.echo(f"\n{'=' * 70}")
+            click.echo(f"Training seed {seed} ({i + 1}/{len(seed_list)})")
+            click.echo(f"{'=' * 70}\n")
 
-    # Run training
-    run_train(
-        config_file=config,
-        cli_args=cli_args,
-        overrides=overrides,
-        log_level=ctx.obj.get("log_level"),
-    )
+        # Collect CLI args
+        cli_args = {k: v for k, v in kwargs.items() if k != "override"}
+        cli_args["split_seed"] = seed
+        overrides = list(kwargs.get("override", []))
+
+        # Run training
+        run_train(
+            config_file=config,
+            cli_args=cli_args,
+            overrides=overrides,
+            log_level=ctx.obj.get("log_level"),
+        )
+
+    if len(seed_list) > 1:
+        click.echo(f"\n{'=' * 70}")
+        click.echo(f"Training complete for all {len(seed_list)} seed(s)")
+        click.echo(f"{'=' * 70}\n")
 
 
 @cli.command("aggregate-splits")
@@ -400,9 +613,9 @@ def aggregate_splits(ctx, **kwargs):
             # Process each model
             for model_name, results_dir in model_dirs.items():
                 if len(model_dirs) > 1:
-                    click.echo(f"\n{'='*70}")
+                    click.echo(f"\n{'=' * 70}")
                     click.echo(f"Aggregating splits for: {model_name}")
-                    click.echo(f"{'='*70}\n")
+                    click.echo(f"{'=' * 70}\n")
 
                 # Prepare kwargs for this model
                 model_kwargs = kwargs.copy()
@@ -413,9 +626,9 @@ def aggregate_splits(ctx, **kwargs):
                 run_aggregate_splits(**model_kwargs, log_level=ctx.obj.get("log_level"))
 
             if len(model_dirs) > 1:
-                click.echo(f"\n{'='*70}")
+                click.echo(f"\n{'=' * 70}")
                 click.echo(f"Aggregation complete for all {len(model_dirs)} model(s)")
-                click.echo(f"{'='*70}\n")
+                click.echo(f"{'=' * 70}\n")
 
             return
 
@@ -607,9 +820,9 @@ def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
     n_seeds = len(seeds_to_train)
     for i, seed in enumerate(seeds_to_train, 1):
         if n_seeds > 1:
-            click.echo(f"\n{'='*70}")
+            click.echo(f"\n{'=' * 70}")
             click.echo(f"Training ensemble for split_seed={seed} ({i}/{n_seeds})")
-            click.echo(f"{'='*70}\n")
+            click.echo(f"{'=' * 70}\n")
 
         try:
             run_train_ensemble(
@@ -627,9 +840,9 @@ def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
             ctx.exit(1)
 
     if n_seeds > 1:
-        click.echo(f"\n{'='*70}")
+        click.echo(f"\n{'=' * 70}")
         click.echo(f"Ensemble training complete for all {n_seeds} split(s)")
-        click.echo(f"{'='*70}\n")
+        click.echo(f"{'=' * 70}\n")
 
 
 @cli.command("optimize-panel")
@@ -766,6 +979,17 @@ def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
     default="spearman",
     help="Correlation method for clustering (default: spearman)",
 )
+@click.option(
+    "--require-significance/--no-require-significance",
+    default=None,
+    help="Skip models that are not statistically significant (requires prior permutation testing)",
+)
+@click.option(
+    "--significance-alpha",
+    type=float,
+    default=None,
+    help="Significance threshold for gating (default: 0.05)",
+)
 @click.pass_context
 def optimize_panel(ctx, config, **kwargs):
     """Find minimum viable panel from aggregated cross-split results.
@@ -863,6 +1087,8 @@ def optimize_panel(ctx, config, **kwargs):
         "corr_aware",
         "corr_threshold",
         "corr_method",
+        "require_significance",
+        "significance_alpha",
     ]:
         if kwargs.get(key) is None and key in config_params:
             kwargs[key] = config_params[key]
@@ -1180,9 +1406,9 @@ def optimize_panel(ctx, config, **kwargs):
 
         # Run optimization for each discovered model
         for model_name, results_dir in model_dirs.items():
-            click.echo(f"\n{'='*70}")
+            click.echo(f"\n{'=' * 70}")
             click.echo(f"Optimizing panel for: {model_name}")
-            click.echo(f"{'='*70}\n")
+            click.echo(f"{'=' * 70}\n")
 
             # Default n_jobs: -1 on HPC (via config), -1 locally (all CPUs)
             n_jobs = kwargs.get("n_jobs") or config_params.get("n_jobs_hpc", -1)
@@ -1206,11 +1432,15 @@ def optimize_panel(ctx, config, **kwargs):
                 corr_threshold=kwargs.get("corr_threshold", 0.80),
                 corr_method=kwargs.get("corr_method", "spearman"),
                 rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
+                require_significance=kwargs.get("require_significance")
+                or config_params.get("significance", {}).get("require_significance", False),
+                significance_alpha=kwargs.get("significance_alpha")
+                or config_params.get("significance", {}).get("alpha", 0.05),
             )
 
-        click.echo(f"\n{'='*70}")
+        click.echo(f"\n{'=' * 70}")
         click.echo(f"Panel optimization complete for all {len(model_dirs)} model(s)")
-        click.echo(f"{'='*70}\n")
+        click.echo(f"{'=' * 70}\n")
 
     else:
         # Single model path provided explicitly
@@ -1239,6 +1469,10 @@ def optimize_panel(ctx, config, **kwargs):
             corr_threshold=kwargs.get("corr_threshold") or 0.80,
             corr_method=kwargs.get("corr_method") or "spearman",
             rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
+            require_significance=kwargs.get("require_significance")
+            or config_params.get("significance", {}).get("require_significance", False),
+            significance_alpha=kwargs.get("significance_alpha")
+            or config_params.get("significance", {}).get("alpha", 0.05),
         )
 
 
@@ -1297,6 +1531,28 @@ def optimize_panel(ctx, config, **kwargs):
     type=click.Choice(["geometric_mean", "borda", "median"]),
     default=None,
     help="RRA aggregation method (default: geometric_mean)",
+)
+@click.option(
+    "--require-significance/--no-require-significance",
+    default=None,
+    help="Only include statistically significant models in consensus (requires prior permutation testing)",
+)
+@click.option(
+    "--significance-alpha",
+    type=float,
+    default=None,
+    help="Significance threshold for filtering models (default: 0.05)",
+)
+@click.option(
+    "--min-significant-models",
+    type=int,
+    default=None,
+    help="Minimum number of significant models required (default: 2)",
+)
+@click.option(
+    "--use-stringent-ranking/--no-use-stringent-ranking",
+    default=None,
+    help="Use stringent ranking (OOF importance + essentiality + stability) instead of legacy (stability + RFE)",
 )
 @click.option(
     "--outdir",
@@ -1378,6 +1634,10 @@ def consensus_panel(ctx, config, **kwargs):
         "rfe_weight",
         "rra_method",
         "outdir",
+        "require_significance",
+        "significance_alpha",
+        "min_significant_models",
+        "use_stringent_ranking",
     ]
     for key in param_keys:
         if kwargs.get(key) is None and key in config_params:
@@ -1395,6 +1655,14 @@ def consensus_panel(ctx, config, **kwargs):
         rra_method=kwargs.get("rra_method") or "geometric_mean",
         outdir=kwargs.get("outdir"),
         log_level=ctx.obj.get("log_level"),
+        require_significance=kwargs.get("require_significance")
+        or config_params.get("significance", {}).get("require_significance", False),
+        significance_alpha=kwargs.get("significance_alpha")
+        or config_params.get("significance", {}).get("alpha", 0.05),
+        min_significant_models=kwargs.get("min_significant_models")
+        or config_params.get("significance", {}).get("min_significant_models", 2),
+        use_stringent_ranking=kwargs.get("use_stringent_ranking")
+        or config_params.get("use_stringent_ranking", False),
     )
 
 
@@ -1532,7 +1800,7 @@ def permutation_test(ctx, **kwargs):
 
         if not model:
             raise click.UsageError(
-                "HPC mode (--hpc) requires --model. " "Submit separate jobs for each model."
+                "HPC mode (--hpc) requires --model. Submit separate jobs for each model."
             )
 
         # Load HPC config
@@ -1751,6 +2019,23 @@ def config_diff(ctx, config_file1, config_file2, output):
     help="Run panel size optimization (default from pipeline config)",
 )
 @click.option(
+    "--permutation-test/--no-permutation-test",
+    default=None,
+    help="Run permutation testing for statistical significance (default from pipeline config)",
+)
+@click.option(
+    "--permutation-n-perms",
+    type=int,
+    default=None,
+    help="Number of permutations for significance testing (default: 200)",
+)
+@click.option(
+    "--permutation-n-jobs",
+    type=int,
+    default=None,
+    help="Parallel jobs for permutation testing (-1 = all cores, default: -1)",
+)
+@click.option(
     "--overwrite-splits",
     is_flag=True,
     help="Regenerate splits even if they exist",
@@ -1798,6 +2083,7 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     5. Aggregate ensemble results
     6. Optimize panel sizes per model (if enabled)
     7. Generate cross-model consensus panel (if enabled)
+    8. Permutation testing for statistical significance (if enabled)
 
     This is equivalent to running:
         ced save-splits (if needed)
@@ -1807,6 +2093,7 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
         ced aggregate-splits --model ENSEMBLE (if ensemble enabled)
         ced optimize-panel --run-id <ID> (if enabled)
         ced consensus-panel --run-id <ID> (if enabled)
+        ced permutation-test --run-id <ID> (if enabled)
 
     Examples:
 
@@ -1954,6 +2241,21 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
         "optimize_panel",
         _PIPELINE_DEFAULTS["optimize_panel"],
     )
+    enable_permutation_test = _pick(
+        kwargs.get("permutation_test"),
+        "permutation_test",
+        _PIPELINE_DEFAULTS["permutation_test"],
+    )
+    permutation_n_perms = _pick(
+        kwargs.get("permutation_n_perms"),
+        "permutation_n_perms",
+        _PIPELINE_DEFAULTS["permutation_n_perms"],
+    )
+    permutation_n_jobs = _pick(
+        kwargs.get("permutation_n_jobs"),
+        "permutation_n_jobs",
+        _PIPELINE_DEFAULTS["permutation_n_jobs"],
+    )
     # Collect remaining CLI args
     cli_args = {}
     overrides = list(kwargs.get("override", []))
@@ -1971,6 +2273,9 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
             enable_ensemble=enable_ensemble,
             enable_consensus=enable_consensus,
             enable_optimize_panel=enable_optimize_panel,
+            enable_permutation_test=enable_permutation_test,
+            permutation_n_perms=permutation_n_perms,
+            permutation_n_jobs=permutation_n_jobs,
             log_file=log_file,
             cli_args=cli_args,
             overrides=overrides,

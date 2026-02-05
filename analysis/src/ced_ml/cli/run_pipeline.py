@@ -17,6 +17,7 @@ from ced_ml.cli.optimize_panel import (
     discover_models_by_run_id,
     run_optimize_panel_aggregated,
 )
+from ced_ml.cli.permutation_test import run_permutation_test_cli
 from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
@@ -85,6 +86,9 @@ _PIPELINE_DEFAULTS: dict[str, Any] = {
     "ensemble": True,
     "consensus": True,
     "optimize_panel": True,
+    "permutation_test": False,  # Disabled by default (computationally expensive)
+    "permutation_n_perms": 200,
+    "permutation_n_jobs": -1,
     "n_boot": 500,
     "dry_run": False,
 }
@@ -151,6 +155,9 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
         "ensemble",
         "consensus",
         "optimize_panel",
+        "permutation_test",
+        "permutation_n_perms",
+        "permutation_n_jobs",
         "n_boot",
         "dry_run",
     ):
@@ -315,6 +322,9 @@ def _run_hpc_mode(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
+    enable_permutation_test: bool,
+    permutation_n_perms: int,
+    permutation_n_jobs: int,
     hpc_config_file: Path | None,
     dry_run: bool,
     log_level: int,
@@ -327,6 +337,9 @@ def _run_hpc_mode(
     Note:
         Panel optimization and consensus generation are automatically skipped
         when using feature_selection_strategy='fixed_panel'.
+
+        Permutation testing submits separate jobs per model/seed combination,
+        each depending on the corresponding training job completing first.
     """
     from datetime import datetime
 
@@ -419,6 +432,11 @@ def _run_hpc_mode(
         f"{hpc_config.walltime} / {hpc_config.cores}c / {hpc_config.mem_per_core}MB"
     )
     hpc_logger.info(f"Dry run: {dry_run}")
+    if enable_permutation_test:
+        hpc_logger.info(
+            f"Permutation testing: enabled ({permutation_n_perms} perms, "
+            f"{permutation_n_jobs} jobs)"
+        )
     hpc_logger.info("=" * 70)
 
     # Submit jobs
@@ -433,6 +451,9 @@ def _run_hpc_mode(
         enable_ensemble=enable_ensemble,
         enable_consensus=enable_consensus,
         enable_optimize_panel=enable_optimize_panel,
+        enable_permutation_test=enable_permutation_test,
+        permutation_n_perms=permutation_n_perms,
+        permutation_n_jobs=permutation_n_jobs,
         hpc_config=hpc_config,
         logs_dir=logs_dir,
         dry_run=dry_run,
@@ -455,6 +476,9 @@ def _run_hpc_mode(
 
     if result.get("consensus_job"):
         hpc_logger.info(f"Consensus panel job: {result['consensus_job']}")
+
+    if result.get("permutation_jobs"):
+        hpc_logger.info(f"Permutation test jobs: {len(result['permutation_jobs'])}")
 
     hpc_logger.info("")
     hpc_logger.info("Monitor jobs:")
@@ -571,6 +595,9 @@ def run_pipeline(
     enable_ensemble: bool,
     enable_consensus: bool,
     enable_optimize_panel: bool,
+    enable_permutation_test: bool,
+    permutation_n_perms: int,
+    permutation_n_jobs: int,
     log_file: Path | None,
     cli_args: dict,
     overrides: list[str],
@@ -590,6 +617,7 @@ def run_pipeline(
     5. Aggregate ensemble results
     6. Optimize panel per model (if enabled and not using fixed_panel)
     7. Generate consensus panel (if enabled and not using fixed_panel)
+    8. Permutation testing for statistical significance (if enabled)
 
     Note:
         Panel optimization and consensus generation are automatically skipped
@@ -608,6 +636,9 @@ def run_pipeline(
         enable_ensemble: Train stacking ensemble
         enable_consensus: Generate cross-model consensus panel
         enable_optimize_panel: Run panel optimization
+        enable_permutation_test: Run permutation testing for significance
+        permutation_n_perms: Number of permutations (default: 200)
+        permutation_n_jobs: Parallel jobs for permutation testing (-1 for all)
         log_file: Path to save pipeline logs (None for console only)
         cli_args: Additional CLI arguments for training
         overrides: Config override strings
@@ -627,6 +658,9 @@ def run_pipeline(
             enable_ensemble=enable_ensemble,
             enable_consensus=enable_consensus,
             enable_optimize_panel=enable_optimize_panel,
+            enable_permutation_test=enable_permutation_test,
+            permutation_n_perms=permutation_n_perms,
+            permutation_n_jobs=permutation_n_jobs,
             hpc_config_file=hpc_config_file,
             dry_run=dry_run,
             log_level=log_level,
@@ -684,6 +718,9 @@ def run_pipeline(
     logger.info(f"Ensemble: {'enabled' if enable_ensemble else 'disabled'}")
     logger.info(f"Consensus panel: {'enabled' if enable_consensus else 'disabled'}")
     logger.info(f"Panel optimization: {'enabled' if enable_optimize_panel else 'disabled'}")
+    logger.info(f"Permutation test: {'enabled' if enable_permutation_test else 'disabled'}")
+    if enable_permutation_test:
+        logger.info(f"  n_perms={permutation_n_perms}, n_jobs={permutation_n_jobs}")
     if using_fixed_panel:
         logger.info("Feature selection: fixed_panel (optimization/consensus N/A)")
     logger.info(
@@ -897,6 +934,37 @@ def run_pipeline(
             log_level=log_level,
         )
         step_timings.append(("Consensus panel", time.monotonic() - t0))
+
+    # Step 8: Permutation testing (if enabled)
+    if enable_permutation_test:
+        logger.info("\n" + "=" * 70)
+        logger.info("Step 8: Permutation Testing for Statistical Significance")
+        logger.info("=" * 70)
+
+        t0 = time.monotonic()
+        # Test all base models (exclude ENSEMBLE - permutation test requires retraining)
+        models_to_test = [m for m in models if m != "ENSEMBLE"]
+
+        for model_name in models_to_test:
+            for split_seed in split_seeds:
+                logger.info(f"\nTesting {model_name} (split_seed={split_seed})")
+
+                try:
+                    run_permutation_test_cli(
+                        run_id=shared_run_id,
+                        model=model_name,
+                        split_seed=split_seed,
+                        n_perms=permutation_n_perms,
+                        n_jobs=permutation_n_jobs,
+                        log_level=log_level,
+                    )
+                    logger.info(f"Completed permutation test for {model_name} seed={split_seed}")
+                except Exception as e:
+                    logger.warning(
+                        f"Permutation test failed for {model_name} seed={split_seed}: {e}"
+                    )
+
+        step_timings.append(("Permutation testing", time.monotonic() - t0))
 
     # Final summary
     total_elapsed = time.monotonic() - pipeline_t0

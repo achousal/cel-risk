@@ -176,7 +176,7 @@ class AggregatedOutputDirectories:
 
     Attributes:
         root: Base aggregated directory (e.g., results/{model}/run_{id}/aggregated/)
-        metrics: Aggregated metrics (pooled_test_metrics.csv, test_metrics_summary.csv, selection_scores.csv)
+        metrics: Aggregated metrics (pooled_test_metrics.csv, test_metrics_summary.csv)
         panels: Feature panels and stability (consensus_panel_*.txt, feature_stability.csv)
         plots: ALL aggregated visualizations (aggregated ROC, PR, calibration, feature curves, etc.)
         cv: Cross-validation aggregated artifacts (all_cv_repeat_metrics.csv, hyperparams_summary.csv)
