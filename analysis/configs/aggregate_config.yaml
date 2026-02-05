@@ -23,23 +23,9 @@ group_by:
   - model
 
 # Consensus panels
-min_stability: 0.7  # Minimum frequency across splits
+min_stability: 0.75  # Minimum frequency across splits
 corr_method: pearson  # Options: pearson, spearman
 corr_threshold: 0.80
 
-# Output control
-save_pooled_preds: true
-save_summary_csv: true
-save_plots: true
-save_thresholds: true  # Save threshold information to CSV
-plot_format: png
-plot_dpi: 300
-
-# Individual plot type controls
-plot_roc: true
-plot_pr: true
-plot_calibration: true
-plot_risk_distribution: true
-plot_dca: true
-plot_oof_combined: true
-plot_learning_curve: true
+# Note: Output controls (save_pooled_preds, save_plots, plot_format, etc.)
+# are configured in output_config.yaml under the 'aggregation:' and 'plots:' sections

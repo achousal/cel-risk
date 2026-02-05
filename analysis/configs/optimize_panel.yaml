@@ -3,7 +3,7 @@
 #
 
 # RFE Algorithm Parameters
-stability_threshold: 0.90    # Minimum selection fraction for stable proteins (default: 0.90)
+stability_threshold: 0.95    # Minimum selection fraction for stable proteins (default: 0.90)
 start_size: 100               # Cap starting panel to top N proteins by selection frequency (null = no cap)
 min_size: 5                  # Minimum panel size to evaluate (default: 5)
 min_auroc_frac: 0.50         # Early stop if AUROC < this fraction of max (default: 0.90)
@@ -11,12 +11,12 @@ cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended f
 step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # Per-k Hyperparameter Re-tuning
-retune_trials: 60            # Optuna trials per evaluation point (was 40; 60 for more reliable tuning)
+retune_trials: 80            # Optuna trials per evaluation point
 retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # Correlation-Aware Pruning
 corr_aware: true             # Enable correlation-aware redundancy pruning (default: true)
-corr_threshold: 0.80         # Correlation threshold for pruning redundant features (default: 0.80)
+corr_threshold: 0.75         # Correlation threshold for pruning redundant features (default: 0.80)
 corr_method: spearman        # Correlation method: spearman or pearson (default: spearman)
 
 # HPC Parallelization (only used with --hpc flag)
@@ -42,9 +42,3 @@ rfe_tune_spaces:
 significance:
   require_significance: true    # Skip non-significant models
   alpha: 0.05                   # Significance threshold
-
-# Drop-Column Essentiality Validation
-essentiality:
-  enabled: true                 # Auto-run after RFE
-  include_brier: false          # Include Brier score in output
-  corr_threshold: 0.85          # Correlation threshold for clustering

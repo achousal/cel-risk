@@ -434,8 +434,7 @@ def _run_hpc_mode(
     hpc_logger.info(f"Dry run: {dry_run}")
     if enable_permutation_test:
         hpc_logger.info(
-            f"Permutation testing: enabled ({permutation_n_perms} perms, "
-            f"{permutation_n_jobs} jobs)"
+            f"Permutation testing: enabled ({permutation_n_perms} perms, {permutation_n_jobs} jobs)"
         )
     hpc_logger.info("=" * 70)
 
@@ -921,6 +920,9 @@ def run_pipeline(
         if consensus_config_path.exists():
             consensus_cfg = load_yaml(consensus_config_path)
 
+        # Extract composite ranking weights and essentiality config
+        composite_cfg = consensus_cfg.get("composite_ranking", {})
+        essentiality_cfg = consensus_cfg.get("essentiality", {})
         run_consensus_panel(
             run_id=shared_run_id,
             infile=str(infile),
@@ -928,8 +930,13 @@ def run_pipeline(
             stability_threshold=consensus_cfg.get("stability_threshold", 0.90),
             corr_threshold=consensus_cfg.get("corr_threshold", 0.85),
             target_size=consensus_cfg.get("target_size", 25),
-            rfe_weight=consensus_cfg.get("rfe_weight", 0.5),
             rra_method=consensus_cfg.get("rra_method", "geometric_mean"),
+            oof_weight=composite_cfg.get("oof_weight", 0.6),
+            essentiality_weight=composite_cfg.get("essentiality_weight", 0.3),
+            stability_weight=composite_cfg.get("stability_weight", 0.1),
+            run_essentiality=essentiality_cfg.get("enabled", True),
+            essentiality_corr_threshold=essentiality_cfg.get("corr_threshold", 0.75),
+            essentiality_include_brier=essentiality_cfg.get("include_brier", False),
             outdir=None,
             log_level=log_level,
         )

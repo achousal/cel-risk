@@ -3,21 +3,16 @@
 
 # Stability threshold: minimum selection fraction to include a protein
 # Proteins must be selected in >= this fraction of CV folds to be considered "stable"
-stability_threshold: 0.90
+stability_threshold: 0.95
 
 # Correlation threshold for clustering redundant proteins
 # Proteins with |correlation| >= this threshold are grouped, and one representative
 # per cluster is kept (the one with highest consensus score)
-corr_threshold: 0.80
+corr_threshold: 0.75
 
 # Target panel size after correlation pruning
 # This is the final number of proteins in the consensus panel
-target_size: 100
-
-# Weight for RFE rank vs stability frequency in per-model composite scoring
-# 0.0 = stability only, 1.0 = RFE only, 0.5 = equal weight (default)
-# If RFE was not run for a model, stability-only scoring is used automatically
-rfe_weight: 0.5
+target_size: 25
 
 # RRA aggregation method for combining rankings across models
 # Options:
@@ -30,9 +25,18 @@ rra_method: geometric_mean
 significance:
   require_significance: true    # Only include significant models
   alpha: 0.05                   # Significance threshold
-  min_significant_models: 2     # Minimum models required for consensus
+  min_significant_models: 3     # Minimum models required for consensus
 
-# Ranking Mode
-# - false (legacy): Stability + RFE weighting
-# - true (stringent): OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
-use_stringent_ranking: false
+# Composite Ranking Weights (per ADR-004)
+# OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
+composite_ranking:
+  oof_weight: 0.6         # OOF grouped importance (primary signal)
+  essentiality_weight: 0.3  # Drop-column essentiality (secondary signal)
+  stability_weight: 0.1   # Selection frequency (tie-break)
+
+# Drop-Column Essentiality Validation
+# Validates that consensus panel features are truly essential (not redundant)
+essentiality:
+  enabled: true                 # Run drop-column validation after consensus panel
+  include_brier: false          # Include Brier score delta in output
+  corr_threshold: 0.75          # Correlation threshold for clustering features

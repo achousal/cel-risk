@@ -41,10 +41,20 @@ from ced_ml.cli.discovery import (
 )
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file
+from ced_ml.data.schema import TARGET_COL, get_positive_label
 from ced_ml.features.consensus import (
     ConsensusResult,
     build_consensus_panel,
     save_consensus_results,
+)
+from ced_ml.features.corr_prune import (
+    build_correlation_graph,
+    compute_correlation_matrix,
+    find_connected_components,
+)
+from ced_ml.features.drop_column import (
+    aggregate_drop_column_results,
+    compute_drop_column_importance,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,8 +110,7 @@ def load_model_stability(
 
     if not stability_file.exists():
         raise FileNotFoundError(
-            f"Feature stability file not found: {stability_file}\n"
-            f"Run 'ced aggregate-splits' first."
+            f"Feature stability file not found: {stability_file}\nRun 'ced aggregate-splits' first."
         )
 
     df = pd.read_csv(stability_file)
@@ -115,48 +124,6 @@ def load_model_stability(
         df = df[df["selection_fraction"] >= stability_threshold].copy()
 
     return df
-
-
-def load_model_rfe_ranking(
-    aggregated_dir: Path,
-) -> dict[str, int] | None:
-    """Load RFE feature ranking from aggregated results (if available).
-
-    Args:
-        aggregated_dir: Path to model's aggregated directory.
-
-    Returns:
-        Dict mapping protein -> elimination_order, or None if not available.
-
-    Raises:
-        FileNotFoundError: If feature_ranking_aggregated.csv exists but is malformed.
-    """
-    rfe_file = aggregated_dir / "optimize_panel" / "feature_ranking_aggregated.csv"
-
-    if not rfe_file.exists():
-        return None
-
-    try:
-        df = pd.read_csv(rfe_file)
-        if "protein" not in df.columns or "elimination_order" not in df.columns:
-            raise FileNotFoundError(
-                f"Malformed RFE ranking file: {rfe_file}\n"
-                f"Required columns: 'protein', 'elimination_order'\n"
-                f"Found columns: {list(df.columns)}\n"
-                f"Run 'ced optimize-panel' to generate aggregated RFE results."
-            )
-        return dict(zip(df["protein"], df["elimination_order"], strict=False))
-    except pd.errors.EmptyDataError as e:
-        raise FileNotFoundError(
-            f"Empty RFE ranking file: {rfe_file}\n"
-            f"Run 'ced optimize-panel' to generate aggregated RFE results."
-        ) from e
-    except Exception as e:
-        raise FileNotFoundError(
-            f"Failed to load RFE ranking file: {rfe_file}\n"
-            f"Error: {e}\n"
-            f"Run 'ced optimize-panel' to generate aggregated RFE results."
-        ) from e
 
 
 def load_model_oof_importance(
@@ -233,21 +200,23 @@ def run_consensus_panel(
     stability_threshold: float = 0.90,
     corr_threshold: float = 0.85,
     target_size: int = 25,
-    rfe_weight: float = 0.5,
     rra_method: str = "geometric_mean",
     outdir: str | None = None,
     log_level: int | None = None,
     require_significance: bool = False,
     significance_alpha: float = 0.05,
     min_significant_models: int = 2,
-    use_stringent_ranking: bool = False,
+    oof_weight: float = 0.6,
+    essentiality_weight: float = 0.3,
+    stability_weight: float = 0.1,
+    run_essentiality: bool = True,
+    essentiality_corr_threshold: float = 0.75,
+    essentiality_include_brier: bool = False,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
 
-    Supports two ranking modes:
-    1. Legacy mode (use_stringent_ranking=False): Stability + RFE
-    2. Stringent mode (use_stringent_ranking=True): OOF importance (primary) +
-       Essentiality (secondary) + Stability (tie-break)
+    Uses composite ranking per ADR-004: OOF importance (primary) +
+    Essentiality (secondary) + Stability (tie-break).
 
     Args:
         run_id: Run ID to process.
@@ -256,15 +225,18 @@ def run_consensus_panel(
         stability_threshold: Minimum selection fraction for stable proteins.
         corr_threshold: Correlation threshold for clustering.
         target_size: Target panel size.
-        rfe_weight: Weight for RFE vs stability (0-1). Used in legacy mode.
         rra_method: RRA aggregation method.
         outdir: Output directory (default: results/consensus_panel/run_<RUN_ID>).
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
         require_significance: Whether to filter models by permutation test significance.
         significance_alpha: P-value threshold for significance filtering.
         min_significant_models: Minimum number of significant models required.
-        use_stringent_ranking: Use stringent ranking (OOF + essentiality + stability)
-            instead of legacy (stability + RFE).
+        oof_weight: Weight for OOF importance (default 0.6).
+        essentiality_weight: Weight for essentiality (default 0.3).
+        stability_weight: Weight for stability (default 0.1).
+        run_essentiality: Whether to run drop-column essentiality validation (default True).
+        essentiality_corr_threshold: Correlation threshold for clustering in drop-column (default 0.75).
+        essentiality_include_brier: Whether to include Brier score delta in output (default False).
 
     Returns:
         ConsensusResult with final panel and intermediate data.
@@ -377,54 +349,37 @@ def run_consensus_panel(
     logger.info(f"Split directory: {split_dir}")
 
     # Load stability data for each model
-    ranking_mode = (
-        "stringent (OOF+essentiality+stability)"
-        if use_stringent_ranking
-        else "legacy (stability+RFE)"
-    )
-    logger.info(f"Loading ranking data from each model (mode: {ranking_mode})...")
+    logger.info("Loading ranking data from each model...")
     model_stability = {}
-    model_rfe_rankings = {}
-    model_oof_importance = {} if use_stringent_ranking else None
-    model_essentiality = {} if use_stringent_ranking else None
+    model_oof_importance = {}
+    model_essentiality = {}
 
     for model_name, aggregated_dir in model_dirs.items():
         # Load stability (always needed)
         stability_df = load_model_stability(aggregated_dir, stability_threshold=0.0)
         model_stability[model_name] = stability_df
 
-        # Load RFE ranking (for legacy mode)
-        rfe_ranking = load_model_rfe_ranking(aggregated_dir)
-        model_rfe_rankings[model_name] = rfe_ranking
-
         n_stable = (stability_df["selection_fraction"] >= stability_threshold).sum()
-        has_rfe = rfe_ranking is not None
 
-        # Load stringent ranking inputs (OOF importance + essentiality)
+        # Load OOF importance and essentiality
         has_oof = False
         has_essentiality = False
-        if use_stringent_ranking:
-            oof_df = load_model_oof_importance(aggregated_dir)
-            if oof_df is not None:
-                model_oof_importance[model_name] = oof_df
-                has_oof = True
 
-            ess_df = load_model_essentiality(aggregated_dir)
-            if ess_df is not None:
-                model_essentiality[model_name] = ess_df
-                has_essentiality = True
+        oof_df = load_model_oof_importance(aggregated_dir)
+        if oof_df is not None:
+            model_oof_importance[model_name] = oof_df
+            has_oof = True
 
-        if use_stringent_ranking:
-            logger.info(
-                f"  {model_name}: {len(stability_df)} total proteins, "
-                f"{n_stable} stable (>={stability_threshold}), "
-                f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
-            )
-        else:
-            logger.info(
-                f"  {model_name}: {len(stability_df)} total proteins, "
-                f"{n_stable} stable (>={stability_threshold}), RFE={'yes' if has_rfe else 'no'}"
-            )
+        ess_df = load_model_essentiality(aggregated_dir)
+        if ess_df is not None:
+            model_essentiality[model_name] = ess_df
+            has_essentiality = True
+
+        logger.info(
+            f"  {model_name}: {len(stability_df)} total proteins, "
+            f"{n_stable} stable (>={stability_threshold}), "
+            f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
+        )
 
     # Load training data for correlation computation
     logger.info(f"Loading training data from {infile}...")
@@ -487,16 +442,16 @@ def run_consensus_panel(
     logger.info("Building consensus panel...")
     result = build_consensus_panel(
         model_stability=model_stability,
-        model_rfe_rankings=model_rfe_rankings,
         df_train=df_train,
         stability_threshold=stability_threshold,
         corr_threshold=corr_threshold,
         target_size=target_size,
-        rfe_weight=rfe_weight,
         rra_method=rra_method,
         model_oof_importance=model_oof_importance,
         model_essentiality=model_essentiality,
-        use_stringent_ranking=use_stringent_ranking,
+        oof_weight=oof_weight,
+        essentiality_weight=essentiality_weight,
+        stability_weight=stability_weight,
     )
 
     # Save results
@@ -507,19 +462,134 @@ def run_consensus_panel(
 
     _paths = save_consensus_results(result, outdir)  # noqa: F841
 
+    # --- Drop-column essentiality validation on consensus panel ---
+    essentiality_summary = None
+    if run_essentiality and len(result.final_panel) > 0:
+        try:
+            logger.info("\n" + "=" * 60)
+            logger.info("Running drop-column essentiality validation on consensus panel...")
+            logger.info("=" * 60)
+
+            # Create binary target vector
+            if TARGET_COL not in df.columns:
+                raise ValueError(f"Target column '{TARGET_COL}' not found in data")
+
+            positive_label = get_positive_label(scenario)
+            y_all = (df[TARGET_COL] == positive_label).astype(int).values
+            logger.info(f"Target vector: {y_all.sum()} positive cases out of {len(y_all)} samples")
+
+            # Create essentiality output directory
+            essentiality_dir = outdir / "essentiality"
+            essentiality_dir.mkdir(parents=True, exist_ok=True)
+
+            # Get consensus panel features
+            panel_features = [p for p in result.final_panel if p in df.columns]
+            logger.info(f"Validating {len(panel_features)} panel features")
+
+            # Build correlation clusters for the consensus panel
+            X_corr = df_train[panel_features]
+            corr_matrix = compute_correlation_matrix(X_corr, panel_features, method="spearman")
+            adj_graph = build_correlation_graph(corr_matrix, threshold=essentiality_corr_threshold)
+            clusters = find_connected_components(adj_graph)
+            logger.info(f"Found {len(clusters)} correlation clusters for essentiality validation")
+
+            # Run drop-column across all available splits
+            drop_column_results_per_fold = []
+            for split_dir_path in split_dirs:
+                seed = int(split_dir_path.name.replace("split_seed", ""))
+
+                # Try to find a model for this seed (use first available model)
+                model_path = split_dir_path / "core" / f"{first_model}__final_model.joblib"
+
+                if not model_path.exists():
+                    logger.warning(f"Seed {seed}: model not found at {model_path}, skipping")
+                    continue
+
+                # Load split indices
+                split_path = Path(split_dir)
+                train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
+                val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+
+                if not train_file.exists() or not val_file.exists():
+                    logger.warning(f"Seed {seed}: split indices not found, skipping")
+                    continue
+
+                train_idx = pd.read_csv(train_file).squeeze().values
+                val_idx = pd.read_csv(val_file).squeeze().values
+
+                # Load model pipeline
+                seed_bundle = joblib.load(model_path)
+                pipeline = seed_bundle.get("model")
+
+                if pipeline is None:
+                    logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
+                    continue
+
+                X_train_seed = df.iloc[train_idx][panel_features]
+                y_train_seed = y_all[train_idx]
+                X_val_seed = df.iloc[val_idx][panel_features]
+                y_val_seed = y_all[val_idx]
+
+                fold_results = compute_drop_column_importance(
+                    estimator=pipeline,
+                    X_train=X_train_seed,
+                    y_train=y_train_seed,
+                    X_val=X_val_seed,
+                    y_val=y_val_seed,
+                    feature_clusters=clusters,
+                    random_state=seed,
+                )
+                drop_column_results_per_fold.append(fold_results)
+                logger.info(f"  Seed {seed}: completed drop-column validation")
+
+            if drop_column_results_per_fold:
+                # Aggregate results across folds
+                drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
+
+                # Save essentiality results
+                ess_path = essentiality_dir / "consensus_panel_essentiality.csv"
+                drop_column_df.to_csv(ess_path, index=False)
+                logger.info(f"Saved essentiality results to {ess_path}")
+
+                # Create summary
+                essentiality_summary = {
+                    "panel_size": len(panel_features),
+                    "n_clusters": len(clusters),
+                    "n_folds_validated": len(drop_column_results_per_fold),
+                    "mean_delta_auroc": float(drop_column_df["mean_delta_auroc"].mean()),
+                    "max_delta_auroc": float(drop_column_df["mean_delta_auroc"].max()),
+                    "top_cluster_id": str(drop_column_df.iloc[0]["cluster_id"]),
+                    "top_cluster_delta": float(drop_column_df.iloc[0]["mean_delta_auroc"]),
+                }
+
+                # Save summary
+                import json
+
+                summary_path = essentiality_dir / "essentiality_summary.json"
+                with open(summary_path, "w") as f:
+                    json.dump(essentiality_summary, f, indent=2)
+                logger.info(f"Saved essentiality summary to {summary_path}")
+
+            else:
+                logger.warning("No folds completed drop-column validation")
+
+        except Exception as e:
+            logger.warning(f"Drop-column essentiality validation failed: {e}", exc_info=True)
+            logger.info("Continuing without essentiality validation results")
+
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Consensus Panel Generation Complete")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Run ID: {run_id}")
     print(f"Models: {', '.join(model_dirs.keys())}")
     print("\nParameters:")
-    print(f"  Ranking mode: {ranking_mode}")
+    print(
+        f"  Composite weights: OOF={oof_weight}, Ess={essentiality_weight}, Stab={stability_weight}"
+    )
     print(f"  Stability threshold: {stability_threshold}")
     print(f"  Correlation threshold: {corr_threshold}")
     print(f"  Target size: {target_size}")
-    if not use_stringent_ranking:
-        print(f"  RFE weight: {rfe_weight}")
     print(f"  RRA method: {rra_method}")
 
     print("\nResults:")
@@ -558,6 +628,18 @@ def run_consensus_panel(
         majority = unc["proteins_in_majority_models"]
         print(f"  Proteins in majority: {majority}/{len(result.final_panel)}")
 
+    # Print essentiality summary if available
+    if essentiality_summary:
+        print("\nDrop-Column Essentiality Validation:")
+        print(f"  Clusters validated: {essentiality_summary['n_clusters']}")
+        print(f"  Folds validated: {essentiality_summary['n_folds_validated']}")
+        print(f"  Mean delta AUROC: {essentiality_summary['mean_delta_auroc']:+.4f}")
+        print(f"  Max delta AUROC: {essentiality_summary['max_delta_auroc']:+.4f}")
+        print(
+            f"  Top cluster: {essentiality_summary['top_cluster_id']} "
+            f"(delta={essentiality_summary['top_cluster_delta']:+.4f})"
+        )
+
     print(f"\nOutput saved to: {outdir}")
     print("  - final_panel.txt (for --fixed-panel)")
     print("  - final_panel.csv (with uncertainty metrics)")
@@ -566,10 +648,13 @@ def run_consensus_panel(
     print("  - per_model_rankings.csv")
     print("  - correlation_clusters.csv")
     print("  - consensus_metadata.json")
+    if essentiality_summary:
+        print("  - essentiality/consensus_panel_essentiality.csv")
+        print("  - essentiality/essentiality_summary.json")
 
     print("\nNext step: Validate with new split seed:")
     print(f"  ced train --model LR_EN --fixed-panel {outdir}/final_panel.txt --split-seed 10")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     logger.info("Consensus panel generation completed successfully")
 

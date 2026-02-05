@@ -1555,6 +1555,17 @@ def optimize_panel(ctx, config, **kwargs):
     help="Use stringent ranking (OOF importance + essentiality + stability) instead of legacy (stability + RFE)",
 )
 @click.option(
+    "--run-essentiality/--no-run-essentiality",
+    default=None,
+    help="Run drop-column essentiality validation on consensus panel (default: True)",
+)
+@click.option(
+    "--essentiality-corr-threshold",
+    type=float,
+    default=None,
+    help="Correlation threshold for clustering in essentiality validation (default: 0.75)",
+)
+@click.option(
     "--outdir",
     type=click.Path(),
     default=None,
@@ -1631,17 +1642,21 @@ def consensus_panel(ctx, config, **kwargs):
         "stability_threshold",
         "corr_threshold",
         "target_size",
-        "rfe_weight",
         "rra_method",
         "outdir",
         "require_significance",
         "significance_alpha",
         "min_significant_models",
-        "use_stringent_ranking",
     ]
     for key in param_keys:
         if kwargs.get(key) is None and key in config_params:
             kwargs[key] = config_params[key]
+
+    # Extract composite ranking weights from config
+    composite_cfg = config_params.get("composite_ranking", {})
+
+    # Extract essentiality config
+    essentiality_cfg = config_params.get("essentiality", {})
 
     # Run consensus panel generation
     run_consensus_panel(
@@ -1651,7 +1666,6 @@ def consensus_panel(ctx, config, **kwargs):
         stability_threshold=kwargs.get("stability_threshold") or 0.90,
         corr_threshold=kwargs.get("corr_threshold") or 0.85,
         target_size=kwargs.get("target_size") or 25,
-        rfe_weight=kwargs.get("rfe_weight") or 0.5,
         rra_method=kwargs.get("rra_method") or "geometric_mean",
         outdir=kwargs.get("outdir"),
         log_level=ctx.obj.get("log_level"),
@@ -1661,8 +1675,17 @@ def consensus_panel(ctx, config, **kwargs):
         or config_params.get("significance", {}).get("alpha", 0.05),
         min_significant_models=kwargs.get("min_significant_models")
         or config_params.get("significance", {}).get("min_significant_models", 2),
-        use_stringent_ranking=kwargs.get("use_stringent_ranking")
-        or config_params.get("use_stringent_ranking", False),
+        oof_weight=composite_cfg.get("oof_weight", 0.6),
+        essentiality_weight=composite_cfg.get("essentiality_weight", 0.3),
+        stability_weight=composite_cfg.get("stability_weight", 0.1),
+        run_essentiality=(
+            kwargs.get("run_essentiality")
+            if kwargs.get("run_essentiality") is not None
+            else essentiality_cfg.get("enabled", True)
+        ),
+        essentiality_corr_threshold=kwargs.get("essentiality_corr_threshold")
+        or essentiality_cfg.get("corr_threshold", 0.75),
+        essentiality_include_brier=essentiality_cfg.get("include_brier", False),
     )
 
 
@@ -1680,10 +1703,16 @@ def consensus_panel(ctx, config, **kwargs):
     help="Specific model to test (default: all base models)",
 )
 @click.option(
-    "--split-seed",
+    "--split-seed-start",
     type=int,
     default=0,
-    help="Split seed to use (default: 0)",
+    help="First split seed to test (default: 0)",
+)
+@click.option(
+    "--n-split-seeds",
+    type=int,
+    default=1,
+    help="Number of consecutive seeds to test, starting from --split-seed-start (default: 1)",
 )
 @click.option(
     "--n-perms",
@@ -1797,6 +1826,9 @@ def permutation_test(ctx, **kwargs):
         run_id = kwargs["run_id"]
         model = kwargs.get("model")
         n_perms = kwargs["n_perms"]
+        split_seed_start = kwargs["split_seed_start"]
+        n_split_seeds = kwargs["n_split_seeds"]
+        split_seeds = list(range(split_seed_start, split_seed_start + n_split_seeds))
 
         if not model:
             raise click.UsageError(
@@ -1837,53 +1869,62 @@ def permutation_test(ctx, **kwargs):
             **default_resources,
         }
 
-        # Build permutation test command for job array
+        # Submit one job array per split seed
         from ced_ml.hpc.lsf import _build_permutation_test_command
 
-        cmd = _build_permutation_test_command(
-            run_id=run_id,
-            model=model,
-            split_seed=kwargs["split_seed"],
-            n_perms=n_perms,
-            random_state=kwargs["random_state"],
-        )
-
-        # Job array name: perm_<model>_<run_id>[0-N]
-        job_name = f"perm_{model}_{run_id}[0-{n_perms - 1}]"
-
-        script = build_job_script(
-            job_name=job_name,
-            command=cmd,
-            **bsub_params,
-        )
-
-        click.echo(f"\nSubmitting permutation test job array for {model}:")
+        click.echo(f"\nSubmitting permutation test job arrays for {model}:")
         click.echo(f"  Run ID: {run_id}")
         click.echo(f"  Model: {model}")
-        click.echo(f"  Permutations: {n_perms}")
-        click.echo(f"  Job array: {job_name}")
+        click.echo(f"  Split seeds: {split_seeds}")
+        click.echo(f"  Permutations per seed: {n_perms}")
+        click.echo(f"  Total permutations: {n_perms * len(split_seeds)}")
 
-        job_id = submit_job(script, dry_run=dry_run_flag)
+        submitted_ids = []
+        for seed in split_seeds:
+            cmd = _build_permutation_test_command(
+                run_id=run_id,
+                model=model,
+                split_seed=seed,
+                n_perms=n_perms,
+                random_state=kwargs["random_state"],
+            )
 
-        if job_id:
-            click.echo(f"  Submitted: job_id={job_id}")
+            job_name = f"perm_{model}_{run_id}_s{seed}[0-{n_perms - 1}]"
+
+            script = build_job_script(
+                job_name=job_name,
+                command=cmd,
+                **bsub_params,
+            )
+
+            job_id = submit_job(script, dry_run=dry_run_flag)
+
+            if job_id:
+                submitted_ids.append((seed, job_id))
+                click.echo(f"  Seed {seed}: job_id={job_id}")
+            elif dry_run_flag:
+                click.echo(f"  Seed {seed}: [DRY RUN] Job not submitted")
+
+        if submitted_ids:
             click.echo(f"\nMonitor with: bjobs -J 'perm_{model}_{run_id}*'")
             click.echo(
                 f"After completion, run aggregation:\n"
                 f"  ced permutation-test --run-id {run_id} --model {model}"
             )
-        elif dry_run_flag:
-            click.echo("  [DRY RUN] Job not submitted")
 
         return
 
     # Local mode: run permutation test directly
     from ced_ml.cli.permutation_test import run_permutation_test_cli
 
+    split_seed_start = kwargs["split_seed_start"]
+    n_split_seeds = kwargs["n_split_seeds"]
+    split_seeds = list(range(split_seed_start, split_seed_start + n_split_seeds))
+
     run_permutation_test_cli(
         run_id=kwargs["run_id"],
         model=kwargs.get("model"),
-        split_seed=kwargs["split_seed"],
+        split_seeds=split_seeds,
         n_perms=kwargs["n_perms"],
         perm_index=kwargs.get("perm_index"),
         metric=kwargs["metric"],

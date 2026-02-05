@@ -21,7 +21,7 @@ class TestComputePerModelRanking:
     """Tests for compute_per_model_ranking function."""
 
     def test_stability_only(self):
-        """Ranking with stability frequency only."""
+        """Ranking with stability frequency only (no OOF or essentiality)."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2", "P3", "P4"],
@@ -35,79 +35,139 @@ class TestComputePerModelRanking:
         assert result.iloc[0]["protein"] == "P1"
         assert result.iloc[0]["stability_rank"] == 1
         assert result.iloc[0]["final_rank"] == 1
-        # No RFE, so rfe_importance should be NaN
-        assert pd.isna(result.iloc[0]["rfe_importance"])
+        # No OOF, so oof_importance should be NaN
+        assert pd.isna(result.iloc[0]["oof_importance"])
 
-    def test_with_rfe_ranking(self):
-        """Ranking with both stability and RFE."""
+    def test_with_oof_importance(self):
+        """Ranking with stability and OOF importance."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2", "P3", "P4"],
                 "selection_fraction": [0.9, 0.8, 0.7, 0.6],
             }
         )
-        # RFE elimination order: P4 eliminated first (least important),
-        # P1 eliminated last (most important)
-        rfe_ranking = {"P1": 3, "P2": 2, "P3": 1, "P4": 0}
-
-        result = compute_per_model_ranking(stability_df, rfe_ranking=rfe_ranking, rfe_weight=0.5)
-
-        assert len(result) == 4
-        # P1 should be top: highest stability AND highest RFE importance
-        assert result.iloc[0]["protein"] == "P1"
-        assert not pd.isna(result.iloc[0]["rfe_importance"])
-        assert result.iloc[0]["rfe_rank"] == 1  # Last eliminated = rank 1
-
-    def test_rfe_weight_stability_only(self):
-        """RFE weight of 0 uses stability only."""
-        stability_df = pd.DataFrame(
+        oof_df = pd.DataFrame(
             {
-                "protein": ["P1", "P2"],
-                "selection_fraction": [0.5, 0.9],
+                "feature": ["P1", "P2", "P3", "P4"],
+                "mean_importance": [0.5, 0.4, 0.3, 0.2],
             }
         )
-        # P1 has better RFE rank but worse stability
-        rfe_ranking = {"P1": 1, "P2": 0}
 
-        result = compute_per_model_ranking(stability_df, rfe_ranking=rfe_ranking, rfe_weight=0.0)
+        result = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
 
-        # With rfe_weight=0, P2 should be first (better stability)
-        assert result.iloc[0]["protein"] == "P2"
+        assert len(result) == 4
+        # P1 should be top: highest stability AND highest OOF importance
+        assert result.iloc[0]["protein"] == "P1"
+        assert not pd.isna(result.iloc[0]["oof_importance"])
+        assert result.iloc[0]["oof_rank"] == 1
 
-    def test_rfe_weight_rfe_only(self):
-        """RFE weight of 1 uses RFE only."""
+    def test_oof_weight_dominates(self):
+        """Higher OOF weight prioritizes OOF importance over stability."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2"],
                 "selection_fraction": [0.9, 0.5],
             }
         )
-        # P2 has better RFE rank but worse stability
-        rfe_ranking = {"P1": 0, "P2": 1}
+        # P2 has better OOF importance but worse stability
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["P1", "P2"],
+                "mean_importance": [0.1, 0.9],
+            }
+        )
 
-        result = compute_per_model_ranking(stability_df, rfe_ranking=rfe_ranking, rfe_weight=1.0)
+        result = compute_per_model_ranking(
+            stability_df,
+            oof_importance_df=oof_df,
+            oof_weight=0.9,
+            essentiality_weight=0.0,
+            stability_weight=0.1,
+        )
 
-        # With rfe_weight=1, P2 should be first (better RFE)
+        # With high oof_weight, P2 should be first (better OOF)
         assert result.iloc[0]["protein"] == "P2"
 
-    def test_partial_rfe_coverage(self):
-        """Handles proteins not in RFE ranking."""
+    def test_stability_weight_dominates(self):
+        """Higher stability weight prioritizes stability over OOF."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2"],
+                "selection_fraction": [0.9, 0.5],
+            }
+        )
+        # P2 has better OOF importance but worse stability
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["P1", "P2"],
+                "mean_importance": [0.1, 0.9],
+            }
+        )
+
+        result = compute_per_model_ranking(
+            stability_df,
+            oof_importance_df=oof_df,
+            oof_weight=0.1,
+            essentiality_weight=0.0,
+            stability_weight=0.9,
+        )
+
+        # With high stability_weight, P1 should be first (better stability)
+        assert result.iloc[0]["protein"] == "P1"
+
+    def test_partial_oof_coverage(self):
+        """Handles proteins not in OOF importance."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2", "P3"],
                 "selection_fraction": [0.9, 0.8, 0.7],
             }
         )
-        # RFE only for P1 and P2
-        rfe_ranking = {"P1": 1, "P2": 0}
+        # OOF only for P1 and P2
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["P1", "P2"],
+                "mean_importance": [0.5, 0.4],
+            }
+        )
 
-        result = compute_per_model_ranking(stability_df, rfe_ranking=rfe_ranking, rfe_weight=0.5)
+        result = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
 
-        # P3 should have NaN for RFE
+        # P3 should have NaN for OOF importance
         p3_row = result[result["protein"] == "P3"].iloc[0]
-        assert pd.isna(p3_row["rfe_importance"])
-        # P3 composite score should equal normalized stability (uses stability only)
+        assert pd.isna(p3_row["oof_importance"])
+        # P3 composite score should still exist (uses stability only)
         assert not pd.isna(p3_row["composite_score"])
+
+    def test_with_essentiality(self):
+        """Ranking with stability, OOF importance, and essentiality."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2", "P3"],
+                "selection_fraction": [0.9, 0.8, 0.7],
+            }
+        )
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["P1", "P2", "P3"],
+                "mean_importance": [0.5, 0.4, 0.3],
+            }
+        )
+        ess_df = pd.DataFrame(
+            {
+                "representative": ["P1", "P2", "P3"],
+                "mean_delta_auroc": [0.05, 0.04, 0.03],
+            }
+        )
+
+        result = compute_per_model_ranking(
+            stability_df, oof_importance_df=oof_df, essentiality_df=ess_df
+        )
+
+        assert len(result) == 3
+        assert result.iloc[0]["protein"] == "P1"
+        assert not pd.isna(result.iloc[0]["essentiality"])
+        assert result.iloc[0]["essentiality_rank"] == 1
 
     def test_missing_protein_column_raises(self):
         """Missing protein column raises ValueError."""
@@ -444,22 +504,32 @@ class TestBuildConsensusPanel:
             ),
         }
 
-        # RFE rankings (optional)
-        model_rfe = {
-            "LR_EN": {f"P{i}": 15 - i for i in range(1, 16)},
-            "RF": None,  # No RFE for RF
+        # OOF importance data
+        model_oof = {
+            "LR_EN": pd.DataFrame(
+                {
+                    "feature": [f"P{i}" for i in range(1, 16)],
+                    "mean_importance": [0.9 - i * 0.05 for i in range(15)],
+                }
+            ),
+            "RF": pd.DataFrame(
+                {
+                    "feature": [f"P{i}" for i in range(1, 16)],
+                    "mean_importance": [0.85 - i * 0.05 for i in range(15)],
+                }
+            ),
         }
 
-        return df_train, model_stability, model_rfe
+        return df_train, model_stability, model_oof
 
     def test_basic_consensus(self, mock_data):
         """Basic consensus panel generation."""
-        df_train, model_stability, model_rfe = mock_data
+        df_train, model_stability, model_oof = mock_data
 
         result = build_consensus_panel(
             model_stability=model_stability,
-            model_rfe_rankings=model_rfe,
             df_train=df_train,
+            model_oof_importance=model_oof,
             stability_threshold=0.75,
             target_size=10,
         )
@@ -472,12 +542,12 @@ class TestBuildConsensusPanel:
 
     def test_respects_target_size(self, mock_data):
         """Final panel respects target size."""
-        df_train, model_stability, model_rfe = mock_data
+        df_train, model_stability, model_oof = mock_data
 
         result = build_consensus_panel(
             model_stability=model_stability,
-            model_rfe_rankings=model_rfe,
             df_train=df_train,
+            model_oof_importance=model_oof,
             stability_threshold=0.75,
             target_size=5,
         )
@@ -486,13 +556,13 @@ class TestBuildConsensusPanel:
 
     def test_stability_threshold_filtering(self, mock_data):
         """Only proteins above stability threshold are considered."""
-        df_train, model_stability, model_rfe = mock_data
+        df_train, model_stability, model_oof = mock_data
 
         # High threshold should filter out most proteins
         result = build_consensus_panel(
             model_stability=model_stability,
-            model_rfe_rankings=model_rfe,
             df_train=df_train,
+            model_oof_importance=model_oof,
             stability_threshold=0.85,
             target_size=10,
         )
@@ -515,19 +585,18 @@ class TestBuildConsensusPanel:
         with pytest.raises(ValueError, match="at least 2 models"):
             build_consensus_panel(
                 model_stability=model_stability,
-                model_rfe_rankings={"LR_EN": None},
                 df_train=df_train,
                 stability_threshold=0.75,
             )
 
     def test_metadata_populated(self, mock_data):
         """Metadata contains expected fields."""
-        df_train, model_stability, model_rfe = mock_data
+        df_train, model_stability, model_oof = mock_data
 
         result = build_consensus_panel(
             model_stability=model_stability,
-            model_rfe_rankings=model_rfe,
             df_train=df_train,
+            model_oof_importance=model_oof,
             stability_threshold=0.75,
         )
 
@@ -536,6 +605,8 @@ class TestBuildConsensusPanel:
         assert "models" in result.metadata
         assert "parameters" in result.metadata
         assert "results" in result.metadata
+        # Check composite_ranking weights in parameters
+        assert "composite_ranking" in result.metadata["parameters"]
 
 
 class TestSaveConsensusResults:
