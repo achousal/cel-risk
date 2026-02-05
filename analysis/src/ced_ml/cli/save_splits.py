@@ -1,5 +1,4 @@
-"""CLI implementation for save-splits command.
-"""
+"""CLI implementation for save-splits command."""
 
 import logging
 from pathlib import Path

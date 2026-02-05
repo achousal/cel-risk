@@ -74,17 +74,30 @@ ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
 
 ### 3. Feature Selection
 
-The pipeline provides **five** distinct feature selection methods, each optimized for different use cases:
+**Workflow (three-stage):**
 
-| Method | Type | Use Case | Speed |
-|--------|------|----------|-------|
-| **Hybrid Stability** | During training | Production models (default) | Fast (~30 min) |
-| **Nested RFECV** | During training | Scientific discovery | Slow (~22 hours) |
-| **Aggregated RFE** | After aggregation | **Single-model deployment optimization** | Fast (~10 min) |
-| **Consensus Panel** | After aggregation | **Cross-model deployment optimization** | Fast (~15 min) |
-| **Fixed Panel** | During training | Panel validation | Fast (~30 min) |
+| Stage | Component | Purpose | Runtime |
+|-------|-----------|---------|---------|
+| **1. Model Gate** | Permutation test | Filter models with real signal (p < 0.05) | ~1-4 hrs per model (HPC) |
+| **2. Per-Model Evidence** | OOF importance (primary), drop-column (secondary), RFE (tertiary), stability (filter) | Four complementary importance ranks | Computed during training/aggregation |
+| **3. Consensus** | Multi-list RRA | Cross-model robust biomarkers (FDR-adjusted) | ~15 min |
 
-Methods 1-2 are mutually exclusive (choose during training). Methods 3-5 are post-training tools.
+**Typical workflow:**
+```bash
+# Train models
+ced train --model LR_EN,RF,XGBoost --split-seed 0,1,2
+ced aggregate-splits --run-id <RUN_ID>
+
+# Model gate (keep only significant models)
+ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
+
+# Cross-model consensus (significant models only)
+ced consensus-panel --run-id <RUN_ID> --models LR_EN,RF
+```
+
+**Other methods**
+- Nested RFECV (during training): RFECV per fold with consensus aggregation
+- Fixed Panel (validation): Train on predetermined panel
 
 **For detailed documentation, see [docs/reference/FEATURE_SELECTION.md](analysis/docs/reference/FEATURE_SELECTION.md)**
 
@@ -131,8 +144,6 @@ pytest tests/ -v
 
 ## Package Architecture
 
-**Package stats**: ~35k lines source code, ~31k lines tests (1,422 test items, 2,610 test functions).
-
 For detailed architecture with code pointers, see [docs/ARCHITECTURE.md](analysis/docs/ARCHITECTURE.md).
 
 ### Library Modules
@@ -152,7 +163,7 @@ For output structure details, see [docs/reference/ARTIFACTS.md](analysis/docs/re
 
 ## Key Architecture Decisions
 
-The [docs/adr/](analysis/docs/adr/) directory contains 16 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
+The [docs/adr/](analysis/docs/adr/) directory contains 11 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
 
 **Stage 1: Data Preparation**
 - [ADR-001](analysis/docs/adr/ADR-001-split-strategy.md): 50/25/25 train/val/test split strategy
@@ -160,25 +171,21 @@ The [docs/adr/](analysis/docs/adr/) directory contains 16 Architecture Decision 
 - [ADR-003](analysis/docs/adr/ADR-003-control-downsampling.md): Control downsampling ratio
 
 **Stage 2: Feature Selection**
-- [ADR-013](analysis/docs/adr/ADR-013-four-strategy-feature-selection.md): Five-strategy feature selection framework (rationale, use cases, trade-offs)
-- [ADR-004](analysis/docs/adr/ADR-004-hybrid-feature-selection.md): Strategy 1 - Hybrid Stability (production default, tuned k-best)
-- [ADR-005](analysis/docs/adr/ADR-005-stability-panel.md): Stability panel extraction (0.75 threshold, used by all strategies)
+- [ADR-004](analysis/docs/adr/ADR-004-four-strategy-feature-selection.md): Three-stage feature selection and consensus workflow (model gate, evidence, RRA)
 
 **Stage 3: Model Training & Ensembling**
-- [ADR-006](analysis/docs/adr/ADR-006-nested-cv.md): Nested cross-validation structure
-- [ADR-007](analysis/docs/adr/ADR-007-auroc-optimization.md): AUROC as optimization metric
-- [ADR-008](analysis/docs/adr/ADR-008-optuna-hyperparameter-optimization.md): Optuna Bayesian hyperparameter optimization
-- [ADR-009](analysis/docs/adr/ADR-009-oof-stacking-ensemble.md): Out-of-fold stacking ensemble (implemented 2026-01-22)
+- [ADR-005](analysis/docs/adr/ADR-005-nested-cv.md): Nested cross-validation structure
+- [ADR-006](analysis/docs/adr/ADR-006-optuna-hyperparameter-optimization.md): Optuna Bayesian hyperparameter optimization
+- [ADR-007](analysis/docs/adr/ADR-007-oof-stacking-ensemble.md): Out-of-fold stacking ensemble (implemented 2026-01-22)
 
 **Stage 4: Calibration**
-- [ADR-010](analysis/docs/adr/ADR-010-prevalence-adjustment.md): Prevalence adjustment (speculative deployment concern)
-- [ADR-014](analysis/docs/adr/ADR-014-oof-posthoc-calibration.md): OOF-posthoc calibration strategy
+- [ADR-008](analysis/docs/adr/ADR-008-oof-posthoc-calibration.md): OOF-posthoc calibration strategy
 
 **Stage 5: Evaluation & Thresholds**
-- [ADR-011](analysis/docs/adr/ADR-011-threshold-on-val.md): Threshold optimization on validation set
-- [ADR-012](analysis/docs/adr/ADR-012-fixed-spec-95.md): Fixed specificity 0.95 for high-specificity screening
+- [ADR-009](analysis/docs/adr/ADR-009-threshold-on-val.md): Threshold optimization on validation set
+- [ADR-010](analysis/docs/adr/ADR-010-fixed-spec.md): Fixed specificity 0.95 for high-specificity screening
 
 **Stage 6: Significance Testing**
-- [ADR-016](analysis/docs/adr/ADR-016-permutation-testing.md): Label permutation testing for model significance
+- [ADR-011](analysis/docs/adr/ADR-011-permutation-testing.md): Label permutation testing for model significance
 
 ---

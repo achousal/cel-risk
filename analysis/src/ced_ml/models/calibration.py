@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass
 
 import numpy as np
+from sklearn.base import BaseEstimator
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
@@ -422,30 +423,37 @@ def apply_oof_calibrator(calibrator: OOFCalibrator, predictions: np.ndarray) -> 
     return calibrator.transform(predictions)
 
 
-class OOFCalibratedModel:
+class OOFCalibratedModel(BaseEstimator):
     """
     Wrapper that applies OOF calibration to a base model's predictions.
 
     This wrapper is used when calibration strategy is "oof_posthoc".
     It combines a base sklearn model with a fitted OOFCalibrator.
 
+    Inherits from BaseEstimator to support sklearn clone() and grid search.
+
     Attributes:
         base_model: The underlying sklearn model.
         calibrator: Fitted OOFCalibrator instance.
     """
 
-    def __init__(self, base_model, calibrator: OOFCalibrator):
+    def __init__(self, base_model=None, calibrator: OOFCalibrator | None = None):
         """
         Initialize OOF calibrated model wrapper.
 
         Args:
             base_model: Sklearn model with predict_proba method.
             calibrator: Fitted OOFCalibrator instance.
+
+        Note: Parameters can be None to support sklearn clone() which
+        creates instances with default parameters before setting attributes.
         """
-        if not hasattr(base_model, "predict_proba"):
-            raise ValueError("base_model must have predict_proba method")
-        if not calibrator.is_fitted:
-            raise ValueError("calibrator must be fitted")
+        # Validation only when both parameters are provided
+        if base_model is not None and calibrator is not None:
+            if not hasattr(base_model, "predict_proba"):
+                raise ValueError("base_model must have predict_proba method")
+            if not calibrator.is_fitted:
+                raise ValueError("calibrator must be fitted")
         self.base_model = base_model
         self.calibrator = calibrator
 

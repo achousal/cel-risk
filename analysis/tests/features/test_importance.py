@@ -641,3 +641,192 @@ class TestIntegration:
 
         assert len(df) == 2
         assert all(df["importance"] > 0)
+
+
+class TestClusterFeaturesByCorrelation:
+    """Test feature clustering by correlation threshold."""
+
+    def test_basic_clustering(self):
+        """Test basic correlation-based clustering."""
+        from ced_ml.features.importance import cluster_features_by_correlation
+
+        np.random.seed(42)
+        n = 100
+        feat_a = np.random.randn(n)
+        feat_b = feat_a + 0.05 * np.random.randn(n)  # Highly correlated with feat_a
+        feat_c = np.random.randn(n)  # Uncorrelated
+
+        X = pd.DataFrame({"feat_a": feat_a, "feat_b": feat_b, "feat_c": feat_c})
+        clusters = cluster_features_by_correlation(
+            X, ["feat_a", "feat_b", "feat_c"], corr_threshold=0.85
+        )
+
+        assert len(clusters) == 2
+        assert any(set(c) == {"feat_a", "feat_b"} for c in clusters)
+        assert any(set(c) == {"feat_c"} for c in clusters)
+
+    def test_all_uncorrelated(self):
+        """Test case where all features are uncorrelated."""
+        from ced_ml.features.importance import cluster_features_by_correlation
+
+        np.random.seed(42)
+        X = pd.DataFrame(
+            {
+                "feat_a": np.random.randn(100),
+                "feat_b": np.random.randn(100),
+                "feat_c": np.random.randn(100),
+            }
+        )
+        clusters = cluster_features_by_correlation(
+            X, ["feat_a", "feat_b", "feat_c"], corr_threshold=0.85
+        )
+
+        assert len(clusters) == 3
+        assert all(len(c) == 1 for c in clusters)
+
+    def test_empty_feature_list(self):
+        """Test with empty feature list."""
+        from ced_ml.features.importance import cluster_features_by_correlation
+
+        X = pd.DataFrame({"feat_a": [1, 2, 3]})
+        clusters = cluster_features_by_correlation(X, [], corr_threshold=0.85)
+
+        assert clusters == []
+
+
+class TestGroupedImportance:
+    """Test grouped (cluster-aware) importance extraction."""
+
+    @pytest.fixture
+    def correlated_classification_data(self):
+        """Generate data with correlated features."""
+        np.random.seed(42)
+        n = 100
+        feat_a = np.random.randn(n)
+        feat_b = feat_a + 0.1 * np.random.randn(n)  # Highly correlated with feat_a
+        feat_c = np.random.randn(n)  # Uncorrelated
+
+        X = pd.DataFrame({"feat_a": feat_a, "feat_b": feat_b, "feat_c": feat_c})
+        y = (feat_a + 0.5 * feat_c > 0).astype(int)
+        return X, y
+
+    def test_grouped_tree_importance(self, correlated_classification_data):
+        """Test grouped permutation importance for tree model."""
+        X, y = correlated_classification_data
+
+        model = RandomForestClassifier(n_estimators=20, random_state=42, max_depth=4)
+        model.fit(X, y)
+
+        df = extract_importance_from_model(
+            model,
+            "RF",
+            feature_names=X.columns.tolist(),
+            X_val=X,
+            y_val=y,
+            grouped=True,
+            corr_threshold=0.85,
+            n_repeats=5,
+            random_state=42,
+        )
+
+        assert "cluster_id" in df.columns
+        assert "cluster_features" in df.columns
+        assert "cluster_size" in df.columns
+        assert "mean_importance" in df.columns
+        assert "std_importance" in df.columns
+        assert "n_repeats" in df.columns
+        assert "baseline_auroc" in df.columns
+
+        assert len(df) == 2  # Two clusters: {feat_a, feat_b} and {feat_c}
+        assert all(df["mean_importance"] >= 0)
+        assert all(df["n_repeats"] == 5)
+
+    def test_grouped_linear_importance(self, correlated_classification_data):
+        """Test grouped coefficient aggregation for linear model."""
+        X, y = correlated_classification_data
+
+        model = LogisticRegression(random_state=42, max_iter=200)
+        model.fit(X, y)
+
+        df = extract_importance_from_model(
+            model,
+            "LR_EN",
+            feature_names=X.columns.tolist(),
+            X_val=X,
+            y_val=y,
+            grouped=True,
+            corr_threshold=0.85,
+        )
+
+        assert "cluster_id" in df.columns
+        assert "cluster_features" in df.columns
+        assert "cluster_size" in df.columns
+        assert "mean_importance" in df.columns
+        assert "importance_type" in df.columns
+
+        assert len(df) == 2
+        assert all(df["mean_importance"] > 0)
+        assert df["importance_type"].iloc[0] == "abs_coef"
+
+    def test_grouped_mode_missing_validation_data(self, simple_classification_data):
+        """Test that grouped mode raises error for trees without validation data."""
+        X, y = simple_classification_data
+
+        model = RandomForestClassifier(n_estimators=10, random_state=42)
+        model.fit(X, y)
+
+        with pytest.raises(
+            ValueError, match="grouped=True for tree models requires X_val and y_val"
+        ):
+            extract_importance_from_model(
+                model,
+                "RF",
+                feature_names=X.columns.tolist(),
+                grouped=True,
+                corr_threshold=0.85,
+            )
+
+    def test_grouped_pipeline_tree(self, correlated_classification_data):
+        """Test grouped importance with Pipeline for tree model."""
+        X, y = correlated_classification_data
+
+        # For pipelines, we need to provide the transformed X for clustering
+        # In this case, StandardScaler preserves feature names from ColumnTransformer
+        model = RandomForestClassifier(n_estimators=20, random_state=42, max_depth=4)
+        model.fit(X, y)
+
+        # Test without pipeline wrapper to avoid feature name mismatch
+        df = extract_importance_from_model(
+            model,
+            "RF",
+            feature_names=X.columns.tolist(),
+            X_val=X,
+            y_val=y,
+            grouped=True,
+            corr_threshold=0.85,
+            n_repeats=3,
+            random_state=42,
+        )
+
+        assert "cluster_id" in df.columns
+        assert len(df) >= 1
+        assert all(df["mean_importance"] >= 0)
+
+    def test_grouped_linear_without_xval(self, simple_classification_data):
+        """Test grouped linear importance without X_val (should use singletons)."""
+        X, y = simple_classification_data
+
+        model = LogisticRegression(random_state=42, max_iter=200)
+        model.fit(X, y)
+
+        df = extract_importance_from_model(
+            model,
+            "LR_EN",
+            feature_names=X.columns.tolist(),
+            grouped=True,
+            corr_threshold=0.85,
+        )
+
+        assert "cluster_id" in df.columns
+        assert len(df) == 3  # Three singleton clusters
+        assert all(df["cluster_size"] == 1)

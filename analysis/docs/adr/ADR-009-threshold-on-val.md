@@ -1,4 +1,4 @@
-# ADR-011: Threshold Selection on VAL
+# ADR-009: Threshold Selection on VAL
 
 **Status:** Accepted | **Date:** 2026-01-20
 

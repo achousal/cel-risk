@@ -39,6 +39,11 @@ import pandas as pd
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file
 from ced_ml.data.schema import TARGET_COL, get_positive_label
+from ced_ml.significance.aggregation import (
+    detect_and_aggregate,
+    load_hpc_permutation_results,
+    pool_null_distribution,
+)
 from ced_ml.significance.permutation_test import (
     aggregate_permutation_results,
     run_permutation_for_fold,
@@ -183,6 +188,59 @@ def run_permutation_test_cli(
 
         logger.info(f"Model metadata: {len(protein_cols)} proteins, scenario={scenario}")
 
+        # Check for pre-computed HPC permutation results
+        sig_dir = run_path / model_name / "significance"
+        perm_files = list(sig_dir.glob("perm_*.joblib")) if sig_dir.exists() else []
+
+        if perm_files and perm_index is None:
+            # HPC results exist - aggregate and skip local execution
+            logger.info(f"Found {len(perm_files)} pre-computed permutation results from HPC")
+
+            df = load_hpc_permutation_results(sig_dir)
+
+            # Need to add observed AUROC from training results
+            # Load from validation metrics or training output
+            val_metrics_file = (
+                run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
+            )
+            if val_metrics_file.exists():
+                val_df = pd.read_csv(val_metrics_file)
+                if "auroc" in val_df.columns:
+                    df["observed_auroc"] = float(val_df["auroc"].iloc[0])
+
+            result = pool_null_distribution(df, model=model_name, alpha=0.05)
+
+            # Save aggregated result
+            agg_df = pd.DataFrame(
+                [
+                    {
+                        "model": result.model,
+                        "observed_auroc": result.observed_auroc,
+                        "empirical_p_value": result.empirical_p_value,
+                        "n_seeds": result.n_seeds,
+                        "n_perms_total": result.n_perms_total,
+                        "significant": result.significant,
+                        "alpha": result.alpha,
+                        **result.summary_stats(),
+                    }
+                ]
+            )
+            agg_path = sig_dir / "aggregated_significance.csv"
+            agg_df.to_csv(agg_path, index=False)
+
+            # Print summary and return early
+            print(f"\n{'='*60}")
+            print(f"Aggregated HPC Permutation Results: {model_name}")
+            print(f"{'='*60}")
+            print(f"Permutations aggregated: {result.n_perms_total}")
+            print(f"Observed AUROC: {result.observed_auroc:.4f}")
+            print(f"Empirical p-value: {result.empirical_p_value:.4f}")
+            print(f"Significant (alpha=0.05): {result.significant}")
+            print(f"Saved to: {agg_path}")
+            print(f"{'='*60}\n")
+
+            continue  # Skip to next model
+
         # Auto-detect data file and split directory from run metadata
         metadata_file = run_path / "run_metadata.json"
         if not metadata_file.exists():
@@ -251,7 +309,7 @@ def run_permutation_test_cli(
         positive_label = get_positive_label(scenario)
         y_all = (df[TARGET_COL] == positive_label).astype(int).values
 
-        X_all = df[feature_cols].values
+        X_all = df[feature_cols]  # Keep as DataFrame for ScreeningTransformer
 
         logger.info(f"Train: {len(train_idx)} samples, {y_all[train_idx].sum()} cases")
         logger.info(f"Val: {len(val_idx)} samples, {y_all[val_idx].sum()} cases")
@@ -271,9 +329,9 @@ def run_permutation_test_cli(
             perm_seed = random_state + perm_index
             auroc = run_permutation_for_fold(
                 pipeline=pipeline,
-                X_train=X_all[train_idx],
+                X_train=X_all.iloc[train_idx],
                 y_train=y_all[train_idx],
-                X_test=X_all[val_idx],
+                X_test=X_all.iloc[val_idx],
                 y_test=y_all[val_idx],
                 random_state=random_state,
                 perm_idx=perm_index,
@@ -341,7 +399,8 @@ def run_permutation_test_cli(
         print("\nInterpretation:")
         if result.p_value < 0.05:
             print(
-                f"  Strong evidence that model generalizes above chance (p={result.p_value:.4f} < 0.05)"
+                f"  Strong evidence that model generalizes above chance "
+                f"(p={result.p_value:.4f} < 0.05)"
             )
         elif result.p_value < 0.10:
             print(f"  Marginal evidence of generalization (p={result.p_value:.4f} < 0.10)")
@@ -351,5 +410,46 @@ def run_permutation_test_cli(
         print(f"  - {summary_path.name}")
         print(f"  - {null_path.name}")
         print(f"{'='*60}\n")
+
+        # Auto-aggregate if we have results across multiple seeds
+        try:
+            aggregated = detect_and_aggregate(run_path, model=model_name, alpha=0.05)
+
+            if aggregated:
+                result_agg = aggregated[model_name]
+
+                # Save aggregated result
+                sig_outdir = run_path / model_name / "significance"
+                sig_outdir.mkdir(parents=True, exist_ok=True)
+
+                agg_df = pd.DataFrame(
+                    [
+                        {
+                            "model": result_agg.model,
+                            "observed_auroc": result_agg.observed_auroc,
+                            "empirical_p_value": result_agg.empirical_p_value,
+                            "n_seeds": result_agg.n_seeds,
+                            "n_perms_total": result_agg.n_perms_total,
+                            "significant": result_agg.significant,
+                            "alpha": result_agg.alpha,
+                            **result_agg.summary_stats(),
+                        }
+                    ]
+                )
+                agg_path = sig_outdir / "aggregated_significance.csv"
+                agg_df.to_csv(agg_path, index=False)
+
+                logger.info(
+                    f"Auto-aggregated permutation results: p={result_agg.empirical_p_value:.4f}, "
+                    f"significant={result_agg.significant}"
+                )
+
+                print(f"\nPooled significance (across {result_agg.n_seeds} seeds):")
+                print(f"  Empirical p-value: {result_agg.empirical_p_value:.4f}")
+                print(f"  Significant (alpha=0.05): {result_agg.significant}")
+                print(f"  Total permutations pooled: {result_agg.n_perms_total}")
+                print(f"  Saved to: {agg_path}")
+        except Exception as e:
+            logger.debug(f"Auto-aggregation skipped: {e}")
 
     logger.info("Permutation testing completed successfully")

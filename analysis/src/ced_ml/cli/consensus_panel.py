@@ -16,7 +16,7 @@ WORKFLOW:
 OUTPUT:
     results/consensus_panel/run_<RUN_ID>/
         final_panel.txt          # One protein per line (for --fixed-panel)
-        final_panel.csv          # Panel with uncertainty metrics (n_models_present, agreement_strength, rank_cv)
+        final_panel.csv          # Panel with uncertainty metrics
         consensus_ranking.csv    # All proteins with RRA scores and uncertainty
         uncertainty_summary.csv  # Focused uncertainty report for final panel
         per_model_rankings.csv   # Per-model composite rankings
@@ -46,6 +46,38 @@ from ced_ml.features.consensus import (
     build_consensus_panel,
     save_consensus_results,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
+    """Load aggregated significance results for all models in a run.
+
+    Args:
+        run_dir: Path to run directory (results/run_{ID}/)
+
+    Returns:
+        DataFrame with columns [model, empirical_p_value, significant, ...] or None if not found.
+    """
+    sig_files = list(run_dir.glob("*/significance/aggregated_significance.csv"))
+    if not sig_files:
+        return None
+
+    dfs = []
+    for f in sig_files:
+        try:
+            df = pd.read_csv(f)
+            if "model" not in df.columns:
+                model_name = f.parent.parent.name
+                df["model"] = model_name
+            dfs.append(df)
+        except Exception as e:
+            logger.warning(f"Failed to load {f}: {e}")
+
+    if not dfs:
+        return None
+
+    return pd.concat(dfs, ignore_index=True)
 
 
 def load_model_stability(
@@ -127,6 +159,73 @@ def load_model_rfe_ranking(
         ) from e
 
 
+def load_model_oof_importance(
+    aggregated_dir: Path,
+) -> pd.DataFrame | None:
+    """Load OOF grouped importance from aggregated results (if available).
+
+    Args:
+        aggregated_dir: Path to model's aggregated directory.
+
+    Returns:
+        DataFrame with OOF importance (columns: feature, mean_importance, etc.), or None.
+    """
+    # Check for aggregated OOF importance file
+    oof_file = aggregated_dir / "importance" / "aggregated_oof_importance.csv"
+
+    if not oof_file.exists():
+        # Try alternative location
+        oof_file = aggregated_dir / "importance" / "importance_aggregated.csv"
+
+    if not oof_file.exists():
+        return None
+
+    try:
+        df = pd.read_csv(oof_file)
+        # Standardize column names
+        if "feature" not in df.columns and "protein" in df.columns:
+            df = df.rename(columns={"protein": "feature"})
+        if "importance" in df.columns and "mean_importance" not in df.columns:
+            df = df.rename(columns={"importance": "mean_importance"})
+        return df
+    except Exception as e:
+        logger.warning(f"Failed to load OOF importance from {oof_file}: {e}")
+        return None
+
+
+def load_model_essentiality(
+    aggregated_dir: Path,
+    threshold: str = "95pct",
+) -> pd.DataFrame | None:
+    """Load drop-column essentiality from optimize-panel results (if available).
+
+    Args:
+        aggregated_dir: Path to model's aggregated directory.
+        threshold: Panel threshold to load (e.g., "95pct", "99pct").
+
+    Returns:
+        DataFrame with essentiality data (columns: cluster_id, mean_delta_auroc, etc.), or None.
+    """
+    # Check for essentiality file
+    ess_file = (
+        aggregated_dir / "optimize_panel" / "essentiality" / f"panel_{threshold}_essentiality.csv"
+    )
+
+    if not ess_file.exists():
+        # Try alternative: single drop_column_validation.csv
+        ess_file = aggregated_dir / "optimize_panel" / "drop_column_validation.csv"
+
+    if not ess_file.exists():
+        return None
+
+    try:
+        df = pd.read_csv(ess_file)
+        return df
+    except Exception as e:
+        logger.warning(f"Failed to load essentiality from {ess_file}: {e}")
+        return None
+
+
 def run_consensus_panel(
     run_id: str,
     infile: str | None = None,
@@ -138,8 +237,17 @@ def run_consensus_panel(
     rra_method: str = "geometric_mean",
     outdir: str | None = None,
     log_level: int | None = None,
+    require_significance: bool = False,
+    significance_alpha: float = 0.05,
+    min_significant_models: int = 2,
+    use_stringent_ranking: bool = False,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
+
+    Supports two ranking modes:
+    1. Legacy mode (use_stringent_ranking=False): Stability + RFE
+    2. Stringent mode (use_stringent_ranking=True): OOF importance (primary) +
+       Essentiality (secondary) + Stability (tie-break)
 
     Args:
         run_id: Run ID to process.
@@ -148,10 +256,15 @@ def run_consensus_panel(
         stability_threshold: Minimum selection fraction for stable proteins.
         corr_threshold: Correlation threshold for clustering.
         target_size: Target panel size.
-        rfe_weight: Weight for RFE vs stability (0-1).
+        rfe_weight: Weight for RFE vs stability (0-1). Used in legacy mode.
         rra_method: RRA aggregation method.
         outdir: Output directory (default: results/consensus_panel/run_<RUN_ID>).
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
+        require_significance: Whether to filter models by permutation test significance.
+        significance_alpha: P-value threshold for significance filtering.
+        min_significant_models: Minimum number of significant models required.
+        use_stringent_ranking: Use stringent ranking (OOF + essentiality + stability)
+            instead of legacy (stability + RFE).
 
     Returns:
         ConsensusResult with final panel and intermediate data.
@@ -200,6 +313,43 @@ def run_consensus_panel(
 
     logger.info(f"Found {len(model_dirs)} models: {list(model_dirs.keys())}")
 
+    # Significance filtering
+    if require_significance:
+        run_path = results_dir / f"run_{run_id}"
+        sig_df = load_aggregated_significance(run_path)
+
+        if sig_df is not None:
+            # Filter to significant models only
+            sig_models = sig_df[sig_df["empirical_p_value"] < significance_alpha]["model"].tolist()
+
+            original_count = len(model_dirs)
+            model_dirs = {m: p for m, p in model_dirs.items() if m in sig_models}
+
+            if len(model_dirs) < original_count:
+                skipped = original_count - len(model_dirs)
+                logger.info(
+                    f"Significance filtering: {skipped} model(s) excluded "
+                    f"(p >= {significance_alpha})"
+                )
+
+            if len(model_dirs) < min_significant_models:
+                raise ValueError(
+                    f"Only {len(model_dirs)} significant model(s) found "
+                    f"(need {min_significant_models}). "
+                    f"Significant models: {list(model_dirs.keys())}\n"
+                    f"Run permutation tests first: ced permutation-test --run-id {run_id}"
+                )
+
+            logger.info(
+                f"Proceeding with {len(model_dirs)} significant model(s): {list(model_dirs.keys())}"
+            )
+        else:
+            logger.warning(
+                f"No significance data found for run {run_id}. "
+                f"Run permutation tests first: ced permutation-test --run-id {run_id}\n"
+                f"Proceeding without significance filtering."
+            )
+
     # Auto-detect data paths if not provided
     if not infile or not split_dir:
         auto_infile, auto_split_dir = auto_detect_data_paths(run_id, results_dir)
@@ -227,26 +377,54 @@ def run_consensus_panel(
     logger.info(f"Split directory: {split_dir}")
 
     # Load stability data for each model
-    logger.info("Loading stability data from each model...")
+    ranking_mode = (
+        "stringent (OOF+essentiality+stability)"
+        if use_stringent_ranking
+        else "legacy (stability+RFE)"
+    )
+    logger.info(f"Loading ranking data from each model (mode: {ranking_mode})...")
     model_stability = {}
     model_rfe_rankings = {}
+    model_oof_importance = {} if use_stringent_ranking else None
+    model_essentiality = {} if use_stringent_ranking else None
 
     for model_name, aggregated_dir in model_dirs.items():
-        # Load stability
+        # Load stability (always needed)
         stability_df = load_model_stability(aggregated_dir, stability_threshold=0.0)
         model_stability[model_name] = stability_df
 
-        # Load RFE ranking (optional)
+        # Load RFE ranking (for legacy mode)
         rfe_ranking = load_model_rfe_ranking(aggregated_dir)
         model_rfe_rankings[model_name] = rfe_ranking
 
         n_stable = (stability_df["selection_fraction"] >= stability_threshold).sum()
         has_rfe = rfe_ranking is not None
 
-        logger.info(
-            f"  {model_name}: {len(stability_df)} total proteins, "
-            f"{n_stable} stable (>={stability_threshold}), RFE={'yes' if has_rfe else 'no'}"
-        )
+        # Load stringent ranking inputs (OOF importance + essentiality)
+        has_oof = False
+        has_essentiality = False
+        if use_stringent_ranking:
+            oof_df = load_model_oof_importance(aggregated_dir)
+            if oof_df is not None:
+                model_oof_importance[model_name] = oof_df
+                has_oof = True
+
+            ess_df = load_model_essentiality(aggregated_dir)
+            if ess_df is not None:
+                model_essentiality[model_name] = ess_df
+                has_essentiality = True
+
+        if use_stringent_ranking:
+            logger.info(
+                f"  {model_name}: {len(stability_df)} total proteins, "
+                f"{n_stable} stable (>={stability_threshold}), "
+                f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
+            )
+        else:
+            logger.info(
+                f"  {model_name}: {len(stability_df)} total proteins, "
+                f"{n_stable} stable (>={stability_threshold}), RFE={'yes' if has_rfe else 'no'}"
+            )
 
     # Load training data for correlation computation
     logger.info(f"Loading training data from {infile}...")
@@ -316,6 +494,9 @@ def run_consensus_panel(
         target_size=target_size,
         rfe_weight=rfe_weight,
         rra_method=rra_method,
+        model_oof_importance=model_oof_importance,
+        model_essentiality=model_essentiality,
+        use_stringent_ranking=use_stringent_ranking,
     )
 
     # Save results
@@ -333,16 +514,24 @@ def run_consensus_panel(
     print(f"Run ID: {run_id}")
     print(f"Models: {', '.join(model_dirs.keys())}")
     print("\nParameters:")
+    print(f"  Ranking mode: {ranking_mode}")
     print(f"  Stability threshold: {stability_threshold}")
     print(f"  Correlation threshold: {corr_threshold}")
     print(f"  Target size: {target_size}")
-    print(f"  RFE weight: {rfe_weight}")
+    if not use_stringent_ranking:
+        print(f"  RFE weight: {rfe_weight}")
     print(f"  RRA method: {rra_method}")
 
     print("\nResults:")
     print(f"  Total proteins across models: {len(result.consensus_ranking)}")
     print(f"  Clusters after correlation pruning: {result.metadata['results']['n_clusters']}")
     print(f"  Final panel size: {len(result.final_panel)}")
+
+    if require_significance:
+        print("\nSignificance filtering:")
+        print(f"  Required alpha: {significance_alpha}")
+        print(f"  Minimum models: {min_significant_models}")
+        print(f"  Significant models used: {list(model_dirs.keys())}")
 
     print("\nTop 10 proteins in consensus panel:")
     for i, protein in enumerate(result.final_panel[:10], 1):
@@ -351,7 +540,8 @@ def run_consensus_panel(
         n_models = protein_row["n_models_present"].iloc[0]
         agreement = protein_row["agreement_strength"].iloc[0]
         print(
-            f"  {i:2d}. {protein} (score: {score:.4f}, {n_models}/{len(model_dirs)} models, agreement: {agreement:.2f})"
+            f"  {i:2d}. {protein} (score: {score:.4f}, "
+            f"{n_models}/{len(model_dirs)} models, agreement: {agreement:.2f})"
         )
 
     # Print uncertainty summary
@@ -365,9 +555,8 @@ def run_consensus_panel(
         print(
             f"  Proteins in all models: {unc['proteins_in_all_models']}/{len(result.final_panel)}"
         )
-        print(
-            f"  Proteins in majority: {unc['proteins_in_majority_models']}/{len(result.final_panel)}"
-        )
+        majority = unc["proteins_in_majority_models"]
+        print(f"  Proteins in majority: {majority}/{len(result.final_panel)}")
 
     print(f"\nOutput saved to: {outdir}")
     print("  - final_panel.txt (for --fixed-panel)")

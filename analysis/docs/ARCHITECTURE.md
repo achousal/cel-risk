@@ -63,63 +63,65 @@ The pipeline provides **five distinct strategies**, each optimized for different
 - Cross-model deployment requires consensus across multiple algorithms
 - Regulatory validation requires unbiased estimates on predetermined panels
 
-See [ADR-013: Four-Strategy Feature Selection Framework](adr/ADR-013-four-strategy-feature-selection.md) for the architectural decision documenting the rationale, alternatives considered, and trade-offs.
+See [ADR-004: Three-Stage Feature Selection and Consensus Workflow](adr/ADR-004-four-strategy-feature-selection.md) for the architectural decision documenting the rationale, alternatives considered, and trade-offs.
 
-| Strategy | Phase | Use Case | Speed | Output |
-|----------|-------|----------|-------|--------|
-| **Hybrid Stability** | During training | Production models (default) | Fast (~30 min) | Stable k-selected panels |
-| **Nested RFECV** | During training | Scientific discovery | Slow (5-22 hours) | Consensus panels |
-| **Post-hoc RFE** | After training | Single-model deployment | Very fast (~5 min) | Pareto curves |
-| **Consensus Panel** | After training | Cross-model deployment | Fast (~15 min) | RRA consensus panel |
-| **Fixed Panel** | During training | Regulatory validation | Fast (~30 min) | Unbiased AUROC |
+| Stage | Component | Phase | Runtime | Output |
+|-------|-----------|-------|---------|--------|
+| **Stage 1** | Model gate (permutation test) | After training | 1-4 hrs per model (HPC) | p-value per model |
+| **Stage 2** | Per-model evidence (4 inputs) | During training + aggregation | Computed alongside training | OOF importance, essentiality, RFE, stability ranks |
+| **Stage 3** | Multi-list RRA consensus | After aggregation | ~15 min | Cross-model panel with FDR-corrected q-values |
 
-**Strategy 1: Hybrid Stability (Default)**
-1. **Screening:** Mann-Whitney U / F-statistic → top N proteins (default: 1,000)
-2. **K-best tuning:** SelectKBest with tunable k_grid → optimize via inner CV
-3. **Stability filtering:** Keep features selected in ≥ threshold of CV repeats (default: 0.70)
-4. **Correlation pruning:** Remove r > threshold pairs (default: 0.85)
+**Stage 1: Model Gate (CLI: `ced permutation-test --run-id <RUN_ID> --model <MODEL>`)**
+- Label permutation test of classifier AUROC using same CV/training recipe
+- Pooled-null aggregation across CV folds/seeds
+- Empirical p-value with +1 correction
+- **Output:** Keep only significant models (p < α) for downstream consensus
 
-**Strategy 2: Nested RFECV**
-1. **Screening:** Same as hybrid
-2. **K-best pre-filter (optional):** Cap at rfe_kbest_k proteins (default: 100, provides ~5× speedup)
-3. **RFECV per fold:** Recursive elimination within each outer CV fold
-4. **Consensus panel:** Aggregate features selected in ≥ rfe_consensus_thresh of folds (default: 0.80)
+**Stage 2: Per-model Feature Evidence (4 complementary inputs)**
 
-**Strategy 3: Post-hoc RFE (CLI: `ced optimize-panel --run-id <RUN_ID> --model <MODEL>`)**
-- Run after training on pre-trained model
-- Iterative feature elimination with validation set AUROC tracking
-- Outputs Pareto curve (panel size vs. AUROC) and recommendations
-- Multi-model batch processing: `ced optimize-panel --run-id <RUN_ID>` processes all base models
+Input 1 (primary): **OOF grouped importance**
+- Trees: OOF grouped permutation importance on held-out folds
+- Linear: standardized |coef| on standardized inputs + stability across repeats
+- Correlation grouping prevents "twin feature" artifacts
 
-**Strategy 4: Consensus Panel (CLI: `ced consensus-panel --run-id <RUN_ID>`)**
-- Run after aggregation across multiple models
-- Robust Rank Aggregation (RRA) across model-specific stability + RFE rankings
-- Correlation-based clustering to handle redundant proteins
-- Outputs cross-model consensus panel with validation-ready format
+Input 2 (secondary): **Drop-column / LOCO essentiality**
+- Run on final candidate panel (or shortlist)
+- Fixed hyperparams (refit-only) to measure "is this block essential?"
+- More faithful necessity test than single-feature PFI under correlation
 
-**Strategy 5: Fixed Panel (CLI: `ced train --fixed-panel panel.csv`)**
-- Bypass all feature selection
-- Train on predetermined panel
-- Requires new split seed for unbiased validation
+Input 3 (tertiary): **RFE rank**
+- Panel sizing / selection path, not primary scientific ranking
+- Use as tie-breaker / selection prior
 
-**Mutually exclusive:** Strategies 1-2 (choose via `feature_selection_strategy` config)
-**Complementary:** Strategies 3-5 (post-training tools)
+Input 4 (filter/tie-break): **Stability frequency**
+- Filter out noisy blocks (min stability threshold)
+- Resolve ties when other inputs are similar
+
+**Stage 3: Sequential Filtering + Multi-list RRA (CLI: `ced consensus-panel --run-id <RUN_ID>`)**
+
+1. **Filter by stability (optional):** Keep blocks with stability ≥ s (e.g., 0.6–0.75)
+2. **Rank by OOF importance (primary):** Keep top K₁ blocks (e.g., 150) per model
+3. **Run RFE inside shortlist:** Pick panel size (e.g., 25–40)
+4. **Run grouped LOCO:** Mark essentials (ΔAUROC above noise floor or top K₂)
+5. **Multi-list RRA:** Combine ranks from (importance, essentiality, RFE) → rra_p → BH correction → rra_q
+6. **Select by FDR:** Keep blocks with rra_q < α (or top-K for fixed panel size)
+
+**Other methods**:
+- Nested RFECV (during training, slow 5-22 hrs)
+- Fixed Panel validation (`ced train --fixed-panel panel.csv`)
 
 **Code pointers:**
-- [features/screening.py](../src/ced_ml/features/screening.py) - Effect size screening
-- [features/kbest.py](../src/ced_ml/features/kbest.py) - K-best tuning
-- [features/stability.py](../src/ced_ml/features/stability.py) - Stability extraction
-- [features/nested_rfe.py](../src/ced_ml/features/nested_rfe.py) - Nested RFECV
-- [features/rfe.py](../src/ced_ml/features/rfe.py) - Post-hoc RFE
-- [features/consensus.py](../src/ced_ml/features/consensus.py) - Cross-model consensus via RRA
-- [cli/optimize_panel.py](../src/ced_ml/cli/optimize_panel.py) - Post-hoc RFE CLI
-- [cli/consensus_panel.py](../src/ced_ml/cli/consensus_panel.py) - Consensus panel CLI
-- [cli/train.py](../src/ced_ml/cli/train.py) - Fixed panel integration
+- [significance/permutation_test.py](../src/ced_ml/significance/permutation_test.py) - Stage 1: Model gate
+- [features/grouped_importance.py](../src/ced_ml/features/grouped_importance.py) - Stage 2 Input 1: OOF importance
+- [features/drop_column.py](../src/ced_ml/features/drop_column.py) - Stage 2 Input 2: LOCO essentiality
+- [features/rfe.py](../src/ced_ml/features/rfe.py) - Stage 2 Input 3: RFE rank
+- [features/stability.py](../src/ced_ml/features/stability.py) - Stage 2 Input 4: Stability frequency
+- [features/consensus.py](../src/ced_ml/features/consensus.py) - Stage 3: Multi-list RRA consensus
+- [cli/permutation_test.py](../src/ced_ml/cli/permutation_test.py) - Stage 1 CLI
+- [cli/consensus_panel.py](../src/ced_ml/cli/consensus_panel.py) - Stage 3 CLI
 
 **See ADRs:**
-- [ADR-013: Four-Strategy Feature Selection Framework](adr/ADR-013-four-strategy-feature-selection.md) - Unified framework rationale
-- [ADR-004: Hybrid Feature Selection](adr/ADR-004-hybrid-feature-selection.md) - Strategy 1 details
-- [ADR-005: Stability Panel](adr/ADR-005-stability-panel.md) - Stability extraction
+- [ADR-004: Three-Stage Feature Selection and Consensus Workflow](adr/ADR-004-four-strategy-feature-selection.md) - Model gate, evidence, RRA consensus
 
 **See detailed guide:**
 - [FEATURE_SELECTION.md](reference/FEATURE_SELECTION.md) - Consolidated guide covering all 5 strategies (hybrid, RFECV, post-hoc RFE, consensus panel, fixed panel)
@@ -138,15 +140,14 @@ See [ADR-013: Four-Strategy Feature Selection Framework](adr/ADR-013-four-strate
 - Selects best hyperparameters per outer fold
 
 **Hyperparameter search:**
-- **RandomizedSearchCV** (default): 200 iterations per fold
-- **OptunaSearchCV** (optional): Bayesian TPE sampling with pruning (median/percentile/hyperband)
+- **OptunaSearchCV** (default): Bayesian TPE sampling with pruning (median/percentile/hyperband)
+- **RandomizedSearchCV** (optional): 200 iterations per fold
 
 **OOF prediction tracking:** Each sample's prediction comes from a fold where it was held out (no leakage).
 
 **See ADRs:**
-- [ADR-006: Nested CV Structure](adr/ADR-006-nested-cv.md)
-- [ADR-007: AUROC Optimization](adr/ADR-007-auroc-optimization.md)
-- [ADR-008: Optuna Hyperparameter Optimization](adr/ADR-008-optuna-hyperparameter-optimization.md)
+- [ADR-005: Nested CV Structure](adr/ADR-005-nested-cv.md)
+- [ADR-006: Optuna Hyperparameter Optimization](adr/ADR-006-optuna-hyperparameter-optimization.md)
 
 ### 2.4 Stacking Ensemble
 
@@ -165,7 +166,7 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 **Configuration:** Opt-in via `ensemble.enabled=true` in config.
 
 **See ADR:**
-- [ADR-009: OOF Stacking Ensemble](adr/ADR-009-oof-stacking-ensemble.md)
+- [ADR-007: OOF Stacking Ensemble](adr/ADR-007-oof-stacking-ensemble.md)
 
 ### 2.5 Calibration
 
@@ -186,7 +187,7 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 | `oof_posthoc` | Full | None | None | Higher |
 
 **See ADR:**
-- [ADR-014: OOF Posthoc Calibration](adr/ADR-014-oof-posthoc-calibration.md)
+- [ADR-008: OOF Posthoc Calibration](adr/ADR-008-oof-posthoc-calibration.md)
 
 ### 2.6 Prevalence Configuration
 
@@ -202,8 +203,7 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 
 **Note on real-world deployment:** Real-world incident Celiac Disease prevalence is ~0.34% (1:300). If models are deployed for clinical screening, predicted probabilities will need adjustment to account for this 50× prevalence difference. This is a future concern outside the current training pipeline.
 
-**See ADR for speculative deployment guidance:**
-- [ADR-010: Prevalence Adjustment Strategy (Future Deployment Concern)](adr/ADR-010-prevalence-adjustment.md)
+**See speculative deployment guidance:**
 - [DEPLOYMENT.md](development/DEPLOYMENT.md) - Speculative best-practices guide
 
 ### 2.7 Threshold Selection
@@ -260,7 +260,7 @@ p-value = (1 + #{null >= observed}) / (1 + B)
 - [cli/permutation_test.py](../src/ced_ml/cli/permutation_test.py) - CLI implementation
 
 **See ADR:**
-- [ADR-016: Permutation Testing](adr/ADR-016-permutation-testing.md)
+- [ADR-011: Permutation Testing](adr/ADR-011-permutation-testing.md)
 
 ### 2.10 Feature Importance
 
@@ -369,17 +369,15 @@ src/ced_ml/
 - `data/columns.py` - Metadata column resolution
 
 **Feature selection:**
-- `features/screening.py` - Mann-Whitney U / F-statistic screening (all strategies)
-- `features/kbest.py` - K-best tuning (Strategy 1: hybrid_stability, Strategy 2: RFECV pre-filter)
-- `features/stability.py` - Stability panel extraction (Strategy 1: hybrid_stability)
-- `features/nested_rfe.py` - Nested RFECV implementation (Strategy 2: rfecv)
-- `features/rfe.py` - Post-hoc RFE algorithm (Strategy 3: optimize-panel CLI)
-- `features/consensus.py` - Cross-model consensus via Robust Rank Aggregation (Strategy 4: consensus-panel CLI)
-- `features/corr_prune.py` - Correlation-based pruning (Strategy 1: hybrid_stability, Strategy 4: consensus)
-- `features/panels.py` - Fixed panel loading (Strategy 5: fixed panel validation)
-- `features/importance.py` - Linear coefficient and tree importance extraction
-- `features/grouped_importance.py` - Correlation-robust grouped permutation importance
-- `features/drop_column.py` - Drop-column validation for panel features
+- `features/grouped_importance.py` - Stage 2 Input 1: OOF grouped permutation importance
+- `features/drop_column.py` - Stage 2 Input 2: Drop-column / LOCO essentiality
+- `features/rfe.py` - Stage 2 Input 3: RFE rank (panel sizing)
+- `features/stability.py` - Stage 2 Input 4: Stability frequency tracking
+- `features/consensus.py` - Stage 3: Multi-list RRA consensus with FDR correction
+- `features/corr_prune.py` - Correlation clustering for grouped importance / drop-column
+- `features/importance.py` - Linear coefficient and tree importance extraction (base for grouped importance)
+- `features/nested_rfe.py` - Legacy: Nested RFECV (deprecated)
+- `features/panels.py` - Fixed panel loading (validation/benchmarking)
 
 **Model training:**
 - `models/training.py` - Nested CV orchestration, OOF predictions
@@ -391,7 +389,6 @@ src/ced_ml/
 - `metrics/discrimination.py` - AUROC, PR-AUC, Brier score
 - `metrics/thresholds.py` - Threshold selection objectives
 - `metrics/dca.py` - Decision curve analysis
-- `evaluation/scoring.py` - Composite scoring for model selection
 
 **Significance testing:**
 - `significance/permutation_test.py` - Label permutation testing for model significance

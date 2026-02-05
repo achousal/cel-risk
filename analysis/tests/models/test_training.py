@@ -68,7 +68,7 @@ def test_oof_predictions_basic(toy_data, simple_pipeline, minimal_config):
     """Test basic OOF prediction generation."""
     X, y, protein_cols = toy_data
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -139,7 +139,7 @@ def test_oof_predictions_no_nan_after_training(toy_data, simple_pipeline, minima
     """
     X, y, protein_cols = toy_data
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -433,7 +433,7 @@ def test_oof_predictions_with_kbest(toy_data, minimal_config):
         ]
     )
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         pipeline, "LR_EN", X, y, protein_cols, minimal_config, random_state=42
     )
 
@@ -472,7 +472,7 @@ def test_oof_predictions_tracks_selected_proteins(toy_data, minimal_config):
         ]
     )
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         pipeline, "LR_EN", X, y, protein_cols, minimal_config, random_state=42
     )
 
@@ -498,7 +498,7 @@ def test_oof_predictions_single_repeat(toy_data, simple_pipeline, minimal_config
     X, y, protein_cols = toy_data
     minimal_config.cv.repeats = 1
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -517,7 +517,7 @@ def test_oof_predictions_no_inner_tuning(toy_data, simple_pipeline, minimal_conf
     X, y, protein_cols = toy_data
     minimal_config.cv.inner_folds = 1  # Disable tuning
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _ = oof_predictions_with_nested_cv(
+    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -816,7 +816,7 @@ def test_rfecv_actually_reduces_features():
     )
 
     # Run training with RFECV
-    preds, elapsed, best_params_df, selected_proteins_df, _, rfecv_result = (
+    preds, elapsed, best_params_df, selected_proteins_df, _, rfecv_result, _ = (
         oof_predictions_with_nested_cv(
             pipeline, "LR_EN", X, y, protein_cols, config, random_state=42
         )

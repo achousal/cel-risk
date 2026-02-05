@@ -151,7 +151,6 @@ results/run_{run_id}/{model}/aggregated/
     pooled_val_metrics.csv        # Pooled val metrics by model
     test_metrics_summary.csv      # Summary stats across splits
     val_metrics_summary.csv       # Val summary stats
-    selection_scores.csv          # Model selection scores
     model_comparison.csv          # Model comparison report
   panels/
     feature_stability.csv         # Aggregated feature stability across all splits

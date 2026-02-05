@@ -3,6 +3,7 @@
 This module provides correlation-robust feature importance computation on held-out data:
 - Linear models (LR_EN, LR_L1, LinSVM_cal): Standardized absolute coefficients
 - Tree models (RF, XGBoost): Built-in feature importances (Gini/gain)
+- Grouped importance: Cluster-aware importance aggregation (optional)
 
 All importance values are extracted from fitted models and aggregated across outer CV folds
 to produce robust, unbiased importance estimates. This approach avoids data leakage by
@@ -11,16 +12,20 @@ using only OOF data for importance computation.
 Key functions:
     extract_linear_importance: Extract standardized |coef| from linear models
     extract_tree_importance: Extract feature_importances_ from tree models
-    extract_importance_from_model: Unified dispatcher based on model_name
+    extract_importance_from_model: Unified dispatcher based on model_name (supports grouped mode)
     aggregate_fold_importances: Aggregate importance across CV folds
+    cluster_features_by_correlation: Group features by correlation threshold
 
 Design notes:
     - Handles sklearn Pipeline wrappers (preprocessing, feature selection)
     - Handles CalibratedClassifierCV wrappers (averages across calibration folds)
+    - Supports grouped/cluster-aware importance (permutation-based for trees,
+      aggregation for linear)
     - Returns empty DataFrame on errors rather than raising exceptions
     - Uses logging for diagnostics
 """
 
+import json
 import logging
 from typing import Literal
 
@@ -30,6 +35,12 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 
 from ..data.schema import ModelName
+from ..metrics.discrimination import auroc
+from .corr_prune import (
+    build_correlation_graph,
+    compute_correlation_matrix,
+    find_connected_components,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +49,7 @@ __all__ = [
     "extract_tree_importance",
     "extract_importance_from_model",
     "aggregate_fold_importances",
+    "cluster_features_by_correlation",
 ]
 
 
@@ -264,10 +276,220 @@ def extract_tree_importance(
     )
 
 
+def cluster_features_by_correlation(
+    X: pd.DataFrame,
+    feature_names: list[str],
+    corr_threshold: float = 0.85,
+    corr_method: str = "spearman",
+) -> list[list[str]]:
+    """Cluster features by correlation threshold.
+
+    Features with |correlation| >= corr_threshold are grouped together using
+    connected components in a correlation graph. Uses hierarchical clustering
+    infrastructure from corr_prune module.
+
+    Args:
+        X: Feature matrix (used to compute correlations).
+        feature_names: Feature names to cluster.
+        corr_threshold: Correlation threshold for clustering (default 0.85).
+                       Features with |corr| >= threshold are grouped.
+        corr_method: Correlation method ("pearson" or "spearman", default "spearman").
+
+    Returns:
+        List of feature clusters (each cluster is a list of feature names).
+        Singleton clusters (uncorrelated features) are also included.
+
+    Notes:
+        - Uses DFS-based connected components to find correlation clusters
+        - Handles missing values via median imputation (consistent with corr_prune)
+        - Returns empty list if no valid features are found
+        - Clusters are sorted internally for reproducibility
+
+    Examples:
+        >>> X = pd.DataFrame({
+        ...     'A': [1, 2, 3, 4],
+        ...     'B': [1.1, 2.1, 3.1, 4.1],  # Highly correlated with A
+        ...     'C': [10, 20, 15, 25]       # Uncorrelated
+        ... })
+        >>> clusters = cluster_features_by_correlation(X, ['A', 'B', 'C'], corr_threshold=0.85)
+        >>> len(clusters)  # Will have 2 clusters: {A, B} and {C}
+        2
+    """
+    valid_features = [f for f in feature_names if f in X.columns]
+    if len(valid_features) == 0:
+        logger.warning("No valid features found in X; returning empty cluster list")
+        return []
+
+    # Compute correlation matrix
+    corr_matrix = compute_correlation_matrix(
+        df=X,
+        proteins=valid_features,
+        method=corr_method,
+    )
+
+    if corr_matrix.empty:
+        logger.warning("Correlation matrix is empty; returning singleton clusters")
+        return [[f] for f in valid_features]
+
+    # Build correlation graph and find connected components
+    adjacency = build_correlation_graph(corr_matrix, threshold=corr_threshold)
+    clusters = find_connected_components(adjacency)
+
+    logger.info(
+        f"Built {len(clusters)} feature clusters from {len(valid_features)} features "
+        f"(corr_threshold={corr_threshold:.2f}, corr_method={corr_method})"
+    )
+
+    # Log cluster size distribution
+    cluster_sizes = [len(c) for c in clusters]
+    n_singletons = sum(1 for size in cluster_sizes if size == 1)
+    max_size = max(cluster_sizes) if cluster_sizes else 0
+    logger.info(
+        f"Cluster size distribution: {n_singletons} singletons, "
+        f"max_size={max_size}, mean_size={np.mean(cluster_sizes):.1f}"
+    )
+
+    return clusters
+
+
+def _compute_grouped_permutation_importance(
+    estimator: Pipeline,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    feature_clusters: list[list[str]],
+    n_repeats: int = 5,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Compute grouped permutation importance for tree models.
+
+    For each cluster, permute ALL features in the cluster together,
+    then measure AUROC drop on validation data.
+
+    Args:
+        estimator: Fitted sklearn Pipeline with predict_proba method.
+        X_val: Validation feature matrix.
+        y_val: Validation binary labels (0/1).
+        feature_clusters: List of feature clusters (from cluster_features_by_correlation).
+        n_repeats: Number of permutation repeats for variance estimation (default 5).
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        DataFrame with columns:
+            - cluster_id: int, cluster identifier (0-based)
+            - cluster_features: str, JSON list of feature names
+            - cluster_size: int, number of features in cluster
+            - mean_importance: float, mean AUROC drop across repeats
+            - std_importance: float, std dev of AUROC drop across repeats
+            - n_repeats: int, number of permutation repeats
+            - baseline_auroc: float, original model AUROC before permutation
+
+    Notes:
+        - All features in a cluster are permuted together (same permutation order)
+        - This preserves within-cluster correlation structure
+        - Cluster importance reflects joint contribution of all cluster members
+        - For singleton clusters, this is equivalent to individual feature importance
+    """
+    y_clean = np.asarray(y_val).astype(int)
+
+    # Validate clusters and get all unique features
+    all_features_set = set()
+    for cluster in feature_clusters:
+        all_features_set.update(cluster)
+
+    # Preserve feature order from X_val.columns to avoid sklearn feature name errors
+    valid_features = [f for f in X_val.columns if f in all_features_set]
+
+    if len(valid_features) == 0:
+        logger.warning("No valid features in clusters; returning empty importance DataFrame")
+        return pd.DataFrame(
+            columns=[
+                "cluster_id",
+                "cluster_features",
+                "cluster_size",
+                "mean_importance",
+                "std_importance",
+                "n_repeats",
+                "baseline_auroc",
+            ]
+        )
+
+    # Compute baseline performance
+    y_pred_proba = estimator.predict_proba(X_val[valid_features])[:, 1]
+    baseline_auroc = auroc(y_clean, y_pred_proba)
+    logger.info(f"Baseline AUROC for grouped permutation importance: {baseline_auroc:.4f}")
+
+    # Initialize RNG
+    rng = np.random.RandomState(random_state)
+
+    # Compute importance for each cluster
+    rows = []
+    for cluster_id, cluster_features in enumerate(feature_clusters):
+        # Filter to valid features in this cluster
+        valid_cluster = [f for f in cluster_features if f in X_val.columns]
+        if len(valid_cluster) == 0:
+            logger.warning(f"Cluster {cluster_id} has no valid features; skipping")
+            continue
+
+        importance_scores = []
+
+        for _repeat in range(n_repeats):
+            # Create permuted copy
+            X_permuted = X_val[valid_features].copy()
+
+            # Permute all features in the cluster together
+            # Use the same permutation indices for all cluster members
+            perm_indices = rng.permutation(len(X_permuted))
+            for feature in valid_cluster:
+                X_permuted[feature] = X_permuted[feature].values[perm_indices]
+
+            # Compute permuted performance
+            y_pred_permuted = estimator.predict_proba(X_permuted)[:, 1]
+            permuted_auroc = auroc(y_clean, y_pred_permuted)
+
+            # Importance = drop in performance
+            importance = baseline_auroc - permuted_auroc
+            importance_scores.append(importance)
+
+        # Aggregate across repeats
+        mean_importance = float(np.mean(importance_scores))
+        std_importance = float(np.std(importance_scores, ddof=1))
+
+        rows.append(
+            {
+                "cluster_id": cluster_id,
+                "cluster_features": json.dumps(sorted(valid_cluster)),
+                "cluster_size": len(valid_cluster),
+                "mean_importance": mean_importance,
+                "std_importance": std_importance,
+                "n_repeats": n_repeats,
+                "baseline_auroc": baseline_auroc,
+            }
+        )
+
+        if (cluster_id + 1) % 50 == 0:
+            logger.info(
+                f"Computed grouped importance for {cluster_id + 1}/{len(feature_clusters)} clusters"
+            )
+
+    result = pd.DataFrame(rows).sort_values("mean_importance", ascending=False, ignore_index=True)
+    logger.info(
+        f"Computed grouped permutation importance for {len(result)} clusters "
+        f"(n_repeats={n_repeats}, baseline_auroc={baseline_auroc:.4f})"
+    )
+
+    return result
+
+
 def extract_importance_from_model(
     estimator,
     model_name: Literal["LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"],
     feature_names: np.ndarray | list[str] | None = None,
+    X_val: pd.DataFrame | None = None,
+    y_val: np.ndarray | None = None,
+    grouped: bool = False,
+    corr_threshold: float = 0.85,
+    n_repeats: int = 5,
+    random_state: int = 42,
 ) -> pd.DataFrame:
     """Extract feature importance from fitted model (dispatcher function).
 
@@ -278,29 +500,53 @@ def extract_importance_from_model(
     If estimator is a Pipeline, feature names are extracted automatically from the
     pipeline's preprocessing and feature selection steps.
 
+    If grouped=True and X_val/y_val provided:
+        - For trees (RF, XGBoost): Compute grouped permutation importance
+          by permuting all features in each cluster together
+        - For linear models: Aggregate coefficient importance by cluster
+
     Args:
         estimator: Fitted sklearn estimator (may be Pipeline)
         model_name: Model identifier (one of: "LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost")
         feature_names: Optional feature names. If None and estimator is Pipeline,
                       feature names are extracted from pipeline steps.
+        X_val: Validation feature matrix (required for grouped mode with trees).
+        y_val: Validation binary labels (required for grouped mode with trees).
+        grouped: Enable cluster-aware importance mode (default False).
+        corr_threshold: Correlation threshold for feature clustering (default 0.85).
+        n_repeats: Number of permutation repeats for grouped tree importance (default 5).
+        random_state: Random seed for permutation (default 42).
 
     Returns:
-        DataFrame with columns:
+        DataFrame with columns (standard mode):
             - feature: str, feature name
             - importance: float, importance value
             - importance_type: str, "abs_coef", "gini", or "gain"
 
+        DataFrame with additional columns (grouped mode):
+            - cluster_id: int, cluster identifier (0-based)
+            - cluster_features: str, JSON list of feature names in cluster
+            - cluster_size: int, number of features in cluster
+            - mean_importance: float, aggregated or permutation-based importance
+            - std_importance: float, std dev (only for permutation-based)
+            - n_repeats: int, number of repeats (only for permutation-based)
+            - baseline_auroc: float, baseline AUROC (only for permutation-based)
+
         Empty DataFrame if importance cannot be extracted.
 
     Raises:
-        ValueError: If model_name is unknown
+        ValueError: If model_name is unknown or if grouped=True but X_val/y_val missing for trees
 
     Examples:
-        >>> # Extract from Pipeline
+        >>> # Standard extraction from Pipeline
         >>> df = extract_importance_from_model(fitted_pipeline, "LR_EN")
         >>>
-        >>> # Extract with explicit feature names
-        >>> df = extract_importance_from_model(fitted_model, "RF", feature_names=["age", "bmi"])
+        >>> # Grouped importance for tree model
+        >>> df = extract_importance_from_model(
+        ...     fitted_pipeline, "RF",
+        ...     X_val=X_val, y_val=y_val,
+        ...     grouped=True, corr_threshold=0.85
+        ... )
     """
     # Extract feature names from Pipeline if needed
     if feature_names is None:
@@ -313,15 +559,92 @@ def extract_importance_from_model(
             logger.warning("feature_names is required for non-Pipeline estimators")
             return pd.DataFrame(columns=["feature", "importance", "importance_type"])
 
-    # Dispatch based on model type
+    # Validate grouped mode requirements
     model_name_clean = str(model_name).strip()
+    is_tree_model = model_name_clean in (ModelName.RF, ModelName.XGBoost)
+    is_linear_model = model_name_clean in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal)
 
-    if model_name_clean in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal):
+    if grouped and is_tree_model and (X_val is None or y_val is None):
+        raise ValueError(
+            "grouped=True for tree models requires X_val and y_val for permutation importance"
+        )
+
+    # Handle grouped mode
+    if grouped:
+        logger.info(f"Computing grouped importance (corr_threshold={corr_threshold})")
+
+        # Build feature clusters
+        if X_val is not None:
+            clusters = cluster_features_by_correlation(
+                X=X_val,
+                feature_names=list(feature_names),
+                corr_threshold=corr_threshold,
+                corr_method="spearman",
+            )
+        else:
+            # For linear models without X_val, use singleton clusters
+            logger.warning("No X_val provided for clustering; using singleton clusters")
+            clusters = [[f] for f in feature_names]
+
+        # Compute grouped importance based on model type
+        if is_tree_model:
+            # Use grouped permutation importance for trees
+            return _compute_grouped_permutation_importance(
+                estimator=estimator,
+                X_val=X_val,
+                y_val=y_val,
+                feature_clusters=clusters,
+                n_repeats=n_repeats,
+                random_state=random_state,
+            )
+        elif is_linear_model:
+            # For linear models, aggregate coefficient importance by cluster
+            individual_importance = extract_linear_importance(estimator, feature_names)
+
+            if individual_importance.empty:
+                return pd.DataFrame(
+                    columns=[
+                        "cluster_id",
+                        "cluster_features",
+                        "cluster_size",
+                        "mean_importance",
+                        "importance_type",
+                    ]
+                )
+
+            # Aggregate by cluster
+            rows = []
+            for cluster_id, cluster_features in enumerate(clusters):
+                cluster_df = individual_importance[
+                    individual_importance["feature"].isin(cluster_features)
+                ]
+                if cluster_df.empty:
+                    continue
+
+                rows.append(
+                    {
+                        "cluster_id": cluster_id,
+                        "cluster_features": json.dumps(sorted(cluster_features)),
+                        "cluster_size": len(cluster_features),
+                        "mean_importance": float(cluster_df["importance"].sum()),
+                        "importance_type": cluster_df["importance_type"].iloc[0],
+                    }
+                )
+
+            result = pd.DataFrame(rows).sort_values(
+                "mean_importance", ascending=False, ignore_index=True
+            )
+            logger.info(
+                f"Aggregated linear importance into {len(result)} clusters "
+                f"from {len(individual_importance)} features"
+            )
+            return result
+
+    # Standard mode (not grouped)
+    if is_linear_model:
         return extract_linear_importance(estimator, feature_names)
-
-    elif model_name_clean in (ModelName.RF, ModelName.XGBoost):
+    elif is_tree_model:
         return extract_tree_importance(estimator, feature_names)
-
     else:
         raise ValueError(
             f"Unknown model_name: {model_name}. "

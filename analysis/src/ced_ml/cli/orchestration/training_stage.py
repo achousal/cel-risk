@@ -56,6 +56,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
         - selected_proteins_df: Selected proteins per fold
         - oof_calibrator: OOF calibrator (if applicable)
         - nested_rfecv_result: RFECV result (if enabled)
+        - oof_importance_df: OOF importance dataframe (if computed)
         - final_selected_proteins: Final test panel proteins
         - cv_elapsed_sec: CV elapsed time
     """
@@ -120,6 +121,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
         selected_proteins_df,
         oof_calibrator,
         nested_rfecv_result,
+        oof_importance_df,
     ) = oof_predictions_with_nested_cv(
         pipeline=pipeline,
         model_name=config.model,
@@ -215,6 +217,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
     ctx.selected_proteins_df = selected_proteins_df
     ctx.oof_calibrator = oof_calibrator
     ctx.nested_rfecv_result = nested_rfecv_result
+    ctx.oof_importance_df = oof_importance_df
     ctx.final_selected_proteins = final_selected_proteins
     ctx.cv_elapsed_sec = elapsed_sec
 

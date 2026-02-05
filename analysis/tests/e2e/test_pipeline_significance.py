@@ -283,7 +283,7 @@ class TestE2EPermutationTest:
 
         runner = CliRunner()
 
-        # Generate splits and train
+        # Generate splits with validation set (required for permutation testing)
         runner.invoke(
             cli,
             [
@@ -292,8 +292,14 @@ class TestE2EPermutationTest:
                 str(significance_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "1",
+                "--val-size",
+                "0.25",
+                "--test-size",
+                "0.25",
                 "--seed-start",
                 "42",
             ],
@@ -559,7 +565,7 @@ class TestE2EDropColumnValidation:
 
         runner = CliRunner()
 
-        # Generate splits
+        # Generate splits with validation set
         runner.invoke(
             cli,
             [
@@ -568,8 +574,14 @@ class TestE2EDropColumnValidation:
                 str(significance_proteomics_data),
                 "--outdir",
                 str(splits_dir),
+                "--scenarios",
+                "IncidentOnly",
                 "--n-splits",
                 "2",
+                "--val-size",
+                "0.25",
+                "--test-size",
+                "0.25",
                 "--seed-start",
                 "42",
             ],
@@ -658,7 +670,11 @@ class TestPermutationTestEdgeCases:
         )
 
         assert result.exit_code != 0
-        assert "not found" in result.output.lower() or "error" in result.output.lower()
+        # Error can be in output or exception message
+        error_text = result.output.lower()
+        if result.exception:
+            error_text += str(result.exception).lower()
+        assert "not found" in error_text or "error" in error_text
 
     def test_permutation_test_invalid_model(
         self, significance_proteomics_data, importance_enabled_config, tmp_path
@@ -795,4 +811,8 @@ class TestPermutationTestEdgeCases:
         )
 
         assert result.exit_code != 0
-        assert "auroc" in result.output.lower() or "not supported" in result.output.lower()
+        # Error can be in output or exception message
+        error_text = result.output.lower()
+        if result.exception:
+            error_text += str(result.exception).lower()
+        assert "auroc" in error_text or "not supported" in error_text

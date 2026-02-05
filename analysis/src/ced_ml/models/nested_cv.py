@@ -283,9 +283,24 @@ def oof_predictions_with_nested_cv(
             from ced_ml.features.importance import extract_importance_from_model
 
             try:
-                # Extract builtin importance (coef/gini)
+                # Use grouped (cluster-aware) importance to handle correlated features
+                # Trees: OOF grouped permutation importance on held-out fold
+                # Linear: Standardized |coef| aggregated by correlation clusters
+                oof_grouped = getattr(config.features, "oof_importance_grouped", True)
+                oof_corr_threshold = getattr(config.features, "oof_corr_threshold", 0.85)
+
+                # Prepare validation data for grouped permutation importance (trees)
+                X_val_fold = X.iloc[test_idx][protein_cols] if oof_grouped else None
+                y_val_fold = y[test_idx] if oof_grouped else None
+
                 fold_importance = extract_importance_from_model(
-                    fitted_model, model_name, protein_cols
+                    fitted_model,
+                    model_name,
+                    protein_cols,
+                    X_val=X_val_fold,
+                    y_val=y_val_fold,
+                    grouped=oof_grouped,
+                    corr_threshold=oof_corr_threshold,
                 )
                 if not fold_importance.empty:
                     fold_importance["repeat"] = repeat_num

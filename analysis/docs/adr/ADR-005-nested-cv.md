@@ -1,4 +1,4 @@
-# ADR-006: Nested CV (5×10×5)
+# ADR-005: Nested CV (5×10×5)
 
 **Status:** Accepted | **Date:** 2026-01-20
 
@@ -17,6 +17,19 @@
 - Inner CV tunes hyperparameters independently per outer fold
 - Prevents optimistic bias in hyperparameter selection
 - 50 outer folds provide robust OOF estimates
+
+## Inner Fold Positive Balance
+
+**Constraint:** Each inner CV fold must contain sufficient positive samples for stable tuning.
+
+**Logic:** With 5 inner folds, the minority class needs ~10+ samples per inner validation fold:
+- Outer train fold: ~80% of data → ~118 cases (at 0.34% prevalence)
+- Inner 5-fold split: each inner val fold → ~24 cases
+- StratifiedKFold preserves class proportions across inner folds
+
+**Safeguard:** If inner folds would have <2 positives per fold, reduce inner_folds dynamically (used in calibration CV). For hyperparameter search, 5 folds is safe given expected case counts.
+
+**Code:** [nested_cv.py:636](../src/ced_ml/models/nested_cv.py#L636) - `StratifiedKFold(n_splits=inner_folds, ...)`
 
 ## Alternatives
 
@@ -44,6 +57,4 @@
 
 ## Related
 
-- Supports: ADR-004 (provides CV folds for stability)
-- Supports: ADR-005 (50 folds for stability extraction)
-- Depends: ADR-007 (AUROC as optimization metric)
+- Supports: ADR-004 (provides CV folds for Stage 2 evidence)

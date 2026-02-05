@@ -1,4 +1,4 @@
-# ADR-009: OOF Stacking Ensemble
+# ADR-007: OOF Stacking Ensemble
 
 **Status:** Accepted | **Date:** 2026-01-22
 
@@ -27,24 +27,6 @@ Calibrated Ensemble Probability
 - Reuses existing OOF predictions from nested CV
 - Interpretable meta-learner weights
 
-## Alternatives
-
-| Alternative | Rejected Because |
-|-------------|------------------|
-| Simple averaging | No learned weighting |
-| Train meta on in-fold predictions | Information leakage |
-| Separate holdout for meta | Reduces base model training data |
-| Blending (single holdout) | Less efficient than OOF |
-
-## Consequences
-
-| Positive | Negative |
-|----------|----------|
-| Improved discrimination vs single models | Requires same splits across models |
-| No information leakage | Additional pipeline complexity |
-| Interpretable weights | Meta-learner tuning overhead |
-| Reuses existing OOF predictions | Harder to explain vs single model |
-
 ## Evidence
 
 **Code:** [stacking.py:61-160](../../src/ced_ml/models/stacking.py#L61-L160) - `StackingEnsemble`
@@ -55,6 +37,5 @@ Calibrated Ensemble Probability
 
 ## Related
 
-- Depends: ADR-006 (nested CV provides OOF predictions)
-- Depends: ADR-010 (prevalence adjustment for calibration)
-- Related: ADR-008 (Optuna optimizes base models)
+- Depends: ADR-005 (nested CV provides OOF predictions)
+- Related: ADR-006 (Optuna optimizes base models)

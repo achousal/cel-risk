@@ -1,4 +1,4 @@
-# ADR-014: OOF Posthoc Calibration
+# ADR-008: OOF Posthoc Calibration
 
 **Status:** Accepted | **Date:** 2026-01-22
 
@@ -46,7 +46,6 @@
 | Higher stability (single calibrator) | Additional pipeline complexity |
 | Full data efficiency | Worse calibration for well-calibrated base models |
 | Per-model flexibility | |
-| Backward compatible | |
 
 ## Evidence
 
@@ -57,5 +56,4 @@
 
 ## Related
 
-- Depends: ADR-006 (provides OOF predictions)
-- Complements: ADR-010 (prevalence adjustment after calibration)
+- Depends: ADR-005 (provides OOF predictions)
