@@ -22,7 +22,7 @@ repos:
 
   # Python linting (must run before black so import sorting sticks)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.14
+    rev: v0.14.13
     hooks:
       - id: ruff
         args: [--fix]
@@ -30,7 +30,7 @@ repos:
 
   # Python formatting
   - repo: https://github.com/psf/black
-    rev: 24.1.1
+    rev: 26.1.0
     hooks:
       - id: black
         language_version: python3.11
