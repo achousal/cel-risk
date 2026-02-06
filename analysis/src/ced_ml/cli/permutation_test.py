@@ -216,6 +216,69 @@ def run_permutation_test_cli(
 
             continue  # Skip to next model
 
+        # Check for per-seed null distribution CSVs (produced by full-command
+        # HPC mode where each job runs all permutations for one seed).
+        # These have the same schema as perm_*.joblib aggregation output.
+        null_csv_files = (
+            sorted(sig_dir.glob("null_distribution_seed*.csv")) if sig_dir.exists() else []
+        )
+        if null_csv_files and perm_index is None:
+            logger.info(
+                f"Found {len(null_csv_files)} per-seed null distribution CSVs "
+                f"- aggregating across seeds"
+            )
+
+            dfs = []
+            for csv_file in null_csv_files:
+                try:
+                    df_seed = pd.read_csv(csv_file)
+                    dfs.append(df_seed)
+                except Exception as e:
+                    logger.warning(f"Failed to load {csv_file.name}: {e}")
+
+            if dfs:
+                df_combined = pd.concat(dfs, ignore_index=True)
+
+                val_metrics_file = (
+                    run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
+                )
+                if val_metrics_file.exists():
+                    val_df = pd.read_csv(val_metrics_file)
+                    if "auroc" in val_df.columns:
+                        df_combined["observed_auroc"] = float(val_df["auroc"].iloc[0])
+
+                result = pool_null_distribution(df_combined, model=model_name, alpha=0.05)
+
+                agg_df = pd.DataFrame(
+                    [
+                        {
+                            "model": result.model,
+                            "observed_auroc": result.observed_auroc,
+                            "empirical_p_value": result.empirical_p_value,
+                            "n_seeds": result.n_seeds,
+                            "n_perms_total": result.n_perms_total,
+                            "significant": result.significant,
+                            "alpha": result.alpha,
+                            **result.summary_stats(),
+                        }
+                    ]
+                )
+                agg_path = sig_dir / "aggregated_significance.csv"
+                agg_df.to_csv(agg_path, index=False)
+
+                print(f"\n{'='*60}")
+                print(f"Aggregated Per-Seed Permutation Results: {model_name}")
+                print(f"{'='*60}")
+                print(f"Seeds aggregated: {result.n_seeds}")
+                print(f"Permutations aggregated: {result.n_perms_total}")
+                print(f"Observed AUROC: {result.observed_auroc:.4f}")
+                print(f"Empirical p-value: {result.empirical_p_value:.4f}")
+                print(f"Significant (alpha=0.05): {result.significant}")
+                print(f"Saved to: {agg_path}")
+                print(f"{'='*60}\n")
+
+                continue  # Skip to next model
+
         # Load first seed's model bundle to get column metadata and scenario
         first_model_path = find_trained_model_path(run_id, model_name, split_seeds[0])
         first_bundle = joblib.load(first_model_path)
