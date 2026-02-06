@@ -397,3 +397,41 @@ results/ENSEMBLE/run_{run_id}/splits/split_seed{N}/
     val_preds__ENSEMBLE.csv       # VAL predictions
     train_oof__ENSEMBLE.csv       # OOF predictions
 ```
+
+---
+
+## 7. Log Artifacts
+
+All CLI commands produce structured log files under `logs/` at the project root. Each command writes to a dedicated subdirectory organized by run ID.
+
+### 7.1 Directory Structure
+
+```
+logs/
+  training/run_{ID}/              # Model training logs
+    {model}_seed{N}.log           # Per-model per-seed training log
+  ensemble/run_{ID}/              # Ensemble meta-learner training logs
+    ENSEMBLE_seed{N}.log          # Per-seed ensemble log
+  aggregation/run_{ID}/           # Cross-split aggregation logs
+    {model}.log                   # Per-model aggregation log
+  optimization/run_{ID}/          # Panel optimization (RFE) logs
+    {model}_seed{N}.log           # Per-model per-seed optimization log
+  permutation/run_{ID}/            # Permutation significance testing logs
+    perm_{model}_seed{N}.log      # Permutation test log (per model per seed)
+  consensus/run_{ID}/             # Cross-model consensus logs
+    consensus.log                 # RRA consensus panel log
+  pipeline/                       # Pipeline orchestration logs
+    run_{ID}.log                  # Full pipeline run log
+```
+
+### 7.2 Log Format
+
+All log files use a consistent format:
+
+```
+[YYYY-MM-DD HH:MM:SS] LEVEL - message
+```
+
+### 7.3 HPC Logs
+
+When running on HPC via LSF, job stderr is captured to `{job_name}.{JOB_ID}.err` in the HPC logs directory. These `.err` files are automatically removed on successful job completion (warnings-only content is not actionable; real errors cause non-zero exit). Job stdout is redirected to `/dev/null` because `ced` commands write their own structured log files.

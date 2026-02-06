@@ -11,7 +11,7 @@ cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended f
 step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # Per-k Hyperparameter Re-tuning
-retune_trials: 80            # Optuna trials per evaluation point
+retune_trials: 200            # Optuna trials per evaluation point
 retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # Correlation-Aware Pruning

@@ -133,6 +133,7 @@ def auto_log_path(
           ensemble/run_{ID}/ENSEMBLE_seed{N}.log
           aggregation/run_{ID}/{model}.log
           optimization/run_{ID}/{model}.log
+          permutation/run_{ID}/perm_{model}_seed{N}.log
           consensus/run_{ID}/consensus.log
           pipeline/run_{ID}.log
 
@@ -185,6 +186,11 @@ def auto_log_path(
         model_part = model or "all"
         seed_part = f"_seed{split_seed}" if split_seed is not None else ""
         return logs_root / "optimization" / f"run_{rid}" / f"{model_part}{seed_part}.log"
+
+    if command == "permutation-test":
+        model_part = model or "all"
+        seed_part = f"_seed{split_seed}" if split_seed is not None else ""
+        return logs_root / "permutation" / f"run_{rid}" / f"perm_{model_part}{seed_part}.log"
 
     if command == "consensus-panel":
         return logs_root / "consensus" / f"run_{rid}" / "consensus.log"

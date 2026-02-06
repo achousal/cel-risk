@@ -139,7 +139,8 @@ def build_job_script(
     Note:
         Job output is redirected to /dev/null because ced commands create
         their own log files in logs/training/, logs/ensemble/, etc.
-        Only stderr is captured to {job_name}.%J.err for LSF errors.
+        Stderr is captured to {job_name}.%J.err but removed on success
+        (warnings-only content is not actionable; real errors cause non-zero exit).
     """
     log_err = log_dir / f"{job_name}.%J.err"
 
@@ -167,11 +168,11 @@ export FORCE_COLOR=1
 
 {command}
 
-# Clean up empty .err log if job succeeded
+# Clean up .err log if job succeeded (warnings-only content is not actionable)
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ] && [ -n "${{LSB_JOBID:-}}" ]; then
     ERR_LOG="{log_dir}/{job_name}.${{LSB_JOBID}}.err"
-    if [ -f "$ERR_LOG" ] && [ ! -s "$ERR_LOG" ]; then
+    if [ -f "$ERR_LOG" ]; then
         rm -f "$ERR_LOG"
     fi
 fi
