@@ -43,7 +43,10 @@ logger = logging.getLogger(__name__)
 
 
 def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
-    """Load aggregated significance results for all models in a run.
+    """Load pre-computed aggregated significance results for all models in a run.
+
+    Expects aggregated_significance.csv files produced by the permutation
+    aggregation step (``ced permutation-test --run-id <ID> --model <MODEL>``).
 
     Args:
         run_dir: Path to run directory (results/run_{ID}/)
@@ -53,6 +56,11 @@ def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
     """
     sig_files = list(run_dir.glob("*/significance/aggregated_significance.csv"))
     if not sig_files:
+        logger.warning(
+            "No aggregated_significance.csv found in %s. "
+            "Run 'ced permutation-test --run-id <ID> --model <MODEL>' to produce it.",
+            run_dir,
+        )
         return None
 
     dfs = []
@@ -60,17 +68,15 @@ def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
         try:
             df = pd.read_csv(f)
             if "model" not in df.columns:
-                # Extract model name from path
                 model_name = f.parent.parent.name
                 df["model"] = model_name
             dfs.append(df)
         except Exception as e:
-            logger.warning(f"Failed to load {f}: {e}")
+            logger.warning("Failed to load %s: %s", f, e)
 
-    if not dfs:
-        return None
-
-    return pd.concat(dfs, ignore_index=True)
+    if dfs:
+        return pd.concat(dfs, ignore_index=True)
+    return None
 
 
 def _extract_model_name_from_aggregated_path(results_path: Path) -> str:

@@ -636,8 +636,12 @@ def submit_hpc_pipeline(
             model_perm_jobs = perm_names_by_model[model]
 
             if model_perm_jobs:
-                # Depend on all permutation jobs for this model completing
-                agg_dependency = " && ".join(f"done({name})" for name in model_perm_jobs)
+                # Depend on all permutation jobs for this model AND post-processing.
+                # Post-processing produces pooled_val_metrics.csv which provides the
+                # observed AUROC needed for computing empirical p-values.
+                agg_deps = [f"done({name})" for name in model_perm_jobs]
+                agg_deps.append(f"done({post_job_name})")
+                agg_dependency = " && ".join(agg_deps)
 
                 agg_command = _build_permutation_aggregation_command(
                     run_id=run_id,
