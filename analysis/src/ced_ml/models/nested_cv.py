@@ -265,6 +265,7 @@ def oof_predictions_with_nested_cv(
             config,
             X.iloc[train_idx],
             y[train_idx],
+            random_state,
         )
 
         # Extract selected proteins from this fold (initial feature selection)
@@ -389,7 +390,15 @@ def oof_predictions_with_nested_cv(
                 y_train_rfecv = y[train_idx]
 
                 # Clone the pipeline and retrain on RFECV features
-                pipeline_rfecv = clone(search.best_estimator_)
+                # Use best_estimator_ if available, otherwise use fitted_model
+                if search is not None and hasattr(search, "best_estimator_"):
+                    pipeline_rfecv = clone(search.best_estimator_)
+                else:
+                    logger.info(
+                        f"Fold {split_idx}: No tuned estimator available (hyperparameter tuning disabled). "
+                        "Using default estimator for RFECV retraining."
+                    )
+                    pipeline_rfecv = clone(fitted_model)
 
                 # Update screener's protein_cols to match RFECV-selected proteins
                 # (the original screener expects all protein_cols, but X_train_rfecv
@@ -404,7 +413,7 @@ def oof_predictions_with_nested_cv(
 
                 # Apply calibration if needed
                 fitted_model = _apply_per_fold_calibration(
-                    pipeline_rfecv, model_name, config, X_train_rfecv, y_train_rfecv
+                    pipeline_rfecv, model_name, config, X_train_rfecv, y_train_rfecv, random_state
                 )
 
                 logger.info(
@@ -496,6 +505,17 @@ def oof_predictions_with_nested_cv(
         oof_calibrator = OOFCalibrator(method=config.calibration.method)
         oof_calibrator.fit(mean_oof_preds, y)
         logger.info("OOF calibrator fitted successfully")
+        logger.warning(
+            "OOF calibration metrics (Brier, ECE) are in-sample and may be optimistically biased. "
+            "Use holdout/test metrics for unbiased evaluation."
+        )
+
+        # 1.7-M1: Warn about potential double calibration when used in ensemble
+        logger.warning(
+            f"Model {model_name} uses oof_posthoc calibration. If this model is used in a "
+            "stacking ensemble with meta-learner calibration enabled, double calibration will occur. "
+            "Consider disabling either base model calibration or meta-learner calibration."
+        )
 
         # Apply calibration to OOF predictions for consistent reporting
         for r in range(n_repeats):
@@ -594,7 +614,12 @@ def _scoring_to_direction(scoring: str) -> str:
     if scoring in maximize_metrics or scoring.startswith("neg_"):
         return "maximize"
 
-    return "maximize"  # Default to maximize for unknown metrics
+    # Unknown metric: log warning and default to maximize
+    logger.warning(
+        f"Unknown metric '{scoring}' for direction inference. Defaulting to 'maximize'. "
+        "If this is incorrect, set optuna.direction explicitly in config."
+    )
+    return "maximize"
 
 
 def _build_hyperparameter_search(
@@ -762,6 +787,7 @@ def _apply_per_fold_calibration(
     config: TrainingConfig,
     X_train: pd.DataFrame,
     y_train: np.ndarray,
+    random_state: int = 42,
 ):
     """
     Apply optional post-hoc probability calibration (per-fold strategy only).
@@ -783,6 +809,7 @@ def _apply_per_fold_calibration(
         config: TrainingConfiguration object
         X_train: Training features (for calibration CV)
         y_train: Training labels (for calibration CV)
+        random_state: Random seed for calibration CV splitter
 
     Returns:
         Calibrated or original estimator
@@ -813,13 +840,33 @@ def _apply_per_fold_calibration(
     max_safe_cv = max(2, min_class_count)
     effective_cv = min(config.calibration.cv, max_safe_cv)
 
-    # Wrap with calibration
-    calibrated = CalibratedClassifierCV(
-        estimator=estimator, method=config.calibration.method, cv=effective_cv
+    # Check if estimator is already fitted (has best_estimator_ or similar)
+    # If so, use cv="prefit" to avoid re-fitting from scratch
+    is_tuned = hasattr(estimator, "best_estimator_") or (
+        isinstance(estimator, Pipeline)
+        and all(
+            hasattr(step, "coef_")
+            or hasattr(step, "feature_importances_")
+            or hasattr(step, "is_fitted")
+            for _, step in estimator.steps
+            if hasattr(step, "fit")
+        )
     )
 
-    # Fit on training fold
-    calibrated.fit(X_train, y_train)
+    if is_tuned:
+        # Estimator is already fitted; use cv="prefit" to calibrate without re-fitting
+        calibrated = CalibratedClassifierCV(
+            estimator=estimator, method=config.calibration.method, cv="prefit"
+        )
+        calibrated.fit(X_train, y_train)
+    else:
+        # Estimator not fitted; use internal CV with deterministic splitter
+        inner_cv = StratifiedKFold(n_splits=effective_cv, shuffle=True, random_state=random_state)
+        calibrated = CalibratedClassifierCV(
+            estimator=estimator, method=config.calibration.method, cv=inner_cv
+        )
+        calibrated.fit(X_train, y_train)
+
     return calibrated
 
 
@@ -835,7 +882,14 @@ def _get_model_feature_count(fitted_model) -> int:
     """
     # Unwrap CalibratedClassifierCV if needed
     if isinstance(fitted_model, CalibratedClassifierCV):
-        if hasattr(fitted_model, "estimator"):
+        # Try to get the underlying fitted estimator
+        if (
+            hasattr(fitted_model, "calibrated_classifiers_")
+            and fitted_model.calibrated_classifiers_
+        ):
+            # Get first calibrated classifier's estimator
+            model = fitted_model.calibrated_classifiers_[0].estimator
+        elif hasattr(fitted_model, "estimator"):
             model = fitted_model.estimator
         else:
             model = getattr(fitted_model, "base_estimator", fitted_model)

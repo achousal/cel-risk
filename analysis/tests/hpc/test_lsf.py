@@ -158,8 +158,8 @@ def test_build_job_script_log_paths():
     # No more .live.log files - ced commands create their own logs
     assert ".live.log" not in script
     assert "tee" not in script
-    # Verify cleanup logic removes .err on success (warnings are not actionable)
-    assert "EXIT_CODE=$?" in script
+    # Verify trap-based cleanup removes .err on success (warnings are not actionable)
+    assert "trap cleanup_err EXIT" in script
     assert "rm -f" in script
 
 

@@ -360,6 +360,13 @@ def save_ensemble_artifacts(
 
         oof_path = preds_dir / "train_oof__ENSEMBLE.csv"
         oof_df.to_csv(oof_path, index=False)
+        # 1.7-M4: Warn that these are in-sample predictions, not genuine OOF
+        logger.warning(
+            "train_oof__ENSEMBLE.csv contains in-sample meta-learner predictions, "
+            "not genuine out-of-fold ensemble predictions. These predictions are from "
+            "the meta-learner trained on the same data and should NOT be used for "
+            "performance evaluation."
+        )
         logger.info(f"OOF predictions saved: {oof_path}")
 
 

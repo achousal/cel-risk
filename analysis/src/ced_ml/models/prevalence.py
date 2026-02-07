@@ -292,4 +292,12 @@ class PrevalenceAdjustedModel(BaseEstimator):
         Returns:
             Attribute value from base model
         """
+        # Guard against infinite recursion during unpickling
+        if name.startswith("_") or name in (
+            "base_model",
+            "sample_prevalence",
+            "target_prevalence",
+            "classes_",
+        ):
+            raise AttributeError(name)
         return getattr(self.base_model, name)

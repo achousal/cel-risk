@@ -184,6 +184,12 @@ def run_permutation_test_cli(
                 val_df = pd.read_csv(val_metrics_file)
                 if "auroc" in val_df.columns:
                     df_hpc["observed_auroc"] = float(val_df["auroc"].iloc[0])
+            else:
+                logger.warning(
+                    f"Observed AUROC file not found: {val_metrics_file}\n"
+                    f"Run 'ced aggregate-splits --run-id {run_id}' first to "
+                    f"produce pooled_val_metrics.csv."
+                )
 
             result = pool_null_distribution(df_hpc, model=model_name, alpha=0.05)
 
@@ -246,6 +252,12 @@ def run_permutation_test_cli(
                     val_df = pd.read_csv(val_metrics_file)
                     if "auroc" in val_df.columns:
                         df_combined["observed_auroc"] = float(val_df["auroc"].iloc[0])
+                else:
+                    logger.warning(
+                        f"Observed AUROC file not found: {val_metrics_file}\n"
+                        f"Run 'ced aggregate-splits --run-id {run_id}' first to "
+                        f"produce pooled_val_metrics.csv."
+                    )
 
                 result = pool_null_distribution(df_combined, model=model_name, alpha=0.05)
 

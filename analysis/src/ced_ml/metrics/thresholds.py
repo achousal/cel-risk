@@ -209,8 +209,32 @@ def threshold_youden(y_true: np.ndarray, p: np.ndarray) -> float:
     J = tpr - fpr
     if thr.size == 0:
         return 0.5
-    i = int(np.nanargmax(J))
-    th = float(thr[i])
+
+    # Find all indices with the maximum J value (plateau detection)
+    max_J = np.nanmax(J)
+    optimal_indices = np.where(np.abs(J - max_J) < 1e-10)[0]
+
+    if len(optimal_indices) > 1:
+        # Multiple thresholds achieve same optimal J - use midpoint of plateau
+        first_idx = optimal_indices[0]
+        last_idx = optimal_indices[-1]
+        th = float((thr[first_idx] + thr[last_idx]) / 2.0)
+        plateau_width = thr[last_idx] - thr[first_idx]
+        logger.debug(
+            "Youden's J plateau detected: %d thresholds with J=%.4f. "
+            "Using midpoint threshold=%.6f (range: [%.6f, %.6f], width=%.6f)",
+            len(optimal_indices),
+            max_J,
+            th,
+            thr[first_idx],
+            thr[last_idx],
+            plateau_width,
+        )
+    else:
+        # Single optimal threshold
+        i = int(optimal_indices[0])
+        th = float(thr[i])
+
     if not np.isfinite(th):
         th = 0.5
     return th
@@ -255,12 +279,23 @@ def threshold_for_specificity(
     if np.any(ok):
         j = int(np.argmax(tpr[ok]))
         th = thr[ok][j]
+        achieved_spec = spec[ok][j]
+        deviation = abs(achieved_spec - target_spec)
+        logger.debug(
+            f"Target specificity {target_spec:.3f} achieved: {achieved_spec:.3f} (deviation={deviation:.4f}, threshold={th:.6f})"
+        )
+        if deviation > 0.02:
+            logger.warning(
+                f"Achieved specificity {achieved_spec:.3f} deviates from target {target_spec:.3f} by {deviation:.3f}. "
+                f"Threshold set to {th:.6f}."
+            )
     else:
         j = int(np.argmin(np.abs(spec - target_spec)))
         th = thr[j]
+        achieved_spec = spec[j]
         logger.warning(
             f"Target specificity {target_spec:.3f} unattainable. "
-            f"Using closest achievable specificity {spec[j]:.3f} instead. "
+            f"Using closest achievable specificity {achieved_spec:.3f} instead. "
             f"Threshold set to {th:.6f}."
         )
     if not np.isfinite(th):
@@ -399,10 +434,31 @@ def binary_metrics_at_threshold(y_true: np.ndarray, p: np.ndarray, thr: float) -
     p = np.asarray(p).astype(float)
     y_hat = (p >= thr).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, y_hat, labels=[0, 1]).ravel()
+
+    # Check for degenerate state (no positive predictions)
+    if (tp + fp) == 0:
+        logger.warning(
+            "binary_metrics_at_threshold: no positive predictions at threshold=%.6f. "
+            "Precision, recall, and F1 are degenerate (set to 0). "
+            "Consider lowering threshold or checking model calibration.",
+            thr,
+        )
+
     prec = precision_score(y_true, y_hat, zero_division=0)
     rec = recall_score(y_true, y_hat, zero_division=0)
     f1 = f1_score(y_true, y_hat, zero_division=0)
-    spec = (tn / (tn + fp)) if (tn + fp) > 0 else np.nan
+
+    # Check for undefined specificity (no negative samples)
+    if (tn + fp) == 0:
+        logger.warning(
+            "binary_metrics_at_threshold: TN+FP=0 at threshold=%.6f. "
+            "Specificity is undefined (returning NaN). Dataset may contain only positive samples.",
+            thr,
+        )
+        spec = np.nan
+    else:
+        spec = tn / (tn + fp)
+
     fpr = 1.0 - spec if not np.isnan(spec) else np.nan
     return BinaryMetrics(
         threshold=float(thr),
@@ -610,6 +666,11 @@ def compute_multi_target_specificity_metrics(
     """
     # Single-class guard: Skip if only one unique label
     if len(np.unique(y_true)) < 2:
+        logger.warning(
+            "compute_multi_target_specificity_metrics: single-class input detected. "
+            "Cannot compute specificity metrics. Returning empty dict. "
+            "Callers should handle empty dict to avoid KeyError."
+        )
         return {}
 
     metrics = {}

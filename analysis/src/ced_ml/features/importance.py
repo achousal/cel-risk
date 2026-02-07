@@ -582,6 +582,11 @@ def extract_importance_from_model(
 
         # Build feature clusters
         if X_val is not None:
+            logger.warning(
+                "Grouped importance is clustering features using validation data. "
+                "This may introduce information from the validation set into feature grouping. "
+                "For stricter data hygiene, consider clustering on training data instead."
+            )
             clusters = cluster_features_by_correlation(
                 X=X_val,
                 feature_names=list(feature_names),

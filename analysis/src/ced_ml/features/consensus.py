@@ -314,8 +314,9 @@ def robust_rank_aggregate(
                 rank = float(protein_row["final_rank"].iloc[0])
                 ranks_present_only.append(rank)
             else:
-                # Missing protein gets worst rank + 1 (penalty)
-                rank = max_ranks[model_name] + 1
+                # Missing protein gets global worst rank + 1 (penalty)
+                # Use global max rank to ensure consistent penalty across models
+                rank = max(max_ranks.values()) + 1
 
             row[f"{model_name}_rank"] = rank
             ranks.append(rank)
@@ -343,6 +344,7 @@ def robust_rank_aggregate(
         row["rank_std"] = rank_std
         row["rank_cv"] = rank_cv
         row["agreement_strength"] = n_present / n_models
+        row["presence_fraction"] = n_present / n_models
 
         # Compute consensus score based on method
         if method == "geometric_mean":
@@ -379,11 +381,27 @@ def robust_rank_aggregate(
         "consensus_rank",
         "n_models_present",
         "agreement_strength",
+        "presence_fraction",
         "rank_std",
         "rank_cv",
     ]
     col_order += [f"{m}_rank" for m in model_names]
     result = result[col_order]
+
+    # Log warning for proteins with low presence but appearing in top results
+    if not result.empty:
+        low_presence_threshold = 0.5
+        top_k = min(50, len(result))
+        top_proteins = result.head(top_k)
+        low_presence_proteins = top_proteins[
+            top_proteins["presence_fraction"] < low_presence_threshold
+        ]
+        if len(low_presence_proteins) > 0:
+            logger.warning(
+                f"Found {len(low_presence_proteins)} proteins in top {top_k} with presence_fraction < {low_presence_threshold}. "
+                "These proteins may have falsely low rank_std/rank_cv due to missing from most models. "
+                "Consider filtering by presence_fraction >= 0.5 for more robust consensus."
+            )
 
     return result
 
@@ -411,7 +429,16 @@ def cluster_and_select_representatives(
         Tuple of:
             - DataFrame with cluster assignments and pruning info
             - List of kept representative proteins (sorted by consensus score)
+
+    Important:
+        Correlation matrix for clustering should be computed on training data only.
+        Ensure df_train does not include validation or test samples to avoid
+        information leakage into feature grouping.
     """
+    logger.warning(
+        "Correlation matrix for clustering should be computed on training data only. "
+        "Ensure df_train does not include validation or test samples."
+    )
     # Filter to valid proteins
     valid_proteins = [p for p in proteins if p in df_train.columns]
     if not valid_proteins:

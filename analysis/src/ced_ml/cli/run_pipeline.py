@@ -448,6 +448,7 @@ def _run_hpc_mode(
     )
 
     # Load permutation config to override parameters if enabled
+    permutation_split_seeds: list[int] | None = None
     if enable_permutation_test:
         from ced_ml.config.loader import load_permutation_config
 
@@ -455,8 +456,16 @@ def _run_hpc_mode(
             perm_config = load_permutation_config()
             permutation_n_perms = perm_config.n_perms
             permutation_n_jobs = perm_config.n_jobs
+            permutation_split_seeds = list(
+                range(
+                    perm_config.split_seed_start,
+                    perm_config.split_seed_start + perm_config.n_split_seeds,
+                )
+            )
             hpc_logger.info(
-                f"Loaded permutation config: n_perms={permutation_n_perms}, n_jobs={permutation_n_jobs}"
+                f"Loaded permutation config: n_perms={permutation_n_perms}, "
+                f"n_jobs={permutation_n_jobs}, "
+                f"split_seeds={permutation_split_seeds[0]}..{permutation_split_seeds[-1]}"
             )
         except Exception as e:
             hpc_logger.warning(f"Could not load permutation config, using parameters: {e}")
@@ -495,6 +504,7 @@ def _run_hpc_mode(
         enable_permutation_test=enable_permutation_test,
         permutation_n_perms=permutation_n_perms,
         permutation_n_jobs=permutation_n_jobs,
+        permutation_split_seeds=permutation_split_seeds,
         hpc_config=hpc_config,
         logs_dir=logs_dir,
         dry_run=dry_run,

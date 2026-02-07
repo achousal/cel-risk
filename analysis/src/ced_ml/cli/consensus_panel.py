@@ -60,6 +60,38 @@ from ced_ml.features.drop_column import (
 logger = logging.getLogger(__name__)
 
 
+def _extract_bundle_metadata(model_path: Path) -> dict:
+    """Extract only metadata keys from a model bundle without full deserialization.
+
+    When the training and loading environments differ (e.g. pandas version
+    mismatch causing StringDtype pickle errors), the sklearn pipeline inside
+    the bundle cannot be unpickled.  This function uses pickle's Unpickler
+    with a permissive class loader so that unresolvable objects are replaced
+    by stubs, allowing the top-level dict and its lightweight values
+    (``resolved_columns``, ``scenario``) to be recovered.
+    """
+    import io
+    import pickle
+
+    class _StubUnpickler(pickle.Unpickler):
+        """Unpickler that replaces unresolvable classes with a placeholder."""
+
+        def find_class(self, module: str, name: str):
+            try:
+                return super().find_class(module, name)
+            except Exception:
+                # Return a no-op callable that absorbs any constructor args
+                return lambda *a, **kw: None
+
+    with open(model_path, "rb") as fh:
+        raw = fh.read()
+
+    bundle = _StubUnpickler(io.BytesIO(raw)).load()
+    if not isinstance(bundle, dict):
+        raise ValueError(f"Metadata-only extraction failed: expected dict, got {type(bundle)}")
+    return bundle
+
+
 def load_aggregated_significance(run_dir: Path) -> pd.DataFrame | None:
     """Load aggregated significance results for all models in a run.
 
@@ -400,14 +432,22 @@ def run_consensus_panel(
     representative_split = split_dirs[0]
     representative_seed = int(representative_split.name.replace("split_seed", ""))
 
-    # Load model bundle for metadata
+    # Load model bundle for metadata (only need resolved_columns + scenario)
     model_path = representative_split / "core" / f"{first_model}__final_model.joblib"
     if not model_path.exists():
         raise FileNotFoundError(f"Model bundle not found: {model_path}")
 
     import joblib
 
-    bundle = joblib.load(model_path)
+    try:
+        bundle = joblib.load(model_path)
+    except TypeError as exc:
+        # Pickle deserialization can fail when pandas versions differ between
+        # the environment that trained the model and the one loading it
+        # (e.g. StringDtype signature changes).  We only need two lightweight
+        # metadata keys, so attempt a selective unpickle.
+        logger.warning(f"Full bundle load failed ({exc}); attempting metadata-only extraction")
+        bundle = _extract_bundle_metadata(model_path)
 
     if not isinstance(bundle, dict):
         raise ValueError("Model bundle must be a dictionary")

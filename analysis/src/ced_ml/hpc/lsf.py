@@ -28,6 +28,24 @@ from ced_ml.config.schema import HPCConfig
 logger = logging.getLogger(__name__)
 
 
+def validate_identifier(value: str, name: str = "identifier") -> None:
+    """Validate that a string is safe for shell interpolation.
+
+    Args:
+        value: String to validate
+        name: Name of the parameter (for error messages)
+
+    Raises:
+        ValueError: If value contains unsafe characters
+    """
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", value):
+        raise ValueError(
+            f"Invalid {name}: '{value}'\n"
+            f"Must contain only alphanumeric characters, underscores, hyphens, and dots.\n"
+            f"This prevents shell injection when interpolating into commands."
+        )
+
+
 @dataclass
 class EnvironmentInfo:
     """Environment detection result.
@@ -140,7 +158,8 @@ def build_job_script(
         Job output is redirected to /dev/null because ced commands create
         their own log files in logs/training/, logs/ensemble/, etc.
         Stderr is captured to {job_name}.%J.err but removed on success
-        (warnings-only content is not actionable; real errors cause non-zero exit).
+        via an EXIT trap (warnings-only content is not actionable;
+        real errors cause non-zero exit and preserve the .err file).
     """
     log_err = log_dir / f"{job_name}.%J.err"
 
@@ -164,20 +183,23 @@ set -euo pipefail
 export PYTHONUNBUFFERED=1
 export FORCE_COLOR=1
 
+# Preserve .err log on successful exit for audit trail (rename to .err.completed).
+# Using a trap ensures cleanup runs even when set -e causes an early exit.
+cleanup_err() {{
+    local rc=$?
+    if [ $rc -eq 0 ] && [ -n "${{LSB_JOBID:-}}" ]; then
+        ERR_LOG="{log_dir}/{job_name}.${{LSB_JOBID}}.err"
+        if [ -f "$ERR_LOG" ]; then
+            mv "$ERR_LOG" "${{ERR_LOG}}.completed"
+        fi
+    fi
+    exit $rc
+}}
+trap cleanup_err EXIT
+
 {env_activation}
 
 {command}
-
-# Clean up .err log if job succeeded (warnings-only content is not actionable)
-EXIT_CODE=$?
-if [ $EXIT_CODE -eq 0 ] && [ -n "${{LSB_JOBID:-}}" ]; then
-    ERR_LOG="{log_dir}/{job_name}.${{LSB_JOBID}}.err"
-    if [ -f "$ERR_LOG" ]; then
-        rm -f "$ERR_LOG"
-    fi
-fi
-
-exit $EXIT_CODE
 """
     return script
 
@@ -241,6 +263,9 @@ def _build_training_command(
     Post-processing (aggregation, ensemble, panels, consensus) handled by
     separate downstream jobs with proper dependencies.
     """
+    # Validate identifiers before interpolating into shell commands
+    validate_identifier(model, "model")
+    validate_identifier(run_id, "run_id")
     parts = [
         "ced train",
         f'--config "{config_file}"',
@@ -314,6 +339,9 @@ def _build_panel_optimization_command(
     Returns:
         A bash command string for optimizing panel size via RFE.
     """
+    # Validate identifiers before interpolating into shell commands
+    validate_identifier(run_id, "run_id")
+    validate_identifier(model, "model")
     cmd = f"ced optimize-panel --run-id {run_id} --model {model}"
     if split_seed is not None:
         cmd += f" --split-seed {split_seed}"
@@ -353,6 +381,9 @@ def _build_permutation_test_command(
     Returns:
         A bash command string that uses the job array index for --perm-index.
     """
+    # Validate identifiers before interpolating into shell commands
+    validate_identifier(run_id, "run_id")
+    validate_identifier(model, "model")
     # Support both LSF ($LSB_JOBINDEX) and Slurm ($SLURM_ARRAY_TASK_ID)
     cmd = f"""# Detect job array index (LSF or Slurm)
 if [ -n "${{LSB_JOBINDEX:-}}" ]; then
@@ -397,6 +428,9 @@ def _build_permutation_test_full_command(
     Returns:
         A bash command string for running full permutation test.
     """
+    # Validate identifiers before interpolating into shell commands
+    validate_identifier(run_id, "run_id")
+    validate_identifier(model, "model")
     cmd = f"""ced permutation-test \\
   --run-id {run_id} \\
   --model {model} \\
@@ -424,6 +458,9 @@ def _build_permutation_aggregation_command(
     Returns:
         A bash command string for aggregating permutation results.
     """
+    # Validate identifiers before interpolating into shell commands
+    validate_identifier(run_id, "run_id")
+    validate_identifier(model, "model")
     cmd = f"""echo "Aggregating permutation results for {model}..."
 ced permutation-test \\
   --run-id {run_id} \\
@@ -446,6 +483,7 @@ def submit_hpc_pipeline(
     enable_permutation_test: bool = False,
     permutation_n_perms: int = 200,
     permutation_n_jobs: int = -1,
+    permutation_split_seeds: list[int] | None = None,
     hpc_config: HPCConfig,
     logs_dir: Path,
     dry_run: bool,
@@ -582,24 +620,29 @@ def submit_hpc_pipeline(
     permutation_job_names = []
     permutation_agg_names: list[str] = []
     if enable_permutation_test:
-        n_perm_jobs = len(models) * len(split_seeds)
+        # Use dedicated permutation seeds if provided, else fall back to training seeds
+        perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
+        n_perm_jobs = len(models) * len(perm_seeds)
         pipeline_logger.info(
             f"Submitting {n_perm_jobs} permutation test jobs "
-            f"({len(models)} models x {len(split_seeds)} seeds)..."
+            f"({len(models)} models x {len(perm_seeds)} seeds, "
+            f"seeds={perm_seeds[0]}..{perm_seeds[-1]})..."
         )
 
         # Track permutation job names by model for aggregation dependencies
         perm_names_by_model: dict[str, list[str]] = {m: [] for m in models}
 
         for model in models:
-            for seed in split_seeds:
+            for seed in perm_seeds:
                 perm_job_name = f"CeD_{run_id}_perm_{model}_s{seed}"
                 permutation_job_names.append(perm_job_name)
                 perm_names_by_model[model].append(perm_job_name)
 
-                # Depend on the specific training job for this model/seed
-                training_job_name = f"CeD_{run_id}_{model}_s{seed}"
-                perm_dependency = f"done({training_job_name})"
+                # Depend on post-processing (aggregation) so observed AUROC is
+                # available and all training outputs exist.  Permutation tests
+                # train from scratch with permuted labels -- they do not need
+                # a training job for this specific seed.
+                perm_dependency = f"done({post_job_name})"
 
                 perm_command = _build_permutation_test_full_command(
                     run_id=run_id,

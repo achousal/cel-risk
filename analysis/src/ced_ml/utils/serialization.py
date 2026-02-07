@@ -14,10 +14,26 @@ logger = logging.getLogger(__name__)
 
 
 def save_joblib(obj: Any, path: str | Path, compress: int = 3):
-    """Save object using joblib."""
+    """Save object using joblib with atomic write.
+
+    Uses atomic write pattern (write to temp file, then rename) to prevent
+    corruption from concurrent HPC jobs or interrupted writes.
+    """
+    import os
+    import tempfile
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(obj, path, compress=compress)
+
+    # Atomic write: write to temp file in same directory, then rename
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=path.parent, delete=False, prefix=f".{path.name}.", suffix=".tmp"
+    ) as tmp:
+        tmp_path = tmp.name
+        joblib.dump(obj, tmp_path, compress=compress)
+
+    # Atomic rename (os.replace is atomic on POSIX)
+    os.replace(tmp_path, path)
 
 
 def load_joblib(path: str | Path, check_versions: bool = True) -> Any:
@@ -72,12 +88,26 @@ def load_joblib(path: str | Path, check_versions: bool = True) -> Any:
 
 
 def save_json(obj: Any, path: str | Path, indent: int = 2):
-    """Save object as JSON."""
+    """Save object as JSON with atomic write.
+
+    Uses atomic write pattern (write to temp file, then rename) to prevent
+    corruption from concurrent HPC jobs or interrupted writes.
+    """
+    import os
+    import tempfile
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=indent, default=str)
+    # Atomic write: write to temp file in same directory, then rename
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=path.parent, delete=False, prefix=f".{path.name}.", suffix=".tmp"
+    ) as tmp:
+        tmp_path = tmp.name
+        json.dump(obj, tmp, indent=indent, default=str)
+
+    # Atomic rename (os.replace is atomic on POSIX)
+    os.replace(tmp_path, path)
 
 
 def load_json(path: str | Path) -> Any:

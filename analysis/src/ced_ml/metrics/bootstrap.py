@@ -41,7 +41,7 @@ def stratified_bootstrap_ci(
     metric_fn: Callable,
     n_boot: int = 1000,
     seed: int = 0,
-    min_valid_frac: float = 0.1,
+    min_valid_frac: float = 0.5,
 ) -> tuple[float, float]:
     """
     Compute stratified bootstrap confidence interval for a metric.
@@ -56,7 +56,7 @@ def stratified_bootstrap_ci(
         metric_fn: Function that takes (y_true, y_pred) and returns a scalar
         n_boot: Number of bootstrap iterations (default: 1000)
         seed: Random seed for reproducibility (default: 0)
-        min_valid_frac: Minimum fraction of valid samples required (default: 0.1)
+        min_valid_frac: Minimum fraction of valid samples required (default: 0.5)
 
     Returns:
         Tuple of (lower_bound, upper_bound) for 95% CI, or (NaN, NaN) if insufficient
@@ -87,6 +87,16 @@ def stratified_bootstrap_ci(
             f"y_pred has {len(y_pred)} elements"
         )
 
+    # Guard against constant or near-zero-variance predictions
+    pred_var = np.var(y_pred)
+    if pred_var < 1e-10:
+        logger.warning(
+            "Bootstrap CI skipped: predictions have zero or near-zero variance (var=%.2e). "
+            "Bootstrap CI is meaningless for constant predictions. Returning (NaN, NaN).",
+            pred_var,
+        )
+        return (np.nan, np.nan)
+
     # Identify cases and controls
     pos = np.where(y_true == 1)[0]
     neg = np.where(y_true == 0)[0]
@@ -109,8 +119,22 @@ def stratified_bootstrap_ci(
 
     # Check minimum valid samples threshold
     min_valid = max(MIN_BOOTSTRAP_SAMPLES, int(n_boot * min_valid_frac))
+    actual_valid_frac = len(vals) / n_boot if n_boot > 0 else 0.0
     if len(vals) < min_valid:
+        logger.warning(
+            "Bootstrap CI: insufficient valid samples (%d/%d = %.1f%%). "
+            "Returning (NaN, NaN). Consider increasing n_boot or fixing metric failures.",
+            len(vals),
+            n_boot,
+            actual_valid_frac * 100,
+        )
         return (np.nan, np.nan)
+    if actual_valid_frac < 0.5:
+        logger.warning(
+            "Bootstrap CI: valid sample fraction (%.1f%%) below 50%%. "
+            "CI may be unstable for imbalanced data.",
+            actual_valid_frac * 100,
+        )
 
     # Compute 95% CI using percentile method
     return (
@@ -126,7 +150,7 @@ def stratified_bootstrap_diff_ci(
     metric_fn: Callable,
     n_boot: int = 500,
     seed: int = 0,
-    min_valid_frac: float = 0.1,
+    min_valid_frac: float = 0.5,
 ) -> tuple[float, float, float]:
     """
     Compute stratified bootstrap CI for difference between two models.
@@ -142,7 +166,7 @@ def stratified_bootstrap_diff_ci(
         metric_fn: Function that takes (y_true, y_pred) and returns a scalar
         n_boot: Number of bootstrap iterations (default: 500)
         seed: Random seed for reproducibility (default: 0)
-        min_valid_frac: Minimum fraction of valid samples required (default: 0.1)
+        min_valid_frac: Minimum fraction of valid samples required (default: 0.5)
 
     Returns:
         Tuple of (diff_full, lower_bound, upper_bound) where:

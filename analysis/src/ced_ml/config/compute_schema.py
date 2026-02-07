@@ -16,9 +16,24 @@ class HPCResourceConfig(BaseModel):
     """HPC resource allocation for a single job type."""
 
     queue: str = "medium"
-    cores: int = Field(default=4, ge=1)
-    mem_per_core: int = Field(default=4000, ge=1, description="Memory per core in MB")
-    walltime: str = Field(default="24:00", description="Wall time limit as HH:MM")
+    cores: int = Field(default=4, ge=1, le=128, description="Number of CPU cores (max 128)")
+    mem_per_core: int = Field(
+        default=4000, ge=1, le=65536, description="Memory per core in MB (max 64GB = 65536MB)"
+    )
+    walltime: str = Field(default="24:00", description="Wall time limit as HH:MM or HH:MM:SS")
+
+    @model_validator(mode="after")
+    def validate_walltime_format(self) -> "HPCResourceConfig":
+        """Validate walltime format."""
+        import re
+
+        # Accept HH:MM or HH:MM:SS
+        if not re.match(r"^\d{1,3}:\d{2}(:\d{2})?$", self.walltime):
+            raise ValueError(
+                f"Invalid walltime format: '{self.walltime}'\n"
+                f"Expected HH:MM or HH:MM:SS (e.g., '24:00' or '24:00:00')"
+            )
+        return self
 
 
 class HPCConfig(BaseModel):
@@ -42,9 +57,16 @@ class HPCConfig(BaseModel):
     )
     scheduler: str = Field(default="lsf", description="Scheduler type (lsf only)")
     queue: str = Field(default="medium", description="Default queue name")
-    cores: int = Field(default=4, ge=1, description="Default number of CPU cores")
-    mem_per_core: int = Field(default=4000, ge=1, description="Default memory per core in MB")
-    walltime: str = Field(default="24:00", description="Default wall time limit as HH:MM")
+    cores: int = Field(default=4, ge=1, le=128, description="Default number of CPU cores (max 128)")
+    mem_per_core: int = Field(
+        default=4000,
+        ge=1,
+        le=65536,
+        description="Default memory per core in MB (max 64GB = 65536MB)",
+    )
+    walltime: str = Field(
+        default="24:00", description="Default wall time limit as HH:MM or HH:MM:SS"
+    )
 
     # Optional per-stage resource overrides
     training: HPCResourceConfig | None = None
@@ -52,14 +74,25 @@ class HPCConfig(BaseModel):
     optimization: HPCResourceConfig | None = None
 
     @model_validator(mode="after")
-    def validate_project(self) -> "HPCConfig":
-        """Validate that project is not a placeholder."""
+    def validate_project_and_walltime(self) -> "HPCConfig":
+        """Validate that project is not a placeholder and walltime format."""
+        import re
+
+        # Validate project
         placeholders = {"YOUR_PROJECT_ALLOCATION", "YOUR_ALLOCATION"}
         if self.project in placeholders:
             raise ValueError(
                 f"HPC project not configured. Got placeholder '{self.project}'. "
                 "Update 'hpc.project' in pipeline_hpc.yaml"
             )
+
+        # Validate walltime format (HH:MM or HH:MM:SS)
+        if not re.match(r"^\d{1,3}:\d{2}(:\d{2})?$", self.walltime):
+            raise ValueError(
+                f"Invalid walltime format: '{self.walltime}'\n"
+                f"Expected HH:MM or HH:MM:SS (e.g., '24:00' or '24:00:00')"
+            )
+
         return self
 
     def get_resources(self, stage: str = "default") -> dict[str, int | str]:

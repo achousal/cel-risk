@@ -182,9 +182,12 @@ def recursive_feature_elimination(
 
     # Build RFE tune spaces
     if rfe_tune_spaces is None:
-        # Load from training_config.yaml (default behavior)
+        # Load from training_config.yaml (default behavior, auto-discovered)
         logger.info("  Loading hyperparameter spaces from training_config.yaml")
-        training_config = load_training_config("configs/training_config.yaml")
+        from ced_ml.utils.paths import get_default_paths
+
+        _config_path = get_default_paths()["configs"] / "training_config.yaml"
+        training_config = load_training_config(str(_config_path))
         rfe_tune_spaces = get_rfe_tune_spaces_from_training_config(
             training_config,
             model_names=[model_name],

@@ -188,7 +188,17 @@ def compute_holdout_metrics(
     # Extract threshold metadata
     thresholds_meta = bundle.get("thresholds", {})
     # Use val_threshold as primary threshold (chosen on validation set)
-    thr_primary = thresholds_meta.get("val_threshold", thresholds_meta.get("test_threshold", 0.5))
+    val_threshold = thresholds_meta.get("val_threshold")
+    if val_threshold is None:
+        test_threshold = thresholds_meta.get("test_threshold", 0.5)
+        logger.warning(
+            "val_threshold missing from model bundle. Falling back to test_threshold=%.6f. "
+            "This risks test-set leakage (ADR-009 violation). Ensure model was trained with validation-based threshold selection.",
+            test_threshold,
+        )
+        thr_primary = test_threshold
+    else:
+        thr_primary = val_threshold
     objective_name = thresholds_meta.get("objective", "unknown")
     fixed_spec_value = thresholds_meta.get("fixed_spec")
 

@@ -461,10 +461,16 @@ def plot_calibration_curve(
 
     y = np.asarray(y_true).astype(int)
     p = np.asarray(y_pred).astype(float)
+
+    # Validate prediction range
+    if len(p) > 0 and (np.min(p) < 0 or np.max(p) > 1):
+        logger.warning(f"Predictions outside [0,1] range: min={np.min(p):.4f}, max={np.max(p):.4f}")
+
     mask = np.isfinite(p) & np.isfinite(y)
     y = y[mask]
     p = p[mask]
     if len(y) == 0:
+        logger.warning("No valid data for calibration plot after filtering")
         return
 
     # Clip probabilities for numerical stability

@@ -139,6 +139,13 @@ def run_rfecv_within_fold(
     # Setup internal CV
     inner_cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
 
+    # Validate min_features
+    if min_features < 1:
+        logger.warning(
+            f"min_features_to_select={min_features} is invalid (must be >= 1). " "Clamping to 1."
+        )
+        min_features = 1
+
     # Clone estimator to avoid mutation
     base_estimator = clone(estimator)
 

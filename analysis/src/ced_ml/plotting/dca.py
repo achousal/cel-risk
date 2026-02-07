@@ -7,6 +7,7 @@ of prediction models at different decision thresholds.
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -135,6 +136,8 @@ def plot_dca(dca_df: pd.DataFrame, out_path: str, meta_lines: Sequence[str] | No
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close()
 
@@ -178,11 +181,16 @@ def plot_dca_curve(
 
     y = np.asarray(y_true).astype(int)
     p = np.asarray(y_pred).astype(float)
+    # Validate prediction range
+    if len(p) > 0 and (np.min(p) < 0 or np.max(p) > 1):
+        logger.warning(f"Predictions outside [0,1] range: min={np.min(p):.4f}, max={np.max(p):.4f}")
+
     mask = np.isfinite(p) & np.isfinite(y)
     y = y[mask]
     p = p[mask]
 
     if len(y) == 0:
+        logger.warning("No valid data for DCA curve plot after filtering")
         return
 
     # Generate threshold array
@@ -424,5 +432,7 @@ def plot_dca_curve(
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES, pad_inches=PAD_INCHES)
     plt.close()

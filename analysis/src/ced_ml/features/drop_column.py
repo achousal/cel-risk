@@ -44,6 +44,39 @@ __all__ = [
 ]
 
 
+def _propagate_random_state(estimator: Any, random_state: int) -> None:
+    """Propagate random_state to nested estimators in a pipeline.
+
+    Recursively sets random_state on all estimators that support it,
+    including those nested within CalibratedClassifierCV or Pipeline steps.
+
+    Args:
+        estimator: Sklearn estimator (may be Pipeline or CalibratedClassifierCV).
+        random_state: Random seed to set.
+    """
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.pipeline import Pipeline
+
+    # Set on the top-level estimator if it has random_state
+    if hasattr(estimator, "random_state"):
+        try:
+            estimator.set_params(random_state=random_state)
+        except Exception:
+            pass
+
+    # Handle Pipeline: propagate to all steps
+    if isinstance(estimator, Pipeline):
+        for _, step in estimator.steps:
+            _propagate_random_state(step, random_state)
+
+    # Handle CalibratedClassifierCV: propagate to base estimator
+    elif isinstance(estimator, CalibratedClassifierCV):
+        if hasattr(estimator, "estimator") and estimator.estimator is not None:
+            _propagate_random_state(estimator.estimator, random_state)
+        elif hasattr(estimator, "base_estimator") and estimator.base_estimator is not None:
+            _propagate_random_state(estimator.base_estimator, random_state)
+
+
 @dataclass
 class DropColumnResult:
     """Result from dropping a single feature/cluster and refitting.
@@ -250,13 +283,9 @@ def _drop_and_evaluate_cluster(
         X_train_reduced = X_train[features_to_keep]
         X_val_reduced = X_val[features_to_keep]
 
-        # Clone estimator and set random_state on base estimator (not Pipeline)
+        # Clone estimator and propagate random_state to nested estimators
         estimator_clone = clone(estimator)
-        # Try to set random_state on the final estimator in the pipeline
-        if hasattr(estimator_clone, "steps") and len(estimator_clone.steps) > 0:
-            final_estimator = estimator_clone.steps[-1][1]
-            if hasattr(final_estimator, "random_state"):
-                final_estimator.set_params(random_state=random_state)
+        _propagate_random_state(estimator_clone, random_state)
         estimator_clone.fit(X_train_reduced, y_train)
 
         # Evaluate on validation set
@@ -662,13 +691,9 @@ def _compute_brier_deltas(
             X_train_reduced = X_train[features_to_keep]
             X_val_reduced = X_val[features_to_keep]
 
-            # Clone and refit
+            # Clone and refit with random_state propagation
             model_clone = clone(model)
-            if hasattr(model_clone, "steps") and len(model_clone.steps) > 0:
-                final_estimator = model_clone.steps[-1][1]
-                if hasattr(final_estimator, "random_state"):
-                    final_estimator.set_params(random_state=random_state)
-
+            _propagate_random_state(model_clone, random_state)
             model_clone.fit(X_train_reduced, y_train)
 
             # Evaluate Brier score

@@ -5,6 +5,7 @@ Provides functions to generate ROC and PR curves with confidence intervals
 and threshold annotations.
 """
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from .style import (
     PAD_INCHES,
     configure_backend,
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     import matplotlib  # noqa: F401
@@ -95,15 +98,22 @@ def plot_roc_curve(
         if "dca" in threshold_bundle:
             metrics_at_thresholds["dca"] = threshold_bundle["dca"]
     if not _HAS_PLOTTING:
+        logger.warning("Matplotlib not available, skipping ROC curve plot")
         return
 
     y = np.asarray(y_true).astype(int)
     p = np.asarray(y_pred).astype(float)
+
+    # Validate prediction range
+    if len(p) > 0 and (np.min(p) < 0 or np.max(p) > 1):
+        logger.warning(f"Predictions outside [0,1] range: min={np.min(p):.4f}, max={np.max(p):.4f}")
+
     mask = np.isfinite(p) & np.isfinite(y)
     y = y[mask]
     p = p[mask]
 
     if len(y) == 0:
+        logger.warning("No valid data for ROC curve plot after filtering")
         return
 
     fig, ax = plt.subplots(figsize=FIGSIZE_ROC)
@@ -269,6 +279,7 @@ def plot_roc_curve(
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()
 
@@ -301,15 +312,22 @@ def plot_pr_curve(
         None. Saves plot to out_path.
     """
     if not _HAS_PLOTTING:
+        logger.warning("Matplotlib not available, skipping PR curve plot")
         return
 
     y = np.asarray(y_true).astype(int)
     p = np.asarray(y_pred).astype(float)
+
+    # Validate prediction range
+    if len(p) > 0 and (np.min(p) < 0 or np.max(p) > 1):
+        logger.warning(f"Predictions outside [0,1] range: min={np.min(p):.4f}, max={np.max(p):.4f}")
+
     mask = np.isfinite(p) & np.isfinite(y)
     y = y[mask]
     p = p[mask]
 
     if len(y) == 0:
+        logger.warning("No valid data for PR curve plot after filtering")
         return
 
     baseline = np.mean(y)
@@ -411,5 +429,6 @@ def plot_pr_curve(
 
     bottom_margin = apply_plot_metadata(fig, meta_lines)
     plt.subplots_adjust(left=0.15, right=0.9, top=0.8, bottom=bottom_margin)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=DPI, pad_inches=PAD_INCHES)
     plt.close()

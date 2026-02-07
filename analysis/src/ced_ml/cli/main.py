@@ -426,6 +426,10 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
                 click.echo(f"  [DRY RUN] seed {seed}: {job_name}")
             else:
                 click.echo(f"  seed {seed}: Submission failed", err=True)
+                raise click.ClickException(
+                    f"HPC job submission failed for seed {seed}. "
+                    "Check HPC configuration and job script."
+                )
 
         if dry_run_flag:
             click.echo("\n[DRY RUN] No jobs were actually submitted.")
@@ -1150,8 +1154,14 @@ def optimize_panel(ctx, config, **kwargs):
         split_dir = kwargs.get("split_dir")
 
         if metadata_file.exists() and (not infile or not split_dir):
-            with open(metadata_file) as f:
-                metadata = json.load(f)
+            try:
+                with open(metadata_file) as f:
+                    metadata = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                raise click.ClickException(
+                    f"Failed to read run metadata from {metadata_file}: {e}. "
+                    "The metadata file may be corrupt. Please specify --infile and --split-dir manually."
+                ) from e
             first_model_name = next(iter(model_dirs))
             model_meta = metadata.get("models", {}).get(first_model_name, {})
             if not infile:
@@ -1303,6 +1313,10 @@ def optimize_panel(ctx, config, **kwargs):
                 click.echo(f"  [DRY RUN] {model_name}: {job_name}")
             else:
                 click.echo(f"  {model_name}: Submission failed", err=True)
+                raise click.ClickException(
+                    f"HPC job submission failed for model {model_name}. "
+                    "Check HPC configuration and job script."
+                )
 
         if dry_run_flag:
             click.echo("\n[DRY RUN] No jobs were actually submitted.")
@@ -1377,8 +1391,14 @@ def optimize_panel(ctx, config, **kwargs):
             infile = kwargs["infile"]
             split_dir = kwargs["split_dir"]
         else:
-            with open(metadata_file) as f:
-                metadata = json.load(f)
+            try:
+                with open(metadata_file) as f:
+                    metadata = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                raise click.ClickException(
+                    f"Failed to read run metadata from {metadata_file}: {e}. "
+                    "The metadata file may be corrupt. Please specify --infile and --split-dir manually."
+                ) from e
 
             # Use metadata values, but allow CLI overrides
             # Shared metadata format: top-level or under models/{model_name}
@@ -1620,7 +1640,10 @@ def consensus_panel(ctx, config, **kwargs):
     config_params = {}
     try:
         default_config = get_analysis_dir() / "configs" / "consensus_panel.yaml"
-    except RuntimeError:
+    except RuntimeError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"Could not determine analysis directory: {e}")
         default_config = None
     config_path = config or (default_config if default_config and default_config.exists() else None)
 
@@ -2325,6 +2348,8 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
             hpc_config_file=hpc_config_path,
             dry_run=dry_run_flag,
         )
+    except (SystemExit, KeyboardInterrupt):
+        raise
     except Exception as e:
         click.echo(f"Pipeline failed: {e}", err=True)
         ctx.exit(1)
@@ -2371,6 +2396,8 @@ def convert_to_parquet(csv_path, output, compression):
             compression=compression,
         )
         click.echo(f"Successfully converted to: {parquet_path}")
+    except (SystemExit, KeyboardInterrupt):
+        raise
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise click.Abort() from e

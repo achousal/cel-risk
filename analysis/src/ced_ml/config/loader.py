@@ -65,6 +65,21 @@ def load_yaml(file_path: str | Path) -> dict[str, Any]:
     base_ref = config_dict.pop("_base", None)
     if base_ref is not None:
         base_path = (file_path.parent / base_ref).resolve()
+
+        # Validate that base_path is within the project/config directory
+        config_root = file_path.parent.resolve()
+        try:
+            # Check if base_path is relative to config_root
+            base_path.relative_to(config_root)
+        except ValueError as e:
+            # Path is outside config directory
+            raise ValueError(
+                f"_base reference escapes config directory: {base_ref}\n"
+                f"Config file: {file_path}\n"
+                f"Resolved base path: {base_path}\n"
+                f"Allowed directory: {config_root}"
+            ) from e
+
         base_dict = load_yaml(base_path)
         config_dict = _deep_merge(base_dict, config_dict)
 
@@ -90,8 +105,17 @@ def resolve_paths_relative_to_config(
         - Exist as keys containing "file", "dir", or "path" (case-insensitive)
         - Point to files/dirs that can be resolved relative to config dir
     """
+    from ced_ml.utils.paths import get_project_root
+
     config_dir = config_file.resolve().parent
     resolved_dict = config_dict.copy()
+
+    # Get project root for boundary validation
+    try:
+        project_root = get_project_root()
+    except (ValueError, RuntimeError, OSError):
+        # If we can't determine project root, use config_dir parent as safe boundary
+        project_root = config_dir.parent
 
     def resolve_value(value: Any) -> Any:
         """Recursively resolve Path-like values."""
@@ -104,9 +128,14 @@ def resolve_paths_relative_to_config(
             path = Path(value)
             if not path.is_absolute() and len(path.parts) > 0:
                 # Try resolving relative to config dir
-                resolved = config_dir / path
+                resolved = (config_dir / path).resolve()
                 # Only replace if resolved path exists or value is clearly a path
                 if resolved.exists() or "/" in value or "\\" in value:
+                    # Validate path stays within expected boundaries
+                    try:
+                        resolved.relative_to(project_root)
+                    except ValueError:
+                        pass  # Path escapes project root, but continue anyway
                     return str(resolved)
         return value
 

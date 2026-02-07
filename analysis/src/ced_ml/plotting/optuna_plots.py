@@ -141,6 +141,7 @@ def save_optuna_plots(
             fig.update_layout(title=f"Optimization History ({n_trials} trials)")
             out_path = out_dir / f"{prefix}optuna_history.{plot_format}"
             _save_plot(fig, out_path, "optimization history plot")
+            del fig
         except Exception as e:
             logger.warning(f"Failed to create optimization history plot: {e}")
 
@@ -154,6 +155,7 @@ def save_optuna_plots(
                 fig.update_layout(title="Parameter Importances")
                 out_path = out_dir / f"{prefix}optuna_importances.{plot_format}"
                 _save_plot(fig, out_path, "parameter importances plot")
+                del fig
             except Exception as e:
                 logger.warning(f"Failed to create parameter importances plot: {e}")
 
@@ -167,6 +169,7 @@ def save_optuna_plots(
                 fig.update_layout(title="Parallel Coordinate Plot")
                 out_path = out_dir / f"{prefix}optuna_parallel.{plot_format}"
                 _save_plot(fig, out_path, "parallel coordinate plot")
+                del fig
             except Exception as e:
                 logger.warning(f"Failed to create parallel coordinate plot: {e}")
 

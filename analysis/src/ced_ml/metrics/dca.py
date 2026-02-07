@@ -146,6 +146,16 @@ def decision_curve_analysis(
 
     observed_prevalence = np.mean(y)
     if prevalence_adjustment is not None:
+        actual_prevalence = float(np.mean(y))
+        ratio = prevalence_adjustment / actual_prevalence if actual_prevalence > 0 else np.inf
+        if ratio > 2.0 or ratio < 0.5:
+            logger.warning(
+                "prevalence_adjustment (%.4f) deviates significantly from observed prevalence (%.4f). "
+                "Ratio: %.2fx. This may indicate miscalibration or inappropriate adjustment.",
+                prevalence_adjustment,
+                actual_prevalence,
+                ratio,
+            )
         observed_prevalence = float(prevalence_adjustment)
 
     results = []
@@ -275,6 +285,17 @@ def threshold_dca_zero_crossing(
     if nb1 == nb2:
         return t1
     zero_crossing = t1 + (t2 - t1) * (-nb1 / (nb2 - nb1))
+
+    logger.warning(
+        "DCA zero-crossing computed via linear interpolation on nonlinear curve. "
+        "Crossing at %.6f (bracket: [%.6f, %.6f], NB: [%.6f, %.6f]). "
+        "Approximation may have ~10-50%% relative error at low thresholds.",
+        zero_crossing,
+        t1,
+        t2,
+        nb1,
+        nb2,
+    )
 
     return float(zero_crossing)
 
@@ -659,8 +680,12 @@ def generate_dca_thresholds(
             min_thr = max(0.0001, prevalence / 10)
             max_thr = min(0.5, prevalence * 10)
             logger.debug(
-                f"Auto-configured DCA thresholds from prevalence {prevalence:.4f}: "
-                f"range [{min_thr:.4f}, {max_thr:.4f}]"
+                "Auto-configured DCA thresholds from prevalence %.4f: "
+                "range [%.4f, %.4f]. For low-prevalence scenarios, verify this range captures "
+                "clinically relevant decision points.",
+                prevalence,
+                min_thr,
+                max_thr,
             )
 
     min_thr = max(1e-4, float(min_thr))

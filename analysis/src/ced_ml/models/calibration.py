@@ -334,7 +334,8 @@ class OOFCalibrator:
 
         logger.info(f"  Pre-calibration:  Brier={brier_pre:.3f}, AUROC={auroc_pre:.3f}")
         logger.info(
-            f"  Post-calibration: Brier={brier_post:.3f}, AUROC={auroc_post:.3f} ({brier_improvement:+.1f}% Brier improvement)"
+            f"  Post-calibration: Brier={brier_post:.3f}, AUROC={auroc_post:.3f} "
+            f"(In-sample Brier improvement: {brier_improvement:+.1f}%; use holdout for unbiased estimate)"
         )
 
         if self.method == "isotonic":

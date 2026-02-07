@@ -291,6 +291,21 @@ def collect_oof_predictions(
                 train_idx, reference_model, current_idx, model_name, "OOF predictions"
             )
 
+            # 1.7-M2: Validate y_true values match across base models
+            current_y = oof_df["y_true"].values
+            if not np.array_equal(y_train, current_y):
+                # Find first mismatching position for helpful error message
+                mismatch_mask = y_train != current_y
+                first_mismatch_pos = np.argmax(mismatch_mask)
+                raise ValueError(
+                    f"y_true mismatch in OOF predictions: "
+                    f"{reference_model} and {model_name} have different labels. "
+                    f"First mismatch at position {first_mismatch_pos}: "
+                    f"{reference_model}={y_train[first_mismatch_pos]}, "
+                    f"{model_name}={current_y[first_mismatch_pos]}. "
+                    f"Base models must be trained on the same data split."
+                )
+
         logger.info(f"Loaded OOF predictions for {model_name}: shape {preds.shape}")
 
     return oof_dict, y_train, train_idx, category
@@ -373,6 +388,21 @@ def collect_split_predictions(
                 model_name,
                 f"{split_name} predictions",
             )
+
+            # 1.7-M2: Validate y_true values match across base models
+            current_y = pred_df["y_true"].values
+            if not np.array_equal(y_true, current_y):
+                # Find first mismatching position for helpful error message
+                mismatch_mask = y_true != current_y
+                first_mismatch_pos = np.argmax(mismatch_mask)
+                raise ValueError(
+                    f"y_true mismatch in {split_name} predictions: "
+                    f"{reference_model} and {model_name} have different labels. "
+                    f"First mismatch at position {first_mismatch_pos}: "
+                    f"{reference_model}={y_true[first_mismatch_pos]}, "
+                    f"{model_name}={current_y[first_mismatch_pos]}. "
+                    f"Base models must be trained on the same data split."
+                )
 
         logger.info(f"Loaded {split_name} predictions for {model_name}")
 

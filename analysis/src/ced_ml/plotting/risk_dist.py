@@ -7,6 +7,7 @@ Creates publication-quality risk score distribution plots with:
 - Density estimation and summary statistics
 """
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from .style import (
     LW_SECONDARY,
     configure_backend,
 )
+
+logger = logging.getLogger(__name__)
 
 # Threshold overlap detection parameters
 _OVERLAP_EPSILON = 0.01  # 1% of x-range for overlap detection
@@ -516,6 +519,10 @@ def plot_risk_distribution(
     s = np.asarray(scores).astype(float)
     y = np.asarray(y_true).astype(int) if y_true is not None else None
 
+    # Validate prediction range
+    if len(s) > 0 and (np.min(s) < 0 or np.max(s) > 1):
+        logger.warning(f"Risk scores outside [0,1] range: min={np.min(s):.4f}, max={np.max(s):.4f}")
+
     # Filter for category_col case
     has_incident = False
     has_prevalent = False
@@ -540,6 +547,7 @@ def plot_risk_distribution(
         s = s[mask]
 
     if len(s) == 0:
+        logger.warning("No valid data for risk distribution plot after filtering")
         plt.close()
         return
 
@@ -651,5 +659,7 @@ def plot_risk_distribution(
     # Apply metadata and save
     bottom_margin = apply_plot_metadata(fig, meta_lines) if meta_lines else 0.1
     plt.subplots_adjust(left=0.12, right=0.70, top=0.92, bottom=bottom_margin, hspace=0.3)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=DPI)
     plt.close()

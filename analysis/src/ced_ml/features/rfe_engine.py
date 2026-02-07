@@ -813,6 +813,16 @@ def elimination_loop(
         )
 
         protein_importances = {p: importances.get(p, 0.0) for p in current_proteins}
+
+        # Check for ties (all importances equal)
+        unique_importances = set(protein_importances.values())
+        if len(unique_importances) == 1 and len(current_proteins) > 1:
+            logger.warning(
+                f"All {len(current_proteins)} remaining features have identical importance "
+                f"({list(unique_importances)[0]:.4f}). Tie-breaking alphabetically. "
+                "Consider using random tie-breaking with fixed seed for reproducibility."
+            )
+
         worst_protein = min(protein_importances, key=protein_importances.get)
 
         feature_ranking[worst_protein] = elimination_order
@@ -1004,11 +1014,17 @@ def run_elimination_with_evaluation(
             max_auroc_seen = metrics["auroc_val"]
             logger.info(f"  New maximum AUROC: {max_auroc_seen:.4f}")
 
-        if metrics["auroc_val"] < max_auroc_seen * min_auroc_frac:
+        # Early stopping with minimum evaluations guard
+        min_evaluations = 3
+        if (
+            eval_point_idx >= min_evaluations
+            and metrics["auroc_val"] < max_auroc_seen * min_auroc_frac
+        ):
             logger.info(
                 f"\n*** Early stopping triggered ***\n"
                 f"AUROC {metrics['auroc_val']:.4f} < "
                 f"{min_auroc_frac:.0%} of max {max_auroc_seen:.4f}\n"
+                f"(after {eval_point_idx} evaluation rounds)\n"
             )
             break
 

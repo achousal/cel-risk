@@ -71,8 +71,7 @@ def read_proteomics_csv(
     low_memory: bool = False,
     validate: bool = True,
 ) -> pd.DataFrame:
-    """
-    Read proteomics CSV file with schema-aware column filtering.
+    """Read proteomics CSV file with schema-aware column filtering.
 
     Args:
         filepath: Path to CSV file
@@ -92,7 +91,26 @@ def read_proteomics_csv(
         >>> assert "eid" in df.columns
         >>> assert "CeD_comparison" in df.columns
     """
+    from ced_ml.utils.paths import get_project_root
+
     filepath = Path(filepath)
+
+    # Validate path is within expected boundaries
+    try:
+        project_root = get_project_root()
+        filepath_resolved = filepath.resolve()
+        try:
+            filepath_resolved.relative_to(project_root)
+        except ValueError:
+            logger.warning(
+                f"Input file path outside project root: {filepath}\n"
+                f"Resolved to: {filepath_resolved}\n"
+                f"Project root: {project_root}"
+            )
+    except (ValueError, RuntimeError, OSError):
+        # Cannot determine project root, skip validation
+        pass
+
     if not filepath.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
