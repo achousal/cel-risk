@@ -11,7 +11,7 @@ cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended f
 step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # Per-k Hyperparameter Re-tuning
-retune_trials: 200            # Optuna trials per evaluation point
+retune_trials: 400            # Optuna trials per evaluation point
 retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # Correlation-Aware Pruning
@@ -22,21 +22,16 @@ corr_method: spearman        # Correlation method: spearman or pearson (default:
 # HPC Parallelization (only used with --hpc flag)
 n_jobs_hpc: -1               # Number of parallel jobs per model (-1 = all CPUs, only with --hpc)
 
-# Per-k Hyperparameter Search Spaces (mirrors training_config.yaml Optuna ranges)
-# Defines Optuna search spaces for per-panel-size re-tuning during RFE.
-# Parameter names use clf__ prefix (sklearn Pipeline convention).
-# To keep experimental design consistent, these should match training_config.yaml
-# Optuna ranges unless you have a specific reason to diverge.
-
-rfe_tune_spaces:
-  LR_EN:
-    clf__C: {type: float, low: 1.0e-4, high: 1.0, log: true}
-    clf__l1_ratio: {type: float, low: 0.0, high: 1.0, log: false}
-  LinSVM_cal:
-    clf__estimator__C: {type: float, low: 1.0e-3, high: 1.0, log: true}
-  # RF and XGBoost: fixed HPs from full-feature training (no per-k re-tuning).
-  # Tree ensembles are robust to feature count changes; re-tuning at each k
-  # introduces noise and overfitting risk with small positive class.
+# Per-k Hyperparameter Re-tuning
+# By default, RFE automatically loads hyperparameter spaces from training_config.yaml
+# and re-tunes ALL models at each panel size k. This ensures consistency between
+# training and RFE optimization.
+#
+# To override with custom spaces, uncomment and define rfe_tune_spaces below:
+# rfe_tune_spaces:
+#   LR_EN:
+#     clf__C: {type: float, low: 1.0e-4, high: 1.0, log: true}
+#     clf__l1_ratio: {type: float, low: 0.0, high: 1.0, log: false}
 
 # Significance Gating
 significance:

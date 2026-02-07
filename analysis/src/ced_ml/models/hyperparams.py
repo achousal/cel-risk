@@ -36,6 +36,7 @@ from .hyperparams_common import (
     _randomize_int_list,
     _to_optuna_spec,
     get_rfe_tune_space,
+    get_rfe_tune_spaces_from_training_config,
 )
 
 # Import model-specific functions (not re-exported as public API)
@@ -155,6 +156,7 @@ __all__ = [
     "get_param_distributions_optuna",
     # RFE tune spaces
     "get_rfe_tune_space",
+    "get_rfe_tune_spaces_from_training_config",
     "RFE_TUNE_SPACES",
     # Optuna defaults
     "DEFAULT_OPTUNA_RANGES",

@@ -159,16 +159,20 @@ def recursive_feature_elimination(
         corr_method: Correlation method ("spearman" or "pearson").
         selection_freq: Stability selection frequencies for representative
             selection. If None, uses uniform weights.
-        rfe_tune_spaces: Optional config-driven per-model search spaces from
-            optimize_panel.yaml. Overrides hardcoded RFE_TUNE_SPACES defaults.
+        rfe_tune_spaces: Optional explicit per-model search spaces from
+            optimize_panel.yaml. If None (default), automatically loads
+            hyperparameter ranges from training_config.yaml, ensuring
+            consistency between training and RFE. All models defined in
+            training_config will be re-tuned at each panel size k.
 
     Returns:
         RFEResult with curve, feature_ranking, and recommended_panels.
     """
     import time
 
+    from ced_ml.config import load_training_config
     from ced_ml.features.rfe_engine import run_elimination_with_evaluation
-    from ced_ml.models.hyperparams import RFE_TUNE_SPACES
+    from ced_ml.models.hyperparams import get_rfe_tune_spaces_from_training_config
 
     start_time = time.time()
     logger.info("Starting recursive feature elimination")
@@ -176,10 +180,21 @@ def recursive_feature_elimination(
     logger.info(f"  X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
     logger.info(f"  model_name: {model_name}")
 
-    if rfe_tune_spaces:
-        can_retune = model_name in rfe_tune_spaces
+    # Build RFE tune spaces
+    if rfe_tune_spaces is None:
+        # Load from training_config.yaml (default behavior)
+        logger.info("  Loading hyperparameter spaces from training_config.yaml")
+        training_config = load_training_config("configs/training_config.yaml")
+        rfe_tune_spaces = get_rfe_tune_spaces_from_training_config(
+            training_config,
+            model_names=[model_name],
+        )
+        logger.info("  Using training config hyperparameter ranges for RFE retuning")
     else:
-        can_retune = model_name in RFE_TUNE_SPACES
+        logger.info("  Using explicit rfe_tune_spaces from optimize_panel.yaml")
+
+    # Check if this model can be retuned
+    can_retune = model_name in rfe_tune_spaces
     if can_retune:
         logger.info(
             f"  Per-k hyperparameter re-tuning: enabled "

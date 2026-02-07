@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    pass
+    from ced_ml.config import TrainingConfig
 
 
 # ============================================================================
@@ -407,3 +407,68 @@ def get_rfe_tune_space(
             f"Known models: {list(RFE_TUNE_SPACES.keys())}"
         )
     return dict(RFE_TUNE_SPACES[model_name])
+
+
+def get_rfe_tune_spaces_from_training_config(
+    training_config: TrainingConfig,
+    model_names: list[str] | None = None,
+) -> dict[str, dict[str, dict]]:
+    """Build RFE tune spaces from training_config.yaml hyperparameter ranges.
+
+    Converts training config Optuna ranges to the RFE tune space format
+    for all requested models. This ensures consistency between training
+    and RFE hyperparameter spaces.
+
+    Args:
+        training_config: Loaded TrainingConfig object.
+        model_names: List of model names to build spaces for. If None,
+            builds spaces for all supported models.
+
+    Returns:
+        Dict mapping model names to their RFE tune spaces:
+        {
+            "LR_EN": {"clf__C": {"type": "float", ...}, ...},
+            "RF": {"clf__max_depth": {"type": "int", ...}, ...},
+            ...
+        }
+
+    Example:
+        >>> from ced_ml.config import load_training_config
+        >>> config = load_training_config("configs/training_config.yaml")
+        >>> spaces = get_rfe_tune_spaces_from_training_config(config)
+        >>> spaces["LR_EN"]
+        {"clf__C": {"type": "float", "low": 0.01, "high": 100.0, "log": True}, ...}
+    """
+    from ced_ml.models.hyperparams_lr import _get_lr_params_optuna
+    from ced_ml.models.hyperparams_rf import _get_rf_params_optuna
+    from ced_ml.models.hyperparams_svm import _get_svm_params_optuna
+    from ced_ml.models.hyperparams_xgb import _get_xgb_params_optuna
+
+    # Default to all supported models
+    if model_names is None:
+        model_names = ["LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"]
+
+    rfe_tune_spaces = {}
+    for model_name in model_names:
+        if model_name in ("LR_EN", "LR_L1"):
+            params = _get_lr_params_optuna(training_config, model_name=model_name)
+        elif model_name == "LinSVM_cal":
+            params = _get_svm_params_optuna(training_config)
+        elif model_name == "RF":
+            params = _get_rf_params_optuna(training_config)
+        elif model_name == "XGBoost":
+            # XGBoost requires scale_pos_weight calculation
+            # Use a reasonable default based on imbalance (will be recomputed per panel size)
+            xgb_spw = 10.0  # Placeholder, will be overridden per k
+            params = _get_xgb_params_optuna(training_config, xgb_spw)
+            # Filter out scale_pos_weight from RFE tuning (computed per panel size)
+            params = {k: v for k, v in params.items() if "scale_pos_weight" not in k}
+        else:
+            continue  # Skip unknown models
+
+        # Only keep clf__ parameters (exclude feature selector params)
+        rfe_params = {k: v for k, v in params.items() if k.startswith("clf__")}
+        if rfe_params:
+            rfe_tune_spaces[model_name] = rfe_params
+
+    return rfe_tune_spaces
