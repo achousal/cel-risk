@@ -612,3 +612,66 @@ class TestQuickTuneAtK:
 
         for key in best_params:
             assert key.startswith("clf__"), f"Expected clf__ prefix, got {key}"
+
+
+class TestRunEliminationFallback:
+    """Regression tests for RFE evaluation fallback behavior."""
+
+    def test_retune_failure_falls_back_to_baseline_pipeline(self, monkeypatch):
+        """Per-k tuning failures should still produce a valid curve point."""
+        from ced_ml.features import rfe_engine
+
+        rng = np.random.default_rng(7)
+        X = pd.DataFrame(
+            rng.normal(size=(120, 2)),
+            columns=["prot_0", "prot_1"],
+        )
+        y = (X["prot_0"] + X["prot_1"] + rng.normal(scale=0.25, size=len(X)) > 0).astype(int)
+
+        X_train = X.iloc[:80].copy()
+        X_val = X.iloc[80:].copy()
+        y_train = y.iloc[:80].to_numpy()
+        y_val = y.iloc[80:].to_numpy()
+
+        base_pipeline = Pipeline(
+            [
+                ("clf", LogisticRegression(random_state=42, max_iter=1000)),
+            ]
+        )
+
+        def _always_fail_tuning(**kwargs):
+            raise RuntimeError("All 10 Optuna trials failed")
+
+        monkeypatch.setattr(rfe_engine, "quick_tune_at_k", _always_fail_tuning)
+
+        curve, feature_ranking, max_auroc, all_best_params = (
+            rfe_engine.run_elimination_with_evaluation(
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                base_pipeline=base_pipeline,
+                model_name="LR_EN",
+                current_proteins=["prot_0", "prot_1"],
+                cat_cols=[],
+                meta_num_cols=[],
+                eval_sizes=[2],
+                min_size=1,
+                cv_folds=0,
+                random_state=42,
+                n_perm_repeats=1,
+                can_retune=True,
+                retune_n_trials=10,
+                retune_cv_folds=2,
+                retune_n_jobs=4,
+                rfe_tune_spaces=None,
+                min_auroc_frac=0.5,
+            )
+        )
+
+        assert len(curve) == 1
+        assert curve[0]["size"] == 2
+        assert 0.0 <= curve[0]["auroc_val"] <= 1.0
+        assert feature_ranking == {}
+        assert max_auroc >= 0.0
+        assert all_best_params == []

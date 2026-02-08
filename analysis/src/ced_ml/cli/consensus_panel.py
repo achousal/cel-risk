@@ -34,6 +34,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+from sklearn.base import clone
 
 from ced_ml.cli.discovery import (
     auto_detect_data_paths,
@@ -266,7 +267,10 @@ def run_consensus_panel(
         oof_weight: Weight for OOF importance (default 0.6).
         essentiality_weight: Weight for essentiality (default 0.3).
         stability_weight: Weight for stability (default 0.1).
-        run_essentiality: Whether to run drop-column essentiality validation (default True).
+        run_essentiality: Whether to run within-panel essentiality validation (default True).
+            Refits a model on only the consensus panel features and runs drop-column
+            to measure each cluster's contribution. This is a post-hoc
+            interpretation artifact, not an input to panel selection.
         essentiality_corr_threshold: Correlation threshold for clustering in drop-column (default 0.75).
         essentiality_include_brier: Whether to include Brier score delta in output (default False).
 
@@ -502,12 +506,15 @@ def run_consensus_panel(
 
     _paths = save_consensus_results(result, outdir)  # noqa: F841
 
-    # --- Drop-column essentiality validation on consensus panel ---
+    # --- Within-panel essentiality validation (post-hoc interpretation) ---
+    # After the consensus panel is built, refit a model on ONLY the panel
+    # features and run drop-column to measure each cluster's contribution.
+    # This is a validation/interpretation artifact, NOT an input to selection.
     essentiality_summary = None
     if run_essentiality and len(result.final_panel) > 0:
         try:
             logger.info("\n" + "=" * 60)
-            logger.info("Running drop-column essentiality validation on consensus panel...")
+            logger.info("Running within-panel essentiality validation on consensus panel...")
             logger.info("=" * 60)
 
             # Create binary target vector
@@ -533,7 +540,10 @@ def run_consensus_panel(
             clusters = find_connected_components(adj_graph)
             logger.info(f"Found {len(clusters)} correlation clusters for essentiality validation")
 
-            # Run drop-column across all available splits
+            # Run drop-column across all available splits.
+            # For each seed we clone the original model architecture (preserving
+            # tuned hyperparameters) and refit it on ONLY the panel features so
+            # that the estimator's expected input dimension matches the panel.
             drop_column_results_per_fold = []
             for split_dir_path in split_dirs:
                 seed = int(split_dir_path.name.replace("split_seed", ""))
@@ -557,21 +567,32 @@ def run_consensus_panel(
                 train_idx = pd.read_csv(train_file).squeeze().values
                 val_idx = pd.read_csv(val_file).squeeze().values
 
-                # Load model pipeline
+                # Load model pipeline and clone its architecture (unfitted)
                 seed_bundle = joblib.load(model_path)
-                pipeline = seed_bundle.get("model")
+                original_pipeline = seed_bundle.get("model")
 
-                if pipeline is None:
+                if original_pipeline is None:
                     logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
                     continue
+
+                # Clone preserves tuned hyperparameters but produces an
+                # unfitted estimator that can be trained on the panel subset.
+                panel_pipeline = clone(original_pipeline)
 
                 X_train_seed = df.iloc[train_idx][panel_features]
                 y_train_seed = y_all[train_idx]
                 X_val_seed = df.iloc[val_idx][panel_features]
                 y_val_seed = y_all[val_idx]
 
+                # Fit the cloned model on panel features only
+                logger.info(
+                    f"  Seed {seed}: refitting {first_model} on "
+                    f"{len(panel_features)} panel features"
+                )
+                panel_pipeline.fit(X_train_seed, y_train_seed)
+
                 fold_results = compute_drop_column_importance(
-                    estimator=pipeline,
+                    estimator=panel_pipeline,
                     X_train=X_train_seed,
                     y_train=y_train_seed,
                     X_val=X_val_seed,
@@ -580,19 +601,21 @@ def run_consensus_panel(
                     random_state=seed,
                 )
                 drop_column_results_per_fold.append(fold_results)
-                logger.info(f"  Seed {seed}: completed drop-column validation")
+                logger.info(f"  Seed {seed}: completed within-panel essentiality validation")
 
             if drop_column_results_per_fold:
                 # Aggregate results across folds
                 drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
 
                 # Save essentiality results
-                ess_path = essentiality_dir / "consensus_panel_essentiality.csv"
+                ess_path = essentiality_dir / "within_panel_essentiality.csv"
                 drop_column_df.to_csv(ess_path, index=False)
-                logger.info(f"Saved essentiality results to {ess_path}")
+                logger.info(f"Saved within-panel essentiality results to {ess_path}")
 
                 # Create summary
                 essentiality_summary = {
+                    "validation_type": "within_panel",
+                    "model_used": first_model,
                     "panel_size": len(panel_features),
                     "n_clusters": len(clusters),
                     "n_folds_validated": len(drop_column_results_per_fold),
@@ -611,10 +634,10 @@ def run_consensus_panel(
                 logger.info(f"Saved essentiality summary to {summary_path}")
 
             else:
-                logger.warning("No folds completed drop-column validation")
+                logger.warning("No folds completed within-panel essentiality validation")
 
         except Exception as e:
-            logger.warning(f"Drop-column essentiality validation failed: {e}", exc_info=True)
+            logger.warning(f"Within-panel essentiality validation failed: {e}", exc_info=True)
             logger.info("Continuing without essentiality validation results")
 
     # Print summary
@@ -670,7 +693,9 @@ def run_consensus_panel(
 
     # Print essentiality summary if available
     if essentiality_summary:
-        print("\nDrop-Column Essentiality Validation:")
+        print(
+            f"\nWithin-Panel Essentiality Validation (model: {essentiality_summary['model_used']}):"
+        )
         print(f"  Clusters validated: {essentiality_summary['n_clusters']}")
         print(f"  Folds validated: {essentiality_summary['n_folds_validated']}")
         print(f"  Mean delta AUROC: {essentiality_summary['mean_delta_auroc']:+.4f}")
@@ -689,7 +714,7 @@ def run_consensus_panel(
     print("  - correlation_clusters.csv")
     print("  - consensus_metadata.json")
     if essentiality_summary:
-        print("  - essentiality/consensus_panel_essentiality.csv")
+        print("  - essentiality/within_panel_essentiality.csv")
         print("  - essentiality/essentiality_summary.json")
 
     print("\nNext step: Validate with new split seed:")

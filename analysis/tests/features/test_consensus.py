@@ -13,7 +13,7 @@ from ced_ml.features.consensus import (
     build_consensus_panel,
     cluster_and_select_representatives,
     compute_per_model_ranking,
-    robust_rank_aggregate,
+    geometric_mean_rank_aggregate,
     save_consensus_results,
 )
 
@@ -196,9 +196,49 @@ class TestComputePerModelRanking:
         assert len(result) == 2
         assert result.iloc[0]["stability_freq"] == 0.9
 
+    def test_missing_optional_signals_renormalizes_to_stability(self):
+        """When optional signals are absent, stability carries full normalized weight."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2"],
+                "selection_fraction": [0.9, 0.5],
+            }
+        )
 
-class TestRobustRankAggregate:
-    """Tests for robust_rank_aggregate function."""
+        result = compute_per_model_ranking(
+            stability_df=stability_df,
+            oof_weight=0.6,
+            essentiality_weight=0.3,
+            stability_weight=0.1,
+        )
+
+        p1_score = result.loc[result["protein"] == "P1", "composite_score"].iloc[0]
+        p2_score = result.loc[result["protein"] == "P2", "composite_score"].iloc[0]
+        assert p1_score == pytest.approx(1.0)
+        assert p2_score == pytest.approx(0.5)
+
+    def test_invalid_weights_raise(self):
+        """Negative or all-zero weights should fail fast."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2"],
+                "selection_fraction": [0.9, 0.8],
+            }
+        )
+
+        with pytest.raises(ValueError, match="non-negative"):
+            compute_per_model_ranking(stability_df, oof_weight=-0.1)
+        with pytest.raises(ValueError, match="At least one signal weight"):
+            compute_per_model_ranking(
+                stability_df,
+                oof_weight=0.0,
+                essentiality_weight=0.0,
+                stability_weight=0.0,
+            )
+
+
+class TestGeometricMeanRankAggregate:
+    """Tests for geometric_mean_rank_aggregate function."""
 
     def test_geometric_mean_basic(self):
         """Basic geometric mean aggregation."""
@@ -217,7 +257,7 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings, method="geometric_mean")
+        result = geometric_mean_rank_aggregate(rankings, method="geometric_mean")
 
         assert len(result) == 3
         # P1 should be ranked first (rank 1 in both)
@@ -242,12 +282,13 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings, method="geometric_mean")
+        result = geometric_mean_rank_aggregate(rankings, method="geometric_mean")
 
-        # Geometric mean of reciprocal ranks:
-        # P1: gmean(1/1, 1/3) = gmean(1, 0.333) = 0.577
-        # P2: gmean(1/2, 1/2) = gmean(0.5, 0.5) = 0.5
-        # P3: gmean(1/3, 1/1) = gmean(0.333, 1) = 0.577
+        # Geometric mean of normalized reciprocal ranks:
+        # Both models have max_rank = 3
+        # P1: gmean(3/1, 3/3) = gmean(3, 1) = sqrt(3) = 1.732
+        # P2: gmean(3/2, 3/2) = gmean(1.5, 1.5) = 1.5
+        # P3: gmean(3/3, 3/1) = gmean(1, 3) = sqrt(3) = 1.732
         # P1 and P3 tie with higher scores than P2
         # After sorting alphabetically for ties, P1 should be first
         assert result.iloc[0]["protein"] in ["P1", "P3"]
@@ -271,7 +312,7 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings, method="geometric_mean")
+        result = geometric_mean_rank_aggregate(rankings, method="geometric_mean")
 
         # P1 is in both models -> should be ranked first
         assert result.iloc[0]["protein"] == "P1"
@@ -300,7 +341,7 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings, method="borda")
+        result = geometric_mean_rank_aggregate(rankings, method="borda")
 
         assert len(result) == 3
         # P1 is rank 1 in both -> highest Borda score
@@ -323,7 +364,7 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings, method="median")
+        result = geometric_mean_rank_aggregate(rankings, method="median")
 
         assert len(result) == 3
         # P1 has median rank 1 -> best
@@ -346,7 +387,7 @@ class TestRobustRankAggregate:
             ),
         }
 
-        result = robust_rank_aggregate(rankings)
+        result = geometric_mean_rank_aggregate(rankings)
 
         assert "LR_EN_rank" in result.columns
         assert "RF_rank" in result.columns
@@ -363,12 +404,12 @@ class TestRobustRankAggregate:
         }
 
         with pytest.raises(ValueError, match="method must be"):
-            robust_rank_aggregate(rankings, method="invalid")
+            geometric_mean_rank_aggregate(rankings, method="invalid")
 
     def test_empty_rankings_raises(self):
         """Empty rankings raises ValueError."""
         with pytest.raises(ValueError, match="empty"):
-            robust_rank_aggregate({})
+            geometric_mean_rank_aggregate({})
 
 
 class TestClusterAndSelectRepresentatives:

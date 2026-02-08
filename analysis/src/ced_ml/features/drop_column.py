@@ -26,8 +26,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial.distance import squareform
 from sklearn.base import clone
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
@@ -63,6 +61,22 @@ def _propagate_random_state(estimator: Any, random_state: int) -> None:
             estimator.set_params(random_state=random_state)
         except Exception:
             pass
+
+    # Use get_params(deep=True) to discover and set ALL nested random_state params.
+    # This catches nested estimators that the explicit Pipeline/CalibratedClassifierCV
+    # handling below might miss (e.g., deeply nested preprocessors or sub-estimators).
+    if hasattr(estimator, "get_params"):
+        try:
+            params = estimator.get_params(deep=True)
+            rs_params = {key: random_state for key in params if key.endswith("random_state")}
+            if rs_params:
+                estimator.set_params(**rs_params)
+                logger.debug(
+                    f"Set random_state={random_state} on {len(rs_params)} nested params: "
+                    f"{list(rs_params.keys())}"
+                )
+        except Exception as e:
+            logger.debug(f"Could not set nested random_state params: {e}")
 
     # Handle Pipeline: propagate to all steps
     if isinstance(estimator, Pipeline):
@@ -586,59 +600,41 @@ def _cluster_panel_features(
     panel_features: list[str],
     corr_threshold: float = 0.85,
 ) -> list[list[str]]:
-    """Cluster panel features by Spearman correlation using hierarchical clustering.
+    """Cluster panel features by Spearman correlation using connected components.
+
+    Uses the same graph-based connected-component approach as corr_prune.py
+    to ensure consistent clustering behavior across the pipeline.
 
     Args:
         X_train: Training features (must contain panel_features).
         panel_features: List of feature names to cluster.
-        corr_threshold: Correlation threshold for clustering.
+        corr_threshold: Absolute Spearman correlation threshold for grouping.
 
     Returns:
         List of feature clusters (list of lists of feature names).
     """
-    if len(panel_features) == 1:
-        logger.debug("Single feature panel, returning one cluster")
-        return [panel_features]
+    if len(panel_features) <= 1:
+        return [panel_features] if panel_features else []
 
-    # Compute Spearman correlation matrix
-    X_panel = X_train[panel_features]
-    corr_matrix = X_panel.corr(method="spearman").abs()
+    from ced_ml.features.corr_prune import (
+        build_correlation_graph,
+        compute_correlation_matrix,
+        find_connected_components,
+    )
 
-    # Convert to distance: distance = 1 - |correlation|
-    distance_matrix = 1 - corr_matrix
+    # Compute absolute Spearman correlation matrix
+    corr_matrix = compute_correlation_matrix(X_train, panel_features, method="spearman")
 
-    # Handle NaN in distance matrix (can occur if a feature has zero variance)
-    if distance_matrix.isna().any().any():
-        logger.warning("NaN values in distance matrix, filling with 1.0 (no correlation)")
-        distance_matrix = distance_matrix.fillna(1.0)
-
-    # Convert to condensed distance matrix (required by linkage)
-    # squareform expects a symmetric matrix and returns the upper triangle as a vector
-    condensed_dist = squareform(distance_matrix.values, checks=False)
-
-    # Perform hierarchical clustering (average linkage is standard for correlation-based clustering)
-    linkage_matrix = linkage(condensed_dist, method="average")
-
-    # Cut dendrogram at distance = 1 - corr_threshold
-    distance_threshold = 1.0 - corr_threshold
-    cluster_labels = fcluster(linkage_matrix, distance_threshold, criterion="distance")
-
-    # Build feature clusters from labels
-    feature_clusters = {}
-    for feature_name, cluster_label in zip(panel_features, cluster_labels, strict=True):
-        if cluster_label not in feature_clusters:
-            feature_clusters[cluster_label] = []
-        feature_clusters[cluster_label].append(feature_name)
-
-    # Convert to list of lists (sorted by cluster ID for reproducibility)
-    clusters_list = [feature_clusters[cid] for cid in sorted(feature_clusters.keys())]
+    # Build adjacency graph and find connected components
+    adjacency = build_correlation_graph(corr_matrix, threshold=corr_threshold)
+    components = find_connected_components(adjacency)
 
     logger.debug(
-        f"Clustered {len(panel_features)} features into {len(clusters_list)} clusters "
+        f"Clustered {len(panel_features)} features into {len(components)} clusters "
         f"at corr_threshold={corr_threshold}"
     )
 
-    return clusters_list
+    return components
 
 
 def _compute_brier_deltas(

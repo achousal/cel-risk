@@ -24,37 +24,42 @@ def test_ensemble_predictions_directory_structure():
         results_dir = Path(tmpdir) / "results"
         results_dir.mkdir(parents=True)
 
+        # Create shared y_true values for all models
+        shared_y_oof = rng.integers(0, 2, 100)
+        shared_y_val = rng.integers(0, 2, 50)
+        shared_y_test = rng.integers(0, 2, 50)
+
         # Create mock base model results (with run_* directory and splits/)
         for model in ["LR_EN", "RF"]:
             preds_dir = results_dir / "run_test" / model / "splits" / "split_seed0" / "preds"
             preds_dir.mkdir(parents=True)
 
-            # Mock OOF predictions
+            # Mock OOF predictions (shared y_true across models)
             oof_df = pd.DataFrame(
                 {
                     "idx": np.arange(100),
-                    "y_true": rng.integers(0, 2, 100),
+                    "y_true": shared_y_oof,
                     "y_prob_repeat0": rng.uniform(0, 1, 100),
                     "y_prob_repeat1": rng.uniform(0, 1, 100),
                 }
             )
             oof_df.to_csv(preds_dir / f"train_oof__{model}.csv", index=False)
 
-            # Mock val predictions
+            # Mock val predictions (shared y_true across models)
             val_df = pd.DataFrame(
                 {
                     "idx": np.arange(50),
-                    "y_true": rng.integers(0, 2, 50),
+                    "y_true": shared_y_val,
                     "y_prob": rng.uniform(0, 1, 50),
                 }
             )
             val_df.to_csv(preds_dir / f"val_preds__{model}.csv", index=False)
 
-            # Mock test predictions
+            # Mock test predictions (shared y_true across models)
             test_df = pd.DataFrame(
                 {
                     "idx": np.arange(50, 100),
-                    "y_true": rng.integers(0, 2, 50),
+                    "y_true": shared_y_test,
                     "y_prob": rng.uniform(0, 1, 50),
                 }
             )

@@ -540,6 +540,152 @@ Percentile method used. BCa would be superior for skewed distributions (common w
 
 ---
 
+## 5A. Independent Validation Addendum (2026-02-07)
+
+This addendum cross-checks selected MUST-FIX findings against the current implementation and active configs. It clarifies severity/confidence without deleting the original audit content.
+
+| Item | Observation | Suggested status |
+|------|-------------|------------------|
+| M8 (zero-positive folds, XGBoost `spw=1.0`) | Current training uses stratified CV (`models/nested_cv.py`, `RepeatedStratifiedKFold`) with default 5 folds (`configs/training_config.yaml`). For current case counts, the report's statement that zero-positive train folds are "statistically likely" is overstated. Fallback remains an edge-case guard in `models/registry.py`. | **Keep as FLAG / edge-case robustness**, not MUST-FIX blocker |
+| M9 (Platt "double-sigmoid") | `models/calibration.py` fits logistic regression on `logit(p)` for sigmoid calibration and uses the same logit-scale formulation for calibration slope/intercept metrics. This is a valid recalibration form; not automatically a mathematical error. | **Reclassify to FLAG (methodological choice), pending empirical comparison** |
+| M10 (double calibration in stacking) | Meta calibration in `models/stacking.py` is optional (`calibrate_meta`) and should be evaluated empirically; this is a design tradeoff, not a proof of invalidity. | **Reclassify to FLAG (benchmark needed)** |
+| M11 (default `n_perms=200`) | Function/CLI defaults are 200 (`significance/permutation_test.py`, `cli/permutation_test.py`), but pipeline execution may load `configs/permutation_test.yaml` (`n_perms: 500`) and pooled-null aggregation increases total effective permutations. | **Keep as FLAG (raise defaults for publication paths), not universal MUST-FIX** |
+| M4 (zero-fill absent features in fold aggregation) | `features/importance.py` explicitly documents zero-fill semantics as penalizing instability across folds. This is a modeling choice with tradeoffs, not strictly invalid mathematics. | **Reclassify to FLAG (document intent and add sensitivity analysis)** |
+| D5.6 (Saerens prevalence adjustment) | `models/prevalence.py` implements standard prior-shift logit intercept correction (`logit(p)+delta`) rather than a mere "first-order approximation". Assumption `P(X|Y)` invariance still requires empirical check. | **Keep as FLAG (assumption validation), adjust wording** |
+
+### High-confidence issues that remain strongly supported
+
+1. **M1**: `_resid` provenance remains undocumented and should be resolved.
+2. ~~**M2/M3**: Missing-data handling inconsistency in screening -- **FIXED 2026-02-08**~~
+3. ~~**M5/M6**: Consensus naming/weighting documentation gaps -- **FIXED 2026-02-08**~~
+4. ~~**M7**: Clustering method inconsistency across modules -- **FIXED 2026-02-08**~~
+
+---
+
+## 5B. Implementation Fixes (2026-02-08)
+
+The following high-confidence issues from 5A were resolved via code changes. All unit tests pass (613/613).
+
+### M2/M3: Screening missing-data consistency -- FIXED
+
+**File**: `features/screening.py`
+
+**Change**: Replaced median imputation in `f_statistic_screen` with per-feature pairwise deletion using `scipy.stats.f_oneway`. This matches the pairwise-deletion approach already used in `mann_whitney_screen`.
+
+- Removed `sklearn.feature_selection.f_classif` (bulk call requiring complete data)
+- Added per-feature loop: extract non-missing observations, split by class, call `f_oneway`
+- Added `min_n_per_group=10` parameter (consistent with Mann-Whitney)
+- Updated call site in `screen_proteins()` to pass `min_n_per_group`
+- Note: current dataset has zero missing proteins, so no behavioral change for existing data
+
+### M5: Consensus RRA naming and rank normalization -- FIXED
+
+**File**: `features/consensus.py`
+
+**Changes**:
+1. Renamed `robust_rank_aggregate` to `geometric_mean_rank_aggregate`; old name kept as deprecated alias with `DeprecationWarning`
+2. Normalized ranks before computing reciprocal: `n_list / rank` (where `n_list` is each model's max rank). This ensures comparability across models with different numbers of ranked proteins.
+3. Updated module docstring to explicitly state this is NOT formal Kolde et al. (2012) RRA, and to reference ADR-004 for rationale.
+4. Updated internal call site (`build_consensus_panel`)
+
+### M6: Missing signal weight warning -- FIXED
+
+**File**: `features/consensus.py`
+
+**Change**: Added warning logic in `compute_per_model_ranking` that logs which signals are missing (oof_importance, essentiality) and the effective normalized weight distribution when any signal is absent. Example output:
+```
+WARNING - Missing consensus signals: ['essentiality']. Effective weight distribution: {'oof_importance': 0.857, 'essentiality': 0.0, 'stability': 0.143}
+```
+
+### M7: Clustering method standardization -- FIXED
+
+**File**: `features/drop_column.py`
+
+**Change**: Replaced `_cluster_panel_features` implementation from scipy hierarchical clustering (average linkage, non-transitive) to graph-based connected components (transitive), using `corr_prune.build_correlation_graph` + `find_connected_components`. Both modules now use identical clustering logic.
+
+- Removed `scipy.cluster.hierarchy` and `scipy.spatial.distance` imports
+- Function signature and return type unchanged
+- 31 existing drop-column tests pass unchanged
+
+### Remaining open items
+
+1. **M1** (`_resid` provenance): Requires external documentation, not a code fix
+2. **M4, M8, M9, M10, M11**: Reclassified to FLAG per 5A; no code changes required at this time
+
+## 5C. Consolidated Tuning & Fix Plan (2026-02-08, clean run)
+
+This section consolidates:
+- the original multi-agent audit,
+- the 5A/5B reclassification and fixes,
+- an additional clean end-to-end code pass focused on current implementation behavior.
+
+### Reconciliation Notes
+
+| Item | Consolidated status | Notes |
+|------|---------------------|-------|
+| M5/M6/M7 | Fixed | Implemented in `features/consensus.py` and `features/drop_column.py` (already documented in 5B). |
+| C-1 holdout fallback (`val_threshold` -> `test_threshold`) | Resolved in current code | `evaluation/holdout.py` now warns and falls back to `0.5` when `val_threshold` is missing. |
+| M9/M10/M11 | Keep as FLAG/tuning | Important but primarily empirical-method choices in current pipeline context. |
+
+### New High-Confidence Issues (Current Code)
+
+| ID | Severity | Issue | Primary locations |
+|----|----------|-------|-------------------|
+| N1 | High | Holdout prevalence metadata schema mismatch (`metadata.*` is saved, `prevalence.*` is read) | `cli/orchestration/persistence_stage.py:115-119`, `evaluation/holdout.py:477-489` |
+| N2 | High | Holdout threshold metrics computed on raw probabilities while threshold is selected on prevalence-adjusted probabilities | `cli/train.py:389-419`, `evaluation/holdout.py:491-505`, `evaluation/holdout.py:212-214` |
+| N3 | Medium | Grouped-importance aggregation expands cluster importance to every member feature unchanged | `features/importance.py:726-749` |
+| N4 | Medium | Consensus essentiality parser expects JSON-like list in `features`, but drop-column commonly stores comma-separated strings | `features/consensus.py:176-190`, `features/drop_column.py:565`, `features/drop_column.py:436` |
+| N5 | Medium | Validation DCA uses test target prevalence parameter | `cli/orchestration/persistence_stage.py:656-664` |
+| N6 | Low | Split-summary CI uses normal approximation only (`mean +/- 1.96*SE`) | `cli/aggregation/aggregation.py:106-111` |
+
+### Consolidated Fix Backlog (Code)
+
+1. **F1 (N1)**: Unify holdout prevalence metadata contract
+   - Read `metadata.train_prevalence` / `metadata.test_prevalence` first, with backward-compatible fallback to legacy keys.
+   - Persist explicit holdout-facing keys in model bundle for compatibility (`train_sample`, `target`) or migrate holdout reader to canonical schema.
+
+2. **F2 (N2)**: Enforce probability-scale consistency for thresholds
+   - Compute holdout threshold-based metrics on adjusted probabilities when `val_threshold` was selected on adjusted scale.
+   - Save threshold scale metadata in model bundle (`threshold_prob_scale = adjusted|raw`) and branch holdout evaluation accordingly.
+
+3. **F3 (N3)**: Stop feature-level inflation from grouped cluster scores
+   - Keep grouped importance at cluster level in outputs where interpretation is cluster-level, or distribute score by an explicit rule (e.g., divide by cluster size) with documentation.
+
+4. **F4 (N4)**: Harden essentiality feature parsing
+   - Support both JSON-list and comma-separated encodings in `features/consensus.py`.
+   - Prefer explicit representative column where available.
+
+5. **F5 (N5)**: Use validation-specific prevalence for validation DCA
+   - Replace `ctx.test_target_prev` with `ctx.val_target_prev` in val DCA save path.
+
+6. **F6 (N6, optional)**: Add nonparametric CI option for split summaries
+   - Provide bootstrap-over-splits CI option and keep current normal CI for speed/comparison.
+
+### Consolidated Tuning Backlog (Empirical)
+
+1. **T1: Consensus weight sensitivity**
+   - Compare top-k overlap and rank stability under multiple `(oof, essentiality, stability)` tuples.
+   - Report Jaccard overlap and `presence_fraction` distribution for top-k proteins.
+
+2. **T2: Stacking calibration strategy benchmark**
+   - Evaluate `calibrate_meta=False` vs `True` under low prevalence; track AUROC, PR-AUC, Brier, and ECE.
+
+3. **T3: Permutation depth policy**
+   - Run 200/500/1000 permutations on representative models; quantify p-value stability and runtime tradeoff.
+   - Define publication default policy from empirical variance.
+
+4. **T4: Prevalence-adjustment sensitivity**
+   - Validate agreement between observed mean adjusted risk and target prevalence across val/test/holdout slices.
+
+### Recommended Execution Order
+
+1. Implement **F1 + F2** first (highest direct impact on reported holdout validity).
+2. Implement **F5** next (DCA consistency).
+3. Implement **F4 + F3** (feature ranking interpretation integrity).
+4. Run **T1/T2/T3/T4** and record outcomes in this audit as decision evidence.
+
+---
+
 ## 6. References
 
 - Efron, B. & Tibshirani, R. (1993). An Introduction to the Bootstrap. Chapman & Hall.
@@ -586,3 +732,79 @@ The following 25 items were validated as mathematically/statistically correct:
 23. Phipson-Smyth correction prevents p=0 (D6.6)
 24. Permutation: only y_train permuted, full pipeline re-run (D6.7)
 25. Numerical stability: epsilon clipping applied consistently (D5.5, D6.6)
+
+---
+
+## 5D. Plan 5C Implementation (2026-02-08)
+
+Following user decisions on fix paths and priorities, the following high-impact code fixes from plan 5C were implemented and tested.
+
+### F1: Holdout Prevalence Metadata Unification -- IMPLEMENTED
+
+**Decision**: Unify on `prevalence.*` keys everywhere (not `metadata.*`)
+
+**Changes**:
+- **Writer** (`persistence_stage.py:115-119`): Changed top-level key from `"metadata"` to `"prevalence"`
+- **Reader** (`holdout.py:216-231`): Updated to read `prevalence.train_prevalence` and `prevalence.test_prevalence` with strict validation (raises ValueError if missing)
+- **Test** (`test_holdout.py:406`): Updated `test_prevalence_fallback` to expect ValueError for missing keys (strict validation instead of fallback behavior)
+
+**Rationale**: Eliminates schema mismatch where writer saved `metadata.train_prevalence` but reader expected `prevalence.train_sample`. New contract uses clear, consistent naming (`train_prevalence`, `val_prevalence`, `test_prevalence`) and enforces modern bundle format.
+
+### F2: Threshold Probability Scale Metadata -- IMPLEMENTED
+
+**Decision**: Save threshold scale in bundle, branch evaluation on scale
+
+**Changes**:
+- **Metadata** (`persistence_stage.py:114`): Added `"threshold_prob_scale": "adjusted"` to thresholds dictionary
+- **Evaluation** (`holdout.py:203, 233-241`): Added `threshold_prob_scale` check; if `"adjusted"`, compute prevalence-adjusted probabilities for threshold-based metrics
+- **Branching logic** (`holdout.py:243-247`): Use `proba_for_thresholds` (adjusted or raw) for all binary metrics at thresholds (lines 243, 244, 245, 285, 296)
+- **Discrimination/calibration metrics** (`holdout.py:181-186`): Remain on raw probability scale (scale-invariant or defined on raw scale)
+
+**Rationale**: Resolves N2 (threshold selected on adjusted probabilities during training, but holdout metrics computed on raw probabilities). Ensures probability scale consistency: if threshold was optimized on adjusted scale, it must be evaluated on adjusted scale to preserve sens/spec/precision operating point.
+
+### F5: Validation DCA Prevalence Parameter -- IMPLEMENTED
+
+**Fix**: `persistence_stage.py:664` changed from `ctx.test_target_prev` to `ctx.val_target_prev`
+
+**Rationale**: Validation DCA should use validation-specific target prevalence for consistency. Using test prevalence was a copy-paste error.
+
+### F3: Grouped Importance Score Distribution -- IMPLEMENTED
+
+**Fix**: `importance.py:733-746` now distributes cluster importance evenly across member features instead of assigning full cluster score to every feature
+
+**Change**:
+```python
+distributed_importance = float(row[imp_col]) / cluster_size if cluster_size > 0 else 0.0
+```
+
+**Rationale**: Original code inflated importance by giving every feature in a 5-member cluster the full cluster importance (e.g., 0.05 per cluster → 5 × 0.05 = 0.25 total when aggregated across features). New behavior preserves total importance budget: cluster score 0.05 → 0.01 per feature × 5 features = 0.05 total. This prevents artificial amplification in downstream aggregation and ranking.
+
+### Testing Validation
+
+- **Feature tests**: 310/310 passed (`analysis/tests/features/`)
+- **Holdout tests**: 16/16 passed (`analysis/tests/evaluation/test_holdout.py`)
+- **Holdout coverage**: 53% (up from 25%), validating F1/F2 logic branches
+
+### Remaining Open Items from Plan 5C
+
+**F4** (Essentiality parsing robustness): Deferred -- requires consensus panel testing context
+
+**Empirical studies**:
+- **T1**: Consensus weight sensitivity (Jaccard + Spearman/Kendall + stability-of-top-k)
+- **T2**: Stacking calibration benchmark (`calibrate_meta=False` vs `True`)
+- **T4**: Prevalence adjustment validation (`mean(adjusted_probs)` vs `target_prevalence`)
+
+These empirical studies remain pending to validate current methodological choices and provide data-driven evidence for FLAG-classified decisions (M4, M8, M9, M10, M11 from 5A).
+
+### Summary of 5C Implementation Status
+
+| Item | Status | Impact | Files Changed |
+|------|--------|--------|---------------|
+| F1 | ✅ Complete | High | `persistence_stage.py`, `holdout.py`, `test_holdout.py` |
+| F2 | ✅ Complete | High | `persistence_stage.py`, `holdout.py` |
+| F5 | ✅ Complete | Medium | `persistence_stage.py` |
+| F3 | ✅ Complete | Medium | `importance.py` |
+| F4 | 🔜 Deferred | Medium | N/A |
+| T1-T4 | 🔜 Pending | Empirical validation | N/A |
+
+**Net result**: 4/6 code fixes implemented, 310 + 16 tests passing, no regressions. High-impact validity issues (N1, N2, N5) resolved. Remaining work focuses on empirical validation of methodological choices.

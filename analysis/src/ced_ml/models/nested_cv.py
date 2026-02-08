@@ -248,7 +248,17 @@ def oof_predictions_with_nested_cv(
         else:
             # Use loky backend for multi-threaded search to avoid thread oversubscription
             if getattr(search, "n_jobs", 1) and int(search.n_jobs) > 1:
-                with parallel_backend("loky", inner_max_num_threads=1):
+                try:
+                    with parallel_backend("loky", inner_max_num_threads=1):
+                        search.fit(X.iloc[train_idx], y[train_idx])
+                except (PermissionError, NotImplementedError, OSError) as exc:
+                    logger.warning(
+                        "Loky backend unavailable in current runtime (%s). "
+                        "Falling back to single-threaded hyperparameter search.",
+                        exc,
+                    )
+                    if hasattr(search, "set_params"):
+                        search = search.set_params(n_jobs=1)
                     search.fit(X.iloc[train_idx], y[train_idx])
             else:
                 search.fit(X.iloc[train_idx], y[train_idx])
@@ -508,13 +518,6 @@ def oof_predictions_with_nested_cv(
         logger.warning(
             "OOF calibration metrics (Brier, ECE) are in-sample and may be optimistically biased. "
             "Use holdout/test metrics for unbiased evaluation."
-        )
-
-        # 1.7-M1: Warn about potential double calibration when used in ensemble
-        logger.warning(
-            f"Model {model_name} uses oof_posthoc calibration. If this model is used in a "
-            "stacking ensemble with meta-learner calibration enabled, double calibration will occur. "
-            "Consider disabling either base model calibration or meta-learner calibration."
         )
 
         # Apply calibration to OOF predictions for consistent reporting
@@ -840,33 +843,29 @@ def _apply_per_fold_calibration(
     max_safe_cv = max(2, min_class_count)
     effective_cv = min(config.calibration.cv, max_safe_cv)
 
-    # Check if estimator is already fitted (has best_estimator_ or similar)
-    # If so, use cv="prefit" to avoid re-fitting from scratch
-    is_tuned = hasattr(estimator, "best_estimator_") or (
-        isinstance(estimator, Pipeline)
-        and all(
-            hasattr(step, "coef_")
-            or hasattr(step, "feature_importances_")
-            or hasattr(step, "is_fitted")
-            for _, step in estimator.steps
-            if hasattr(step, "fit")
-        )
+    # Create deterministic CV splitter for calibration
+    inner_cv = StratifiedKFold(n_splits=effective_cv, shuffle=True, random_state=random_state)
+
+    # Wrap with calibration
+    calibrated = CalibratedClassifierCV(
+        estimator=estimator, method=config.calibration.method, cv=inner_cv
     )
 
-    if is_tuned:
-        # Estimator is already fitted; use cv="prefit" to calibrate without re-fitting
-        calibrated = CalibratedClassifierCV(
-            estimator=estimator, method=config.calibration.method, cv="prefit"
+    # Note: When calibration_mode is "per_fold" and a tuned estimator is used,
+    # CalibratedClassifierCV will re-fit the estimator on smaller internal splits
+    # rather than calibrating the already-fitted model. This is a limitation of
+    # sklearn's CalibratedClassifierCV API (cv="prefit" was removed in sklearn 1.8.0).
+    # The re-fitting occurs on calibration folds, so hyperparameters from tuning are
+    # preserved but the estimator is retrained on subsets of the training fold.
+    if hasattr(estimator, "best_estimator_"):
+        logger.warning(
+            "per_fold calibration will re-fit the tuned estimator on internal CV splits "
+            "rather than calibrating the already-fitted model. Hyperparameters are preserved "
+            "but the estimator is retrained on smaller data subsets."
         )
-        calibrated.fit(X_train, y_train)
-    else:
-        # Estimator not fitted; use internal CV with deterministic splitter
-        inner_cv = StratifiedKFold(n_splits=effective_cv, shuffle=True, random_state=random_state)
-        calibrated = CalibratedClassifierCV(
-            estimator=estimator, method=config.calibration.method, cv=inner_cv
-        )
-        calibrated.fit(X_train, y_train)
 
+    # Fit on training fold
+    calibrated.fit(X_train, y_train)
     return calibrated
 
 

@@ -1,19 +1,27 @@
-"""Cross-model consensus panel generation via Robust Rank Aggregation.
+"""Cross-model consensus panel generation via geometric mean rank aggregation.
 
 This module aggregates protein rankings from multiple models to create a single
 consensus panel for clinical deployment. The workflow (per ADR-004):
 
 1. Per-model ranking: OOF importance (primary) + Essentiality (secondary) +
    Stability (tie-break) combined into composite score
-2. Cross-model RRA: Aggregate rankings via geometric mean of reciprocal ranks
+2. Cross-model aggregation: Aggregate rankings via geometric mean of normalized
+   reciprocal ranks
 3. Correlation clustering: Deduplicate highly correlated proteins (|r| > threshold)
 4. Top-N selection: Extract final panel
 
 Design rationale:
-- Uses geometric mean RRA (penalizes proteins missing from some models)
-- No external R dependencies (vs Stuart's p-value method)
+- Uses geometric mean of reciprocal ranks (NOT formal Kolde RRA with beta-model
+  p-values; see ADR-004 for rationale)
+- Ranks are normalized by list length to ensure comparability across models with
+  different numbers of proteins
+- No external R dependencies
 - Reuses existing correlation pruning infrastructure
 - Output compatible with --fixed-panel training
+
+Note: This module uses geometric-mean rank aggregation, not the formal Robust
+Rank Aggregation (RRA) method from Kolde et al. (2012), which uses beta-model
+p-values. See ADR-004 for rationale.
 """
 
 import json
@@ -92,6 +100,11 @@ def compute_per_model_ranking(
             - composite_score: Weighted combination [0, 1]
             - final_rank: Rank by composite score (1 = best)
     """
+    if any(w < 0 for w in (oof_weight, essentiality_weight, stability_weight)):
+        raise ValueError("All signal weights must be non-negative")
+    if oof_weight + essentiality_weight + stability_weight <= 0:
+        raise ValueError("At least one signal weight must be > 0")
+
     df = stability_df.copy()
 
     # Ensure protein column exists
@@ -217,11 +230,35 @@ def compute_per_model_ranking(
         df["essentiality_rank"] = np.nan
         df["norm_essentiality"] = 0.0
 
-    # Compute composite score with configurable weights
+    # Normalize weights across signals available for this model.
+    has_oof_signal = oof_importance_df is not None and len(oof_importance_df) > 0
+    has_essentiality_signal = essentiality_df is not None and len(essentiality_df) > 0
+    effective_weights = {
+        "oof_importance": oof_weight if has_oof_signal else 0.0,
+        "essentiality": essentiality_weight if has_essentiality_signal else 0.0,
+        "stability": stability_weight,
+    }
+    total_effective_weight = sum(effective_weights.values())
+    normalized_weights = {
+        signal: weight / total_effective_weight for signal, weight in effective_weights.items()
+    }
+
+    missing_signals = []
+    if oof_weight > 0 and not has_oof_signal:
+        missing_signals.append("oof_importance")
+    if essentiality_weight > 0 and not has_essentiality_signal:
+        missing_signals.append("essentiality")
+    if missing_signals:
+        logger.warning(
+            f"Missing consensus signals: {missing_signals}. "
+            f"Effective weight distribution: {normalized_weights}"
+        )
+
+    # Compute composite score using normalized effective weights.
     df["composite_score"] = (
-        oof_weight * df["norm_oof"].fillna(0.0)
-        + essentiality_weight * df["norm_essentiality"].fillna(0.0)
-        + stability_weight * df["norm_stability"]
+        normalized_weights["oof_importance"] * df["norm_oof"].fillna(0.0)
+        + normalized_weights["essentiality"] * df["norm_essentiality"].fillna(0.0)
+        + normalized_weights["stability"] * df["norm_stability"]
     )
 
     # Final rank by composite score
@@ -246,17 +283,26 @@ def compute_per_model_ranking(
     return df[output_cols].copy()
 
 
-def robust_rank_aggregate(
+def geometric_mean_rank_aggregate(
     per_model_rankings: dict[str, pd.DataFrame],
     method: str = "geometric_mean",
 ) -> pd.DataFrame:
-    """Aggregate rankings across models using Robust Rank Aggregation.
+    """Aggregate rankings across models using geometric mean of normalized reciprocal ranks.
+
+    This method computes a consensus ranking by taking the geometric mean of
+    reciprocal ranks, normalized by each model's list length. This is NOT the
+    formal Robust Rank Aggregation (RRA) method from Kolde et al. (2012), which
+    uses beta-model p-values. See ADR-004 for rationale.
+
+    Rank normalization ensures that ranks are comparable across models with
+    different numbers of proteins. For each model, ranks are normalized by dividing
+    by the maximum rank (list length) before taking reciprocals.
 
     Args:
         per_model_rankings: Dict mapping model_name -> DataFrame with columns
             [protein, final_rank]. Each model may have different protein sets.
         method: Aggregation method:
-            - "geometric_mean": Geometric mean of reciprocal ranks (default).
+            - "geometric_mean": Geometric mean of normalized reciprocal ranks (default).
               Penalizes proteins missing from some models.
             - "borda": Borda count (sum of (N - rank + 1) across models).
             - "median": Median rank across models.
@@ -294,47 +340,49 @@ def robust_rank_aggregate(
     model_names = list(per_model_rankings.keys())
     n_models = len(model_names)
 
-    # Get max ranks per model (for missing protein penalty)
-    max_ranks = {}
+    # Precompute rank lookups for O(1) access per model/protein.
+    max_ranks: dict[str, float] = {}
+    rank_lookups: dict[str, dict[str, float]] = {}
     for model_name, df in per_model_rankings.items():
-        max_ranks[model_name] = df["final_rank"].max()
+        if "protein" not in df.columns or "final_rank" not in df.columns:
+            raise ValueError(
+                f"Model '{model_name}' ranking must have 'protein' and 'final_rank' columns"
+            )
+        max_ranks[model_name] = float(df["final_rank"].max())
+        rank_lookups[model_name] = dict(zip(df["protein"], df["final_rank"], strict=False))
+
+    missing_rank = max(max_ranks.values()) + 1
 
     # Build result rows
     rows = []
     for protein in sorted(all_proteins):
         row = {"protein": protein}
         ranks = []
-        ranks_present_only = []  # Ranks only from models where protein is present
+        n_present = 0
 
         for model_name in model_names:
-            df = per_model_rankings[model_name]
-            protein_row = df[df["protein"] == protein]
-
-            if len(protein_row) > 0:
-                rank = float(protein_row["final_rank"].iloc[0])
-                ranks_present_only.append(rank)
-            else:
+            rank = rank_lookups[model_name].get(protein)
+            if rank is None or pd.isna(rank):
                 # Missing protein gets global worst rank + 1 (penalty)
-                # Use global max rank to ensure consistent penalty across models
-                rank = max(max_ranks.values()) + 1
+                # Use global max rank to ensure consistent penalty across models.
+                rank = missing_rank
+            else:
+                rank = float(rank)
+                n_present += 1
 
             row[f"{model_name}_rank"] = rank
             ranks.append(rank)
 
-        # Count models where protein was actually present
-        n_present = sum(
-            1
-            for model_name in model_names
-            if protein in per_model_rankings[model_name]["protein"].values
-        )
         row["n_models_present"] = n_present
 
-        # Compute uncertainty metrics (using only ranks from models where protein is present)
-        if len(ranks_present_only) > 1:
-            rank_std = float(np.std(ranks_present_only, ddof=1))
-            rank_mean = float(np.mean(ranks_present_only))
+        # Compute uncertainty metrics using ALL ranks (including imputed penalty ranks).
+        # This avoids artificially low uncertainty for proteins that appear in
+        # only a subset of models.
+        if len(ranks) > 1:
+            rank_std = float(np.std(ranks, ddof=1))
+            rank_mean = float(np.mean(ranks))
             rank_cv = rank_std / rank_mean if rank_mean > 0 else 0.0
-        elif len(ranks_present_only) == 1:
+        elif len(ranks) == 1:
             rank_std = 0.0
             rank_cv = 0.0
         else:
@@ -348,9 +396,14 @@ def robust_rank_aggregate(
 
         # Compute consensus score based on method
         if method == "geometric_mean":
-            # Geometric mean of reciprocal ranks (higher = better)
-            reciprocal_ranks = [1.0 / r for r in ranks]
-            row["consensus_score"] = float(gmean(reciprocal_ranks))
+            # Geometric mean of normalized reciprocal ranks (higher = better)
+            # Normalize each rank by its model's list length before taking reciprocal
+            # This ensures comparability across models with different numbers of proteins
+            normalized_reciprocals = []
+            for model_name, rank in zip(model_names, ranks, strict=False):
+                n_list = max_ranks[model_name]  # List length for this model
+                normalized_reciprocals.append(n_list / rank)  # Equivalent to 1/(r/n)
+            row["consensus_score"] = float(gmean(normalized_reciprocals))
 
         elif method == "borda":
             # Borda count: sum of (max_rank - rank + 1)
@@ -399,8 +452,8 @@ def robust_rank_aggregate(
         if len(low_presence_proteins) > 0:
             logger.warning(
                 f"Found {len(low_presence_proteins)} proteins in top {top_k} with presence_fraction < {low_presence_threshold}. "
-                "These proteins may have falsely low rank_std/rank_cv due to missing from most models. "
-                "Consider filtering by presence_fraction >= 0.5 for more robust consensus."
+                "These proteins are less robust across models despite penalty-based ranking. "
+                "Consider filtering by presence_fraction >= 0.5."
             )
 
     return result
@@ -435,7 +488,7 @@ def cluster_and_select_representatives(
         Ensure df_train does not include validation or test samples to avoid
         information leakage into feature grouping.
     """
-    logger.warning(
+    logger.debug(
         "Correlation matrix for clustering should be computed on training data only. "
         "Ensure df_train does not include validation or test samples."
     )
@@ -609,9 +662,9 @@ def build_consensus_panel(
             f"Check that models have aggregated stability results."
         )
 
-    # Step 2: Cross-model RRA
-    logger.info(f"Running RRA aggregation ({rra_method})...")
-    consensus_df = robust_rank_aggregate(per_model_rankings, method=rra_method)
+    # Step 2: Cross-model rank aggregation
+    logger.info(f"Running rank aggregation method={rra_method}...")
+    consensus_df = geometric_mean_rank_aggregate(per_model_rankings, method=rra_method)
 
     logger.info(f"Consensus ranking: {len(consensus_df)} total proteins")
 

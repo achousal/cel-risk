@@ -413,9 +413,9 @@ def _run_hpc_mode(
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Replace console logger with file-based logger now that we have run_id
-    submission_log_dir = logs_dir / "submissions"
+    submission_log_dir = logs_dir / f"run_{run_id}"
     submission_log_dir.mkdir(parents=True, exist_ok=True)
-    submission_log_file = submission_log_dir / f"submission_{run_id}.log"
+    submission_log_file = submission_log_dir / "submission.log"
 
     # Reconfigure logger with file output
     import logging
@@ -539,7 +539,7 @@ def _run_hpc_mode(
     hpc_logger.info("  bjobs -w | grep CeD_")
     hpc_logger.info("")
     hpc_logger.info("Training logs:")
-    hpc_logger.info(f"  tail -f {outdir.parent}/logs/training/run_{result['run_id']}/*.log")
+    hpc_logger.info(f"  tail -f {outdir.parent}/logs/run_{result['run_id']}/training/*.log")
     hpc_logger.info("")
     hpc_logger.info("LSF error logs (job failures only):")
     hpc_logger.info(f"  cat {result['logs_dir']}/*.err")

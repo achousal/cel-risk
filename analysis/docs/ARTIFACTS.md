@@ -402,26 +402,26 @@ results/ENSEMBLE/run_{run_id}/splits/split_seed{N}/
 
 ## 7. Log Artifacts
 
-All CLI commands produce structured log files under `logs/` at the project root. Each command writes to a dedicated subdirectory organized by run ID.
+All CLI commands produce structured log files under `logs/` at the project root. Logs follow a **run-first structure** matching the results layout: everything from one experiment lives under `logs/run_{ID}/`.
 
 ### 7.1 Directory Structure
 
 ```
 logs/
-  training/run_{ID}/              # Model training logs
-    {model}_seed{N}.log           # Per-model per-seed training log
-  ensemble/run_{ID}/              # Ensemble meta-learner training logs
-    ENSEMBLE_seed{N}.log          # Per-seed ensemble log
-  aggregation/run_{ID}/           # Cross-split aggregation logs
-    {model}.log                   # Per-model aggregation log
-  optimization/run_{ID}/          # Panel optimization (RFE) logs
-    {model}_seed{N}.log           # Per-model per-seed optimization log
-  permutation/run_{ID}/            # Permutation significance testing logs
-    perm_{model}_seed{N}.log      # Permutation test log (per model per seed)
-  consensus/run_{ID}/             # Cross-model consensus logs
-    consensus.log                 # RRA consensus panel log
-  pipeline/                       # Pipeline orchestration logs
-    run_{ID}.log                  # Full pipeline run log
+  run_{ID}/                         # Level 1: Run ID (matches results/run_{ID}/)
+    training/                       # Model training logs
+      {model}_seed{N}.log           # Per-model per-seed training log
+    ensemble/                       # Ensemble meta-learner training logs
+      ENSEMBLE_seed{N}.log          # Per-seed ensemble log
+    aggregation/                    # Cross-split aggregation logs
+      {model}.log                   # Per-model aggregation log
+    optimization/                   # Panel optimization (RFE) logs
+      {model}_seed{N}.log           # Per-model per-seed optimization log
+    permutation/                    # Permutation significance testing logs
+      perm_{model}_seed{N}.log      # Permutation test log (per model per seed)
+    consensus.log                   # RRA consensus panel log (flat, one per run)
+    submission.log                  # HPC job submission log (flat, one per run)
+    pipeline.log                    # Full pipeline run log (flat, one per run)
 ```
 
 ### 7.2 Log Format

@@ -123,6 +123,8 @@ class MetricsWriter:
         df.insert(1, "model", model)
 
         path = self.dirs.get_path("core", "test_bootstrap_ci.csv")
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         df.to_csv(path, index=False)
         logger.info(f"Saved bootstrap CI metrics: {path}")
         return str(path)

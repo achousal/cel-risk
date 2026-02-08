@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +39,8 @@ class ArtifactsWriter:
             Path to saved file
         """
         path = self.dirs.get_path("core", "run_settings.json")
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         with open(path, "w") as f:
             json.dump(settings, f, indent=2, sort_keys=True)
         logger.info(f"Saved run settings: {path}")
@@ -57,6 +61,8 @@ class ArtifactsWriter:
         df.insert(0, "scenario", scenario)
 
         path = self.dirs.get_path("cv", "best_params_per_split.csv")
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         df.to_csv(path, index=False)
         logger.info(f"Saved best params per split: {path}")
         return str(path)
@@ -78,6 +84,8 @@ class ArtifactsWriter:
         df.insert(0, "scenario", scenario)
 
         path = self.dirs.get_path("cv", "selected_proteins_per_outer_split.csv")
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         df.to_csv(path, index=False)
         logger.info(f"Saved selected proteins per split: {path}")
         return str(path)
@@ -109,12 +117,27 @@ class ArtifactsWriter:
 
         filename = f"{model_name}__final_model.joblib"
         path = self.dirs.get_path("core", filename)
+        final_path = Path(path)
 
+        if final_path.exists():
+            logger.warning(f"Overwriting existing model artifact: {path}")
+
+        # Atomic write: write to temp file, then rename
         try:
-            joblib.dump(bundle, path, compress=3)
+            parent_dir = final_path.parent
+            with tempfile.NamedTemporaryFile(
+                dir=parent_dir, delete=False, suffix=".tmp"
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+
+            joblib.dump(bundle, tmp_path, compress=3)
+            os.replace(tmp_path, final_path)
             logger.info(f"Saved model artifact: {path}")
             return str(path)
         except Exception as e:
+            # Clean up temp file if it exists
+            if "tmp_path" in locals() and Path(tmp_path).exists():
+                Path(tmp_path).unlink()
             logger.error(f"Failed to save model artifact: {e}")
             raise OSError(f"Model serialization failed: {e}") from e
 

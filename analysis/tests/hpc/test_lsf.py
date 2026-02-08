@@ -138,7 +138,7 @@ def test_build_job_script_log_paths():
     """Test that log paths are correctly configured.
 
     Note: Only stderr (.err) is captured by LSF. Stdout is discarded because
-    ced commands create their own log files in logs/training/, logs/ensemble/, etc.
+    ced commands create their own log files in logs/run_{ID}/training/, etc.
     """
     log_dir = Path("/test/logs")
     script = build_job_script(
@@ -158,9 +158,10 @@ def test_build_job_script_log_paths():
     # No more .live.log files - ced commands create their own logs
     assert ".live.log" not in script
     assert "tee" not in script
-    # Verify trap-based cleanup removes .err on success (warnings are not actionable)
+    # Verify trap-based cleanup preserves .err on success (renames to .err.completed)
     assert "trap cleanup_err EXIT" in script
-    assert "rm -f" in script
+    assert "mv" in script
+    assert ".err.completed" in script
 
 
 def test_build_job_script_set_u_safe():

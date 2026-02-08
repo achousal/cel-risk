@@ -327,18 +327,40 @@ def run_permutation_test(
     logger.info(f"Observed AUROC: {observed_auroc:.4f}")
     logger.info(f"Running {n_perms} permutations with {n_jobs} parallel jobs...")
 
-    null_aurocs = Parallel(n_jobs=n_jobs, verbose=1)(
-        delayed(run_permutation_for_fold)(
-            pipeline=base_pipeline,
-            X_train=X_train,
-            y_train=y_train,
-            X_test=X_test,
-            y_test=y_test,
-            random_state=random_state,
-            perm_idx=i,
+    parallel_requested = n_jobs is not None and int(n_jobs) != 1
+    try:
+        null_aurocs = Parallel(n_jobs=n_jobs, verbose=1)(
+            delayed(run_permutation_for_fold)(
+                pipeline=base_pipeline,
+                X_train=X_train,
+                y_train=y_train,
+                X_test=X_test,
+                y_test=y_test,
+                random_state=random_state,
+                perm_idx=i,
+            )
+            for i in range(n_perms)
         )
-        for i in range(n_perms)
-    )
+    except (PermissionError, NotImplementedError, OSError) as exc:
+        if not parallel_requested:
+            raise
+        logger.warning(
+            "Parallel permutation execution unavailable in current runtime (%s). "
+            "Falling back to sequential execution.",
+            exc,
+        )
+        null_aurocs = [
+            run_permutation_for_fold(
+                pipeline=base_pipeline,
+                X_train=X_train,
+                y_train=y_train,
+                X_test=X_test,
+                y_test=y_test,
+                random_state=random_state,
+                perm_idx=i,
+            )
+            for i in range(n_perms)
+        ]
 
     null_aurocs_clean = [x for x in null_aurocs if not np.isnan(x)]
     n_failed = len(null_aurocs) - len(null_aurocs_clean)

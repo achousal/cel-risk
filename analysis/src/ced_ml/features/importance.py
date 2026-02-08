@@ -726,6 +726,8 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
     # Expand grouped (cluster-level) DataFrames to feature-level if needed.
     # Grouped DataFrames have 'cluster_features' (JSON list) and 'mean_importance'
     # but no 'feature' column. Expand each cluster row into one row per feature.
+    # F3 fix: Distribute cluster importance evenly across member features to avoid
+    # artificial inflation. Each feature gets importance / cluster_size.
     expanded_dfs = []
     for df in valid_dfs:
         if "cluster_features" in df.columns and "feature" not in df.columns:
@@ -738,11 +740,16 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
             )
             for _, row in df.iterrows():
                 cluster_feats = json.loads(row["cluster_features"])
+                cluster_size = len(cluster_feats)
+                # Distribute cluster importance across features to preserve total importance
+                distributed_importance = (
+                    float(row[imp_col]) / cluster_size if cluster_size > 0 else 0.0
+                )
                 for feat in cluster_feats:
                     rows.append(
                         {
                             "feature": feat,
-                            "importance": float(row[imp_col]),
+                            "importance": distributed_importance,
                             "importance_type": imp_type,
                         }
                     )

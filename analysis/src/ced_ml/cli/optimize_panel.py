@@ -595,9 +595,21 @@ def run_optimize_panel_aggregated(
                 f"Starting panel: {len(initial_proteins)} proteins\n"
                 f"{'=' * 60}\n"
             )
-            per_seed_results: list[RFEResult] = Parallel(n_jobs=seed_jobs)(
-                delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
-            )
+            try:
+                per_seed_results = Parallel(n_jobs=seed_jobs)(
+                    delayed(_run_rfe_for_seed)(sd) for sd in split_dirs
+                )
+            except (PermissionError, NotImplementedError, OSError) as exc:
+                logger.warning(
+                    "Parallel seed execution unavailable in current runtime (%s). "
+                    "Falling back to sequential RFE.",
+                    exc,
+                )
+                per_seed_results = []
+                for idx, sd in enumerate(split_dirs, 1):
+                    logger.info(f"\nProcessing seed {idx}/{len(split_dirs)}")
+                    result = _run_rfe_for_seed(sd)
+                    per_seed_results.append(result)
         else:
             logger.info(
                 f"\n{'=' * 60}\n"

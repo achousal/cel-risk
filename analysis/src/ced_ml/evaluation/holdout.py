@@ -190,37 +190,64 @@ def compute_holdout_metrics(
     # Use val_threshold as primary threshold (chosen on validation set)
     val_threshold = thresholds_meta.get("val_threshold")
     if val_threshold is None:
-        test_threshold = thresholds_meta.get("test_threshold", 0.5)
+        # Never silently use test_threshold as replacement (ADR-009 violation).
+        # Using test_threshold would leak test-set information into holdout decisions.
         logger.warning(
-            "val_threshold missing from model bundle. Falling back to test_threshold=%.6f. "
-            "This risks test-set leakage (ADR-009 violation). Ensure model was trained with validation-based threshold selection.",
-            test_threshold,
+            "val_threshold missing from model bundle. Using default threshold=0.5. "
+            "This indicates an older model bundle format. "
+            "Models should be retrained with validation-based threshold selection (ADR-009)."
         )
-        thr_primary = test_threshold
+        thr_primary = 0.5
     else:
         thr_primary = val_threshold
     objective_name = thresholds_meta.get("objective", "unknown")
     fixed_spec_value = thresholds_meta.get("fixed_spec")
+
+    # Check if threshold was selected on adjusted or raw probabilities (F2 fix)
+    threshold_prob_scale = thresholds_meta.get("threshold_prob_scale", "raw")
 
     # For backward compatibility with old bundles
     thr_f1 = thresholds_meta.get("max_f1", thr_primary)
     thr_spec90 = thresholds_meta.get("spec90", thr_primary)
     ctrl_specs = thresholds_meta.get("control_specs", {})
 
-    # Metrics at key thresholds
-    m_primary = binary_metrics_at_threshold(y_true, proba_eval, thr_primary)
-    m_f1 = binary_metrics_at_threshold(y_true, proba_eval, thr_f1)
-    m_spec90 = binary_metrics_at_threshold(y_true, proba_eval, thr_spec90)
-
-    # Prevalence metadata
+    # Prevalence metadata (needed for F2: probability scale matching)
     prevalence_meta = bundle.get("prevalence", {})
-    train_prev = prevalence_meta.get("train_sample", np.nan)
-    if not np.isfinite(train_prev):
-        train_prev = float(y_true.mean())
-    target_prev = prevalence_meta.get("target", train_prev)
+    train_prev = prevalence_meta.get("train_prevalence")
+    if train_prev is None or not np.isfinite(train_prev):
+        raise ValueError(
+            "Model bundle missing valid 'prevalence.train_prevalence'. "
+            "Bundle must be from modern training pipeline (post-F1 fix). "
+            "Please retrain the model."
+        )
+    target_prev = prevalence_meta.get("test_prevalence")
     if target_prev is None or not np.isfinite(target_prev):
-        target_prev = train_prev
+        raise ValueError(
+            "Model bundle missing valid 'prevalence.test_prevalence'. "
+            "Bundle must be from modern training pipeline (post-F1 fix). "
+            "Please retrain the model."
+        )
+    train_prev = float(train_prev)
     target_prev = float(np.clip(target_prev, EPSILON_BOUNDS, 1.0 - EPSILON_BOUNDS))
+
+    # F2 fix: Use adjusted probabilities for threshold-based metrics if threshold was
+    # selected on adjusted scale. Discrimination/calibration metrics stay on raw scale.
+    if threshold_prob_scale == "adjusted":
+        from ced_ml.models.prevalence import adjust_probabilities_for_prevalence
+
+        proba_for_thresholds = adjust_probabilities_for_prevalence(
+            proba_eval, sample_prev=train_prev, target_prev=target_prev
+        )
+        logger.info(
+            f"Using adjusted probabilities for threshold-based metrics (scale={threshold_prob_scale})"
+        )
+    else:
+        proba_for_thresholds = proba_eval
+
+    # Metrics at key thresholds
+    m_primary = binary_metrics_at_threshold(y_true, proba_for_thresholds, thr_primary)
+    m_f1 = binary_metrics_at_threshold(y_true, proba_for_thresholds, thr_f1)
+    m_spec90 = binary_metrics_at_threshold(y_true, proba_for_thresholds, thr_spec90)
 
     # Build metrics dictionary
     metrics = {
@@ -264,7 +291,7 @@ def compute_holdout_metrics(
         except (ValueError, TypeError) as e:
             logger.debug("Skipping invalid threshold '%s': %s", val, e)
             continue
-        m_ctrl = binary_metrics_at_threshold(y_true, proba_eval, thr_val)
+        m_ctrl = binary_metrics_at_threshold(y_true, proba_for_thresholds, thr_val)
         tag = str(key).replace("0.", "")
         metrics[f"thr_ctrl_{tag}"] = float(thr_val)
         metrics[f"precision_holdout_ctrl_{tag}"] = float(m_ctrl.precision)
@@ -275,7 +302,7 @@ def compute_holdout_metrics(
     for thr in clinical_points:
         if not (0.0 < thr < 1.0):
             continue
-        m_thr = binary_metrics_at_threshold(y_true, proba_eval, thr)
+        m_thr = binary_metrics_at_threshold(y_true, proba_for_thresholds, thr)
         tag = f"clin_{str(thr).replace('.', 'p')}"
         metrics[f"{tag}_threshold"] = float(thr)
         metrics[f"{tag}_precision"] = float(m_thr.precision)
@@ -474,17 +501,26 @@ def evaluate_holdout(
 
     # Prevalence adjustment
     prevalence_meta = bundle.get("prevalence", {})
-    train_prev = prevalence_meta.get("train_sample", np.nan)
-    if not np.isfinite(train_prev):
-        train_prev = float(y_holdout.mean())
+    train_prev = prevalence_meta.get("train_prevalence")
+    if train_prev is None or not np.isfinite(train_prev):
+        raise ValueError(
+            "Model bundle missing valid 'prevalence.train_prevalence'. "
+            "Bundle must be from modern training pipeline (post-F1 fix). "
+            "Please retrain the model."
+        )
 
     target_prev = (
         target_prevalence
         if target_prevalence is not None
-        else prevalence_meta.get("target", train_prev)
+        else prevalence_meta.get("test_prevalence")
     )
     if target_prev is None or not np.isfinite(target_prev):
-        target_prev = train_prev
+        raise ValueError(
+            "Model bundle missing valid 'prevalence.test_prevalence'. "
+            "Bundle must be from modern training pipeline (post-F1 fix). "
+            "Please retrain the model."
+        )
+    train_prev = float(train_prev)
     target_prev = float(np.clip(target_prev, EPSILON_BOUNDS, 1.0 - EPSILON_BOUNDS))
 
     proba_adjusted = adjust_probabilities_for_prevalence(proba_eval, train_prev, target_prev)

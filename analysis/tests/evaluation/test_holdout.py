@@ -130,8 +130,8 @@ class TestComputeHoldoutMetrics:
                 "control_specs": {},
             },
             "prevalence": {
-                "train_sample": 0.4,
-                "target": 0.01,
+                "train_prevalence": 0.4,
+                "test_prevalence": 0.01,
             },
         }
 
@@ -166,7 +166,7 @@ class TestComputeHoldoutMetrics:
                 "spec90": 0.7,
                 "control_specs": {},
             },
-            "prevalence": {"train_sample": 0.2, "target": 0.2},
+            "prevalence": {"train_prevalence": 0.2, "test_prevalence": 0.2},
         }
 
         metrics = compute_holdout_metrics(
@@ -298,8 +298,8 @@ class TestEvaluateHoldout:
                 "spec_targets": [0.95, 0.99],
             },
             "prevalence": {
-                "train_sample": 0.3,
-                "target": 0.01,
+                "train_prevalence": 0.3,
+                "test_prevalence": 0.01,
             },
             "args": {
                 "dca_threshold_min": 0.001,
@@ -393,7 +393,7 @@ class TestHoldoutEdgeCases:
                 "spec90": 0.7,
                 "control_specs": {},
             },
-            "prevalence": {"train_sample": 0.2, "target": 0.2},
+            "prevalence": {"train_prevalence": 0.2, "test_prevalence": 0.2},
         }
 
         metrics = compute_holdout_metrics(y_true, proba, bundle, "IncidentOnly", clinical_points=[])
@@ -404,7 +404,7 @@ class TestHoldoutEdgeCases:
         assert metrics["n_holdout_pos"] == 0
 
     def test_prevalence_fallback(self):
-        """Test that prevalence falls back to sample prevalence when missing."""
+        """Test that missing prevalence keys raise ValueError (F1 fix: strict validation)."""
         y_true = np.array([0, 0, 1, 1])
         proba = np.array([0.1, 0.2, 0.8, 0.9])
 
@@ -420,7 +420,6 @@ class TestHoldoutEdgeCases:
             "prevalence": {},  # Missing prevalence info
         }
 
-        metrics = compute_holdout_metrics(y_true, proba, bundle, "IncidentOnly", clinical_points=[])
-
-        # Should compute sample prevalence
-        assert metrics["target_prevalence"] == 0.5
+        # F1 fix: Should raise ValueError for missing prevalence keys
+        with pytest.raises(ValueError, match="missing valid 'prevalence.train_prevalence'"):
+            compute_holdout_metrics(y_true, proba, bundle, "IncidentOnly", clinical_points=[])

@@ -127,15 +127,16 @@ def auto_log_path(
 ) -> Path:
     """Build an automatic log file path based on command context.
 
-    Log directory structure:
+    Log directory structure (run-first, matching results layout):
         logs/
-          training/run_{ID}/{model}_seed{N}.log
-          ensemble/run_{ID}/ENSEMBLE_seed{N}.log
-          aggregation/run_{ID}/{model}.log
-          optimization/run_{ID}/{model}.log
-          permutation/run_{ID}/perm_{model}_seed{N}.log
-          consensus/run_{ID}/consensus.log
-          pipeline/run_{ID}.log
+          run_{ID}/
+            training/{model}_seed{N}.log
+            ensemble/ENSEMBLE_seed{N}.log
+            aggregation/{model}.log
+            optimization/{model}_seed{N}.log
+            permutation/perm_{model}_seed{N}.log
+            consensus.log             # flat (one per run)
+            pipeline.log              # flat (one per run)
 
     Args:
         command: CLI command name (train, train-ensemble, aggregate-splits,
@@ -168,38 +169,39 @@ def auto_log_path(
     else:
         logs_root = project_root / "logs"
     rid = run_id or "unknown"
+    run_root = logs_root / f"run_{rid}"
 
     if command == "train":
         model_part = model or "unknown"
         seed_part = f"_seed{split_seed}" if split_seed is not None else ""
-        return logs_root / "training" / f"run_{rid}" / f"{model_part}{seed_part}.log"
+        return run_root / "training" / f"{model_part}{seed_part}.log"
 
     if command == "train-ensemble":
         seed_part = f"_seed{split_seed}" if split_seed is not None else ""
-        return logs_root / "ensemble" / f"run_{rid}" / f"ENSEMBLE{seed_part}.log"
+        return run_root / "ensemble" / f"ENSEMBLE{seed_part}.log"
 
     if command == "aggregate-splits":
         model_part = model or "all"
-        return logs_root / "aggregation" / f"run_{rid}" / f"{model_part}.log"
+        return run_root / "aggregation" / f"{model_part}.log"
 
     if command == "optimize-panel":
         model_part = model or "all"
         seed_part = f"_seed{split_seed}" if split_seed is not None else ""
-        return logs_root / "optimization" / f"run_{rid}" / f"{model_part}{seed_part}.log"
+        return run_root / "optimization" / f"{model_part}{seed_part}.log"
 
     if command == "permutation-test":
         model_part = model or "all"
         seed_part = f"_seed{split_seed}" if split_seed is not None else ""
-        return logs_root / "permutation" / f"run_{rid}" / f"perm_{model_part}{seed_part}.log"
+        return run_root / "permutation" / f"perm_{model_part}{seed_part}.log"
 
     if command == "consensus-panel":
-        return logs_root / "consensus" / f"run_{rid}" / "consensus.log"
+        return run_root / "consensus.log"
 
     if command == "run-pipeline":
-        return logs_root / "pipeline" / f"run_{rid}.log"
+        return run_root / "pipeline.log"
 
     # Fallback
-    return logs_root / "misc" / f"{command}_{rid}.log"
+    return run_root / f"{command}.log"
 
 
 def setup_command_logger(

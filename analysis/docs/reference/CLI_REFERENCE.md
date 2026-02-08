@@ -31,7 +31,7 @@ ced run-pipeline [OPTIONS]
 **HPC Mode Logging:**
 When running in HPC mode (`--hpc`), a detailed submission log is automatically created at:
 ```
-logs/submissions/submission_{RUN_ID}.log
+logs/run_{RUN_ID}/submission.log
 ```
 This log captures all job submission details, dependency chains, and job IDs for monitoring.
 

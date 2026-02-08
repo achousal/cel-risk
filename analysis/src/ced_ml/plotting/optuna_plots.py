@@ -183,6 +183,7 @@ def save_optuna_plots(
                 fig.update_layout(title="Slice Plot (Parameter vs Objective)")
                 out_path = out_dir / f"{prefix}optuna_slice.{plot_format}"
                 _save_plot(fig, out_path, "slice plot")
+                del fig
             except Exception as e:
                 logger.warning(f"Failed to create slice plot: {e}")
 

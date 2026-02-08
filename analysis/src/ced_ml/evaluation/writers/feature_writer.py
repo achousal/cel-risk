@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -37,6 +38,8 @@ class FeatureWriter:
         """
         filename = f"{model}__feature_report_train.csv"
         path = self.dirs.get_path("panels_features", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         report_df.to_csv(path, index=False)
         logger.info(f"Saved feature report: {path}")
         return str(path)
@@ -54,6 +57,8 @@ class FeatureWriter:
         """
         filename = f"stable_panel__{panel_type}.csv"
         path = self.dirs.get_path("panels_stable", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         panel_df.to_csv(path, index=False)
         logger.info(f"Saved stable panel report: {path}")
         return str(path)
@@ -72,6 +77,8 @@ class FeatureWriter:
         """
         filename = f"{model}__N{panel_size}__panel_manifest.json"
         path = self.dirs.get_path("panels_sizes", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         with open(path, "w") as f:
             json.dump(manifest, f, indent=2, sort_keys=True)
         logger.info(f"Saved panel manifest: {path}")
@@ -105,6 +112,8 @@ class FeatureWriter:
         }
         filename = f"{model}__final_test_panel.json"
         path = self.dirs.get_path("panels_sizes", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         with open(path, "w") as f:
             json.dump(manifest, f, indent=2, sort_keys=True)
         logger.info(f"Saved final test panel: {path}")
@@ -123,6 +132,8 @@ class FeatureWriter:
         """
         filename = f"{model}__test_subgroup_metrics.csv"
         path = self.dirs.get_path("panels_subgroups", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         subgroup_df.to_csv(path, index=False)
         logger.info(f"Saved subgroup metrics: {path}")
         return str(path)

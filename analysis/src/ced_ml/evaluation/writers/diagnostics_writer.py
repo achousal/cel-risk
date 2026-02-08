@@ -1,6 +1,7 @@
 """Diagnostics writer for saving calibration curves, learning curves, and split traces."""
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -36,6 +37,8 @@ class DiagnosticsWriter:
         """
         filename = f"{model}__calibration.csv"
         path = self.dirs.get_path("diag_calibration", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         calibration_df.to_csv(path, index=False)
         logger.debug(f"Saved calibration curve: {path}")
         return str(path)
@@ -53,6 +56,8 @@ class DiagnosticsWriter:
         """
         filename = f"{model}__learning_curve.csv"
         path = self.dirs.get_path("diag_learning", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         learning_curve_df.to_csv(path, index=False)
         logger.debug(f"Saved learning curve: {path}")
         return str(path)
@@ -69,6 +74,8 @@ class DiagnosticsWriter:
         """
         filename = "train_test_split_trace.csv"
         path = self.dirs.get_path("diag_splits", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         split_trace_df.to_csv(path, index=False)
         logger.debug(f"Saved split trace: {path}")
         return str(path)

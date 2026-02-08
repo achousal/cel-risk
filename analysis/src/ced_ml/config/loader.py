@@ -131,11 +131,25 @@ def resolve_paths_relative_to_config(
                 resolved = (config_dir / path).resolve()
                 # Only replace if resolved path exists or value is clearly a path
                 if resolved.exists() or "/" in value or "\\" in value:
-                    # Validate path stays within expected boundaries
+                    # Validate path stays within expected boundaries.
+                    # Only enforce when the config dir itself is within the
+                    # project root (skip for test/external configs in tmp dirs).
+                    config_in_project = True
                     try:
-                        resolved.relative_to(project_root)
+                        config_dir.relative_to(project_root)
                     except ValueError:
-                        pass  # Path escapes project root, but continue anyway
+                        config_in_project = False
+
+                    if config_in_project:
+                        try:
+                            resolved.relative_to(project_root)
+                        except ValueError as e:
+                            raise ValueError(
+                                f"Config path escapes project root: {value}\n"
+                                f"Resolved to: {resolved}\n"
+                                f"Project root: {project_root}\n"
+                                f"Ensure all config paths stay within the project directory."
+                            ) from e
                     return str(resolved)
         return value
 

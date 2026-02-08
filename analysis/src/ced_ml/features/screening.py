@@ -10,7 +10,6 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy import stats
-from sklearn.feature_selection import f_classif
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +132,7 @@ def f_statistic_screen(
     y_train: np.ndarray,
     protein_cols: list[str],
     top_n: int,
+    min_n_per_group: int = 10,
 ) -> tuple[list[str], pd.DataFrame]:
     """
     Screen proteins using ANOVA F-statistic.
@@ -150,6 +150,8 @@ def f_statistic_screen(
         Protein column names to screen
     top_n : int
         Number of top proteins to return
+    min_n_per_group : int, default=10
+        Minimum samples per group (cases/controls) required for test
 
     Returns
     -------
@@ -164,9 +166,10 @@ def f_statistic_screen(
 
     Notes
     -----
-    - Missing values are median-imputed before testing
+    - Missing values are ignored (test uses only non-missing observations per feature)
+    - Proteins with <min_n_per_group samples in either class are excluded
     - Proteins with non-finite F-scores (e.g., zero variance) are excluded
-    - Uses sklearn.feature_selection.f_classif
+    - Uses scipy.stats.f_oneway with pairwise deletion (consistent with Mann-Whitney)
 
     Notes (top_n=0 behavior)
     ------------------------
@@ -183,36 +186,61 @@ def f_statistic_screen(
     if np.unique(y).size < 2:
         return protein_cols, pd.DataFrame()
 
-    # Convert to numeric and median-impute
-    Xp = X_train[protein_cols].apply(pd.to_numeric, errors="coerce")
-    nonmissing_frac = Xp.notna().mean(axis=0)
-    med = Xp.median(axis=0, skipna=True)
-    Ximp = Xp.fillna(med)
+    # Compute F-statistics per feature using pairwise deletion
+    rows = []
+    for p in protein_cols:
+        x = pd.to_numeric(X_train[p], errors="coerce")
+        ok = x.notna().to_numpy()
 
-    # Compute F-statistics
-    try:
-        F, pvals = f_classif(Ximp.to_numpy(dtype=float), y)
-    except (ValueError, RuntimeError) as e:
-        logger.warning(
-            f"F-statistic screening failed (returning all proteins): {type(e).__name__}: {e}"
-        )
+        # Skip if insufficient non-missing values
+        if ok.sum() < (2 * min_n_per_group):
+            continue
+
+        x_ok = x[ok].to_numpy(dtype=float)
+        y_ok = y[ok]
+        x0 = x_ok[y_ok == 0]  # controls
+        x1 = x_ok[y_ok == 1]  # cases
+
+        # Enforce minimum group size
+        if len(x0) < min_n_per_group or len(x1) < min_n_per_group:
+            continue
+
+        # Check for zero variance (f_oneway requires variation)
+        if np.var(x0) == 0 and np.var(x1) == 0:
+            continue
+
+        # Compute F-statistic using scipy.stats.f_oneway
+        try:
+            F_stat, p_val = stats.f_oneway(x0, x1)
+        except (ValueError, RuntimeError) as e:
+            logger.warning(f"F-test failed for {p}: {type(e).__name__}: {e}")
+            continue
+
+        # Ensure scalar values
+        if not isinstance(F_stat, float):
+            try:
+                F_stat = float(F_stat)
+            except (ValueError, TypeError):
+                F_stat = np.nan
+
+        if not isinstance(p_val, float):
+            try:
+                p_val = float(p_val)
+            except (ValueError, TypeError):
+                p_val = np.nan
+
+        # Skip non-finite F-scores
+        if not np.isfinite(F_stat):
+            continue
+
+        nonmissing_frac = float(np.mean(ok))
+        rows.append((p, F_stat, p_val, nonmissing_frac))
+
+    if not rows:
         return protein_cols, pd.DataFrame()
 
-    # Process results (no exception handling needed - should fail fast on bugs)
-    F = np.asarray(F, dtype=float)
-    pvals = np.asarray(pvals, dtype=float)
-
-    # Filter out non-finite F-scores
-    ok = np.isfinite(F)
-
-    df_stats = pd.DataFrame(
-        {
-            "protein": np.asarray(protein_cols)[ok],
-            "F_score": F[ok],
-            "p_value": pvals[ok],
-            "nonmissing_frac": nonmissing_frac.to_numpy()[ok],
-        }
-    )
+    # Build results DataFrame
+    df_stats = pd.DataFrame(rows, columns=["protein", "F_score", "p_value", "nonmissing_frac"])
 
     # Sort by F-score descending
     df_stats = df_stats.sort_values(["F_score"], ascending=[False], na_position="last")
@@ -309,7 +337,7 @@ def screen_proteins(
             X_train, y_train, protein_cols, top_n, min_n_per_group
         )
     elif method == "f_classif":
-        selected, stats = f_statistic_screen(X_train, y_train, protein_cols, top_n)
+        selected, stats = f_statistic_screen(X_train, y_train, protein_cols, top_n, min_n_per_group)
     else:
         raise ValueError(f"Unknown screen_method='{method}'. Valid: 'mannwhitney', 'f_classif'")
 

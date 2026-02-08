@@ -570,22 +570,46 @@ def quick_tune_at_k(
     preprocessor = build_preprocessor(cat_cols)
     pipeline = Pipeline([("pre", preprocessor), ("clf", clf)])
 
-    search = OptunaSearchCV(
-        estimator=pipeline,
-        param_distributions=tune_space,
-        n_trials=n_trials,
-        scoring="roc_auc",
-        cv=cv_folds,
-        n_jobs=n_jobs,
-        random_state=random_state,
-        refit=True,
-        direction="maximize",
-        sampler="tpe",
-        sampler_seed=random_state,
-        pruner="hyperband",
-        verbose=0,
-    )
-    search.fit(X_train, y_train)
+    def _run_optuna_search(search_n_jobs: int) -> OptunaSearchCV:
+        search = OptunaSearchCV(
+            estimator=pipeline,
+            param_distributions=tune_space,
+            n_trials=n_trials,
+            scoring="roc_auc",
+            cv=cv_folds,
+            n_jobs=search_n_jobs,
+            random_state=random_state,
+            refit=True,
+            direction="maximize",
+            sampler="tpe",
+            sampler_seed=random_state,
+            pruner="hyperband",
+            verbose=0,
+        )
+        search.fit(X_train, y_train)
+        return search
+
+    try:
+        search = _run_optuna_search(n_jobs)
+    except (PermissionError, NotImplementedError, OSError) as exc:
+        if n_jobs == 1:
+            raise
+        logger.warning(
+            "[RFE k=%d] Parallel Optuna CV unavailable (%s). Retrying with n_jobs=1.",
+            len(feature_cols),
+            exc,
+        )
+        search = _run_optuna_search(1)
+    except RuntimeError as exc:
+        if n_jobs == 1 or "Optuna trials failed" not in str(exc):
+            raise
+        logger.warning(
+            "[RFE k=%d] Optuna search failed with n_jobs=%d (%s). Retrying with n_jobs=1.",
+            len(feature_cols),
+            n_jobs,
+            exc,
+        )
+        search = _run_optuna_search(1)
 
     best_params = search.best_params_
     best_score = search.best_score_
@@ -819,11 +843,15 @@ def elimination_loop(
         if len(unique_importances) == 1 and len(current_proteins) > 1:
             logger.warning(
                 f"All {len(current_proteins)} remaining features have identical importance "
-                f"({list(unique_importances)[0]:.4f}). Tie-breaking alphabetically. "
-                "Consider using random tie-breaking with fixed seed for reproducibility."
+                f"({list(unique_importances)[0]:.4f}). Breaking ties randomly with "
+                f"seed={random_state + elimination_order} for reproducibility."
             )
-
-        worst_protein = min(protein_importances, key=protein_importances.get)
+            # Use seeded RNG for reproducible random tie-breaking instead of
+            # alphabetical order, which could introduce systematic bias.
+            tie_rng = np.random.default_rng(random_state + elimination_order)
+            worst_protein = str(tie_rng.choice(list(protein_importances.keys())))
+        else:
+            worst_protein = min(protein_importances, key=protein_importances.get)
 
         feature_ranking[worst_protein] = elimination_order
         current_proteins.remove(worst_protein)
@@ -940,12 +968,13 @@ def run_elimination_with_evaluation(
         X_train_subset = X_train[feature_cols]
         X_val_subset = X_val[feature_cols]
 
-        try:
-            eval_start = time.time()
+        eval_start = time.time()
+        best_params = {}
+        pipeline = None
 
-            best_params = {}
-            if can_retune:
-                tune_start = time.time()
+        if can_retune:
+            tune_start = time.time()
+            try:
                 pipeline, best_params = quick_tune_at_k(
                     model_name=model_name,
                     X_train=X_train_subset,
@@ -958,12 +987,26 @@ def run_elimination_with_evaluation(
                     random_state=random_state,
                     rfe_tune_spaces=rfe_tune_spaces,
                 )
-                total_tune_time += time.time() - tune_start
                 all_best_params.append(best_params)
-            else:
+            except Exception as exc:  # pragma: no cover - guard for runtime edge cases
+                logger.warning(
+                    "[RFE k=%d] Hyperparameter re-tuning failed (%s). "
+                    "Falling back to baseline estimator.",
+                    len(current_proteins),
+                    exc,
+                )
+            finally:
+                total_tune_time += time.time() - tune_start
+
+        if pipeline is None:
+            try:
                 pipeline = build_lightweight_pipeline(base_pipeline, current_proteins, cat_cols)
                 pipeline.fit(X_train_subset, y_train)
+            except Exception as e:
+                logger.error(f"Evaluation failed at size {len(current_proteins)}: {e}")
+                continue
 
+        try:
             metrics = evaluate_panel_size(
                 pipeline=pipeline,
                 X_train_subset=X_train_subset,
@@ -974,13 +1017,12 @@ def run_elimination_with_evaluation(
                 random_state=random_state,
                 panel_size=len(current_proteins),
             )
-
-            eval_elapsed = time.time() - eval_start
-            logger.info(f"[RFE k={len(current_proteins)}] Completed in {eval_elapsed:.1f}s")
-
         except Exception as e:
             logger.error(f"Evaluation failed at size {len(current_proteins)}: {e}")
             continue
+
+        eval_elapsed = time.time() - eval_start
+        logger.info(f"[RFE k={len(current_proteins)}] Completed in {eval_elapsed:.1f}s")
 
         point = {
             "size": len(current_proteins),

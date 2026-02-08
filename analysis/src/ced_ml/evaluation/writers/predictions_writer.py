@@ -1,6 +1,7 @@
 """Predictions writer for saving test, validation, train OOF, and controls predictions."""
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -36,6 +37,8 @@ class PredictionsWriter:
         """
         filename = f"test_preds__{model}.csv"
         path = self.dirs.get_path("preds_test", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         predictions_df.to_csv(path, index=False)
         logger.info(f"Saved test predictions: {path}")
         return str(path)
@@ -53,6 +56,8 @@ class PredictionsWriter:
         """
         filename = f"val_preds__{model}.csv"
         path = self.dirs.get_path("preds_val", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         predictions_df.to_csv(path, index=False)
         logger.info(f"Saved validation predictions: {path}")
         return str(path)
@@ -70,6 +75,8 @@ class PredictionsWriter:
         """
         filename = f"train_oof__{model}.csv"
         path = self.dirs.get_path("preds_train_oof", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         predictions_df.to_csv(path, index=False)
         logger.info(f"Saved train OOF predictions: {path}")
         return str(path)
@@ -87,6 +94,8 @@ class PredictionsWriter:
         """
         filename = f"controls_risk__{model}__oof_mean.csv"
         path = self.dirs.get_path("preds_controls", filename)
+        if Path(path).exists():
+            logger.warning(f"Overwriting existing file: {path}")
         predictions_df.to_csv(path, index=False)
         logger.info(f"Saved controls predictions: {path}")
         return str(path)

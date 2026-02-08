@@ -156,7 +156,7 @@ def build_job_script(
 
     Note:
         Job output is redirected to /dev/null because ced commands create
-        their own log files in logs/training/, logs/ensemble/, etc.
+        their own log files in logs/run_{ID}/training/, etc.
         Stderr is captured to {job_name}.%J.err but removed on success
         via an EXIT trap (warnings-only content is not actionable;
         real errors cause non-zero exit and preserve the .err file).

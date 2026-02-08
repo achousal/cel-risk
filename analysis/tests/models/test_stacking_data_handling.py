@@ -73,16 +73,19 @@ def test_collect_oof_predictions_from_files():
     with tempfile.TemporaryDirectory() as tmpdir:
         results_dir = Path(tmpdir)
 
+        # Create shared y_true values (all models must have the same labels)
+        shared_y_true = rng.integers(0, 2, 100)
+
         # Create mock directory structure and files
         for model in ["LR_EN", "RF"]:
             model_dir = results_dir / "run_test" / model / "splits" / "split_seed0" / "preds"
             model_dir.mkdir(parents=True)
 
-            # Create mock OOF CSV
+            # Create mock OOF CSV (different predictions but same y_true)
             oof_df = pd.DataFrame(
                 {
                     "idx": np.arange(100),
-                    "y_true": rng.integers(0, 2, 100),
+                    "y_true": shared_y_true,
                     "y_prob_repeat0": rng.uniform(0, 1, 100),
                     "y_prob_repeat1": rng.uniform(0, 1, 100),
                 }
@@ -293,8 +296,9 @@ def test_collect_oof_predictions_matching_indices_succeeds():
     with tempfile.TemporaryDirectory() as tmpdir:
         results_dir = Path(tmpdir)
 
-        # Use same fixed seed for reproducible indices
+        # Use same fixed seed for reproducible indices and labels
         shared_indices = np.arange(100)
+        shared_y_true = rng.integers(0, 2, 100)
 
         for model in ["LR_EN", "RF", "XGBoost"]:
             model_dir = results_dir / "run_test" / model / "splits" / "split_seed0" / "preds"
@@ -302,7 +306,7 @@ def test_collect_oof_predictions_matching_indices_succeeds():
             pd.DataFrame(
                 {
                     "idx": shared_indices,  # Same indices for all models
-                    "y_true": rng.integers(0, 2, 100),
+                    "y_true": shared_y_true,  # Same labels for all models
                     "y_prob_repeat0": rng.uniform(0, 1, 100),
                 }
             ).to_csv(model_dir / f"train_oof__{model}.csv", index=False)

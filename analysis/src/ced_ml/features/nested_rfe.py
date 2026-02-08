@@ -162,7 +162,27 @@ def run_rfecv_within_fold(
     logger.debug(f"Fold {fold_idx}: Running RFECV on {len(feature_names)} features...")
 
     # Fit RFECV on train fold
-    rfecv.fit(X_train_fold.values, y_train_fold)
+    parallel_requested = n_jobs is not None and int(n_jobs) != 1
+    try:
+        rfecv.fit(X_train_fold.values, y_train_fold)
+    except (PermissionError, NotImplementedError, OSError) as exc:
+        if parallel_requested:
+            logger.warning(
+                "RFECV parallel execution unavailable in current runtime (%s). "
+                "Retrying with n_jobs=1.",
+                exc,
+            )
+            rfecv = RFECV(
+                estimator=base_estimator,
+                step=step,
+                cv=inner_cv,
+                scoring=scoring,
+                min_features_to_select=min_features,
+                n_jobs=1,
+            )
+            rfecv.fit(X_train_fold.values, y_train_fold)
+        else:
+            raise
 
     # Extract results
     optimal_n = rfecv.n_features_

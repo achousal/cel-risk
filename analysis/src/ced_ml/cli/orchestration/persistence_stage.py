@@ -111,8 +111,9 @@ def _save_model_bundle(ctx: TrainingContext) -> None:
             "objective": config.thresholds.objective,
             "strategy_name": threshold_strategy.name,
             "fixed_spec": config.thresholds.fixed_spec,
+            "threshold_prob_scale": "adjusted",
         },
-        "metadata": {
+        "prevalence": {
             "train_prevalence": ctx.train_prev,
             "val_prevalence": ctx.val_target_prev,
             "test_prevalence": ctx.test_target_prev,
@@ -660,7 +661,7 @@ def _save_dca_results(ctx: TrainingContext) -> None:
                 prefix=f"{config.model}__val__",
                 thresholds=None,
                 report_points=None,
-                prevalence_adjustment=ctx.test_target_prev,
+                prevalence_adjustment=ctx.val_target_prev,
             )
             logger.info(f"DCA (val) results saved: {dca_summary_val.get('dca_csv_path', 'N/A')}")
 

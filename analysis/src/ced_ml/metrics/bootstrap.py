@@ -75,7 +75,7 @@ def stratified_bootstrap_ci(
         >>> 0 <= ci_lower <= ci_upper <= 1
         True
     """
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
     logger.info("Bootstrap CI: seed=%d, n_boot=%d, n_samples=%d", seed, n_boot, len(y_true))
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
@@ -191,7 +191,7 @@ def stratified_bootstrap_diff_ci(
         >>> isinstance(diff, float)
         True
     """
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
     logger.debug("Bootstrap diff CI using seed=%d, n_boot=%d", seed, n_boot)
     y_true = np.asarray(y_true).astype(int)
     p1 = np.asarray(p1).astype(float)

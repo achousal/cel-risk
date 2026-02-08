@@ -34,9 +34,12 @@ composite_ranking:
   essentiality_weight: 0.3  # Drop-column essentiality (secondary signal)
   stability_weight: 0.1   # Selection frequency (tie-break)
 
-# Drop-Column Essentiality Validation
-# Validates that consensus panel features are truly essential (not redundant)
+# Within-Panel Essentiality Validation (post-hoc interpretation)
+# After the consensus panel is built, optionally refit a model on ONLY the panel
+# features and run drop-column to measure each cluster's contribution.
+# This is a validation/interpretation artifact, NOT an input to panel selection.
+# The per-model essentiality (composite_ranking.essentiality_weight) is separate.
 essentiality:
-  enabled: true                 # Run drop-column validation after consensus panel
+  enabled: true                 # Run within-panel essentiality validation
   include_brier: false          # Include Brier score delta in output
   corr_threshold: 0.75          # Correlation threshold for clustering features
