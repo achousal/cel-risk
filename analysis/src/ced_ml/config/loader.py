@@ -26,7 +26,6 @@ from ced_ml.config.defaults import (
     DEFAULT_THRESHOLD_CONFIG,
 )
 from ced_ml.config.schema import (
-    AggregateConfig,
     PermutationTestConfig,
     SplitsConfig,
     TrainingConfig,
@@ -387,55 +386,6 @@ def load_training_config(
         return TrainingConfig(**config_dict)
     except ValidationError as e:
         raise ValueError(f"Invalid training configuration:\n{e}") from e
-
-
-def load_aggregate_config(
-    config_file: str | Path | None = None,
-    overrides: list[str] | None = None,
-) -> AggregateConfig:
-    """
-    Load aggregate configuration from file and CLI overrides.
-
-    Args:
-        config_file: Path to YAML config file (optional)
-        overrides: List of CLI overrides in "key=value" format (optional)
-
-    Returns:
-        Validated AggregateConfig instance
-    """
-    config_dict = {"output": DEFAULT_OUTPUT_CONFIG.copy()}
-
-    if config_file is not None:
-        config_file_path = Path(config_file)
-        file_config = load_yaml(config_file_path)
-
-        # Resolve relative paths relative to config file directory
-        file_config = resolve_paths_relative_to_config(file_config, config_file_path)
-
-        # Merge file config
-        for key, value in file_config.items():
-            if key in config_dict and isinstance(value, dict):
-                config_dict[key].update(value)
-            else:
-                config_dict[key] = value
-
-        # Load output config from output_config.yaml (if exists)
-        config_dir = config_file_path.parent
-        output_config_path = config_dir / "output_config.yaml"
-        if output_config_path.exists():
-            output_config = load_yaml(output_config_path)
-            # Flatten structured sections (artifacts, plots, aggregation, panels) into output dict
-            for section in ["artifacts", "plots", "aggregation", "panels"]:
-                if section in output_config:
-                    config_dict["output"].update(output_config[section])
-
-    if overrides:
-        config_dict = apply_overrides(config_dict, overrides)
-
-    try:
-        return AggregateConfig(**config_dict)
-    except ValidationError as e:
-        raise ValueError(f"Invalid aggregate configuration:\n{e}") from e
 
 
 def load_permutation_config(

@@ -21,7 +21,6 @@ def run_eval_holdout(
     toprisk_fracs: str = "0.01",
     target_prevalence: float = None,
     clinical_threshold_points: str = "",
-    subgroup_min_n: int = 40,
 ):
     """
     Evaluate trained model on holdout set.
@@ -42,7 +41,6 @@ def run_eval_holdout(
         toprisk_fracs: Comma-separated top-risk fractions
         target_prevalence: Override target prevalence
         clinical_threshold_points: Comma-separated clinical thresholds
-        subgroup_min_n: Minimum sample size for subgroup reporting
     """
     logger = logging.getLogger(__name__)
     logger.info("Starting holdout evaluation")

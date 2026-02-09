@@ -82,7 +82,7 @@ def _extract_bundle_metadata(model_path: Path) -> dict:
                 return super().find_class(module, name)
             except Exception:
                 # Return a no-op callable that absorbs any constructor args
-                return lambda *a, **kw: None
+                return lambda *a, **_: None
 
     with open(model_path, "rb") as fh:
         raw = fh.read()
@@ -244,7 +244,6 @@ def run_consensus_panel(
     stability_weight: float = 0.1,
     run_essentiality: bool = True,
     essentiality_corr_threshold: float = 0.75,
-    essentiality_include_brier: bool = False,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
 
@@ -272,7 +271,6 @@ def run_consensus_panel(
             to measure each cluster's contribution. This is a post-hoc
             interpretation artifact, not an input to panel selection.
         essentiality_corr_threshold: Correlation threshold for clustering in drop-column (default 0.75).
-        essentiality_include_brier: Whether to include Brier score delta in output (default False).
 
     Returns:
         ConsensusResult with final panel and intermediate data.

@@ -1708,7 +1708,6 @@ def consensus_panel(ctx, config, **kwargs):
         ),
         essentiality_corr_threshold=kwargs.get("essentiality_corr_threshold")
         or essentiality_cfg.get("corr_threshold", 0.75),
-        essentiality_include_brier=essentiality_cfg.get("include_brier", False),
     )
 
 

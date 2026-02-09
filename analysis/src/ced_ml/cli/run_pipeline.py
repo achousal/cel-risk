@@ -1009,7 +1009,6 @@ def run_pipeline(
             stability_weight=composite_cfg.get("stability_weight", 0.1),
             run_essentiality=essentiality_cfg.get("enabled", True),
             essentiality_corr_threshold=essentiality_cfg.get("corr_threshold", 0.75),
-            essentiality_include_brier=essentiality_cfg.get("include_brier", False),
             outdir=None,
             log_level=log_level,
         )
