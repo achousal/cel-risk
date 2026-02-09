@@ -39,7 +39,7 @@ def generate_calibration_csv(
                 continue
 
             pred_col = None
-            for col in ["y_prob", "y_pred", "risk_score", "prob", "prediction"]:
+            for col in ["y_prob_adjusted", "y_prob", "y_pred", "risk_score", "prob", "prediction"]:
                 if col in df.columns:
                     pred_col = col
                     break
@@ -108,7 +108,7 @@ def generate_dca_csv(
                 continue
 
             pred_col = None
-            for col in ["y_prob", "y_pred", "risk_score", "prob", "prediction"]:
+            for col in ["y_prob_adjusted", "y_prob", "y_pred", "risk_score", "prob", "prediction"]:
                 if col in df.columns:
                     pred_col = col
                     break

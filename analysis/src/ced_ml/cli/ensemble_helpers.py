@@ -415,14 +415,20 @@ def save_ensemble_metadata(
     y_train = results.get("y_train")
     run_settings = {
         "model": "ENSEMBLE",
-        "base_models": available_models,
         "split_seed": split_seed,
-        "meta_penalty": meta_penalty,
-        "meta_C": meta_c,
-        "meta_coef": meta_coef,
         "n_train": len(y_train) if y_train is not None else 0,
         "train_prevalence": float(y_train.mean()) if y_train is not None else 0.0,
         "random_state": results.get("random_state", 42),
+        "ensemble": {
+            "method": "stacking",
+            "base_models": available_models,
+            "meta_model": {
+                "type": "logistic_regression",
+                "penalty": meta_penalty,
+                "C": meta_c,
+                "coefficients": meta_coef,
+            },
+        },
     }
     settings_path = core_dir / "run_settings.json"
     with open(settings_path, "w") as f:

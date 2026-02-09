@@ -140,7 +140,8 @@ def _generate_validation_plots(
 ) -> dict:
     """Generate validation set plots."""
     config = ctx.config
-    val_y_prob = ctx.val_preds_df["y_prob"].values
+    _val_prob_col = "y_prob_adjusted" if "y_prob_adjusted" in ctx.val_preds_df.columns else "y_prob"
+    val_y_prob = ctx.val_preds_df[_val_prob_col].values
     val_title = f"{config.model} - Validation Set"
 
     # Compute validation threshold bundle
@@ -209,7 +210,10 @@ def _generate_test_plots(
 ) -> dict:
     """Generate test set plots."""
     config = ctx.config
-    test_y_prob = ctx.test_preds_df["y_prob"].values
+    _test_prob_col = (
+        "y_prob_adjusted" if "y_prob_adjusted" in ctx.test_preds_df.columns else "y_prob"
+    )
+    test_y_prob = ctx.test_preds_df[_test_prob_col].values
     test_title = f"{config.model} - Test Set"
 
     # Compute test threshold bundle
@@ -333,7 +337,9 @@ def _generate_risk_distribution_plots(
     # Test set risk distribution
     plot_risk_distribution(
         y_true=ctx.y_test,
-        scores=ctx.test_preds_df["y_prob"].values,
+        scores=ctx.test_preds_df[
+            "y_prob_adjusted" if "y_prob_adjusted" in ctx.test_preds_df.columns else "y_prob"
+        ].values,
         out_path=plots_dir / f"{config.model}__TEST_risk_distribution.{config.output.plot_format}",
         title=f"{config.model} - Test Set",
         subtitle="Risk Score Distribution",
@@ -347,7 +353,9 @@ def _generate_risk_distribution_plots(
     if ctx.has_validation_set and val_bundle is not None:
         plot_risk_distribution(
             y_true=ctx.y_val,
-            scores=ctx.val_preds_df["y_prob"].values,
+            scores=ctx.val_preds_df[
+                "y_prob_adjusted" if "y_prob_adjusted" in ctx.val_preds_df.columns else "y_prob"
+            ].values,
             out_path=plots_dir
             / f"{config.model}__VAL_risk_distribution.{config.output.plot_format}",
             title=f"{config.model} - Validation Set",

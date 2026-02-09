@@ -4,8 +4,7 @@ Configuration loading and merging logic.
 Supports:
 1. Loading from YAML files
 2. CLI argument overrides (dot-notation: e.g., cv.folds=10)
-3. Environment variable overrides
-4. Validation and resolution
+3. Validation and resolution
 """
 
 from pathlib import Path

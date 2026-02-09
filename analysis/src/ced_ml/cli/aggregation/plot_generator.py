@@ -62,7 +62,7 @@ def generate_aggregated_plots(
             logger.warning(f"Plotting not available: {e}")
         return
 
-    pred_col_names = ["y_prob", "y_pred", "risk_score", "prob", "prediction"]
+    pred_col_names = ["y_prob_adjusted", "y_prob", "y_pred", "risk_score", "prob", "prediction"]
 
     def get_arrays(
         df: pd.DataFrame,
@@ -246,9 +246,7 @@ def generate_aggregated_plots(
 
         # Generate train OOF plots if available
         if not model_train_oof_df.empty:
-            y_true_train, y_pred_train, split_ids_train, category_train = get_arrays(
-                model_train_oof_df
-            )
+            y_true_train, y_pred_train, _, category_train = get_arrays(model_train_oof_df)
             if y_true_train is not None:
                 if logger:
                     logger.info(f"Generating aggregated train OOF plots for {model_name}")
