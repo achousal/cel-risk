@@ -135,6 +135,7 @@ def temporal_training_config(tmp_path):
             "strategy": "oof_posthoc",
         },
         "thresholds": {"objective": "youden"},
+        "allow_test_thresholding": True,
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
     }
 

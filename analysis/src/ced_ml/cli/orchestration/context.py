@@ -74,6 +74,7 @@ class TrainingContext:
         selected_proteins_df: DataFrame of selected proteins per fold
         oof_calibrator: OOF calibrator (if using oof_posthoc strategy)
         nested_rfecv_result: Nested RFECV result (if rfe enabled)
+        oof_importance_df: OOF importance dataframe (if computed)
         final_selected_proteins: Proteins selected by final model
         cv_elapsed_sec: CV elapsed time in seconds
 
@@ -139,6 +140,7 @@ class TrainingContext:
     selected_proteins_df: pd.DataFrame | None = None
     oof_calibrator: IsotonicCalibrator | SigmoidCalibrator | None = None
     nested_rfecv_result: NestedRFECVResult | None = None
+    oof_importance_df: pd.DataFrame | None = None
     final_selected_proteins: list[str] = field(default_factory=list)
     cv_elapsed_sec: float = 0.0
     grid_rng: np.random.Generator | None = None

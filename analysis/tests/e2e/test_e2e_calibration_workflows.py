@@ -109,6 +109,7 @@ def oof_posthoc_config(tmp_path):
             "strategy": "oof_posthoc",  # Key: OOF-posthoc strategy
         },
         "thresholds": {"objective": "youden"},
+        "allow_test_thresholding": True,
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
     }
 
@@ -144,6 +145,7 @@ def per_fold_config(tmp_path):
             "strategy": "per_fold",  # Key: Per-fold strategy
         },
         "thresholds": {"objective": "youden"},
+        "allow_test_thresholding": True,
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
     }
 
@@ -177,6 +179,7 @@ def no_calibration_config(tmp_path):
             "enabled": False,  # Key: No calibration
         },
         "thresholds": {"objective": "youden"},
+        "allow_test_thresholding": True,
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
     }
 

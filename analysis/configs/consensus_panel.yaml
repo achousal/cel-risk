@@ -1,5 +1,11 @@
 # Consensus Panel Configuration
-# Configuration for cross-model consensus panel generation via Robust Rank Aggregation
+# Configuration for cross-model consensus panel generation via geometric mean
+# rank aggregation (NOT formal Kolde RRA with beta-model p-values).
+#
+# Three-step workflow:
+#   1. Per-model ranking: stability as hard filter, OOF importance as rank
+#   2. Cross-model RRA: geometric mean of reciprocal ranks
+#   3. Post-hoc drop-column on final panel (interpretation, not ranking input)
 
 # Stability threshold: minimum selection fraction to include a protein
 # Proteins must be selected in >= this fraction of CV folds to be considered "stable"
@@ -27,19 +33,12 @@ significance:
   alpha: 0.05                   # Significance threshold
   min_significant_models: 3     # Minimum models required for consensus
 
-# Composite Ranking Weights (per ADR-004)
-# OOF importance (primary) + Essentiality (secondary) + Stability (tie-break)
-composite_ranking:
-  oof_weight: 0.6         # OOF grouped importance (primary signal)
-  essentiality_weight: 0.3  # Drop-column essentiality (secondary signal)
-  stability_weight: 0.1   # Selection frequency (tie-break)
-
 # Within-Panel Essentiality Validation (post-hoc interpretation)
 # After the consensus panel is built, optionally refit a model on ONLY the panel
 # features and run drop-column to measure each cluster's contribution.
 # This is a validation/interpretation artifact, NOT an input to panel selection.
-# The per-model essentiality (composite_ranking.essentiality_weight) is separate.
 essentiality:
   enabled: true                 # Run within-panel essentiality validation
-  include_brier: false          # Include Brier score delta in output
+  include_brier: true           # Include Brier score delta in output
+  include_pr_auc: true          # Include PR-AUC delta in output
   corr_threshold: 0.75          # Correlation threshold for clustering features

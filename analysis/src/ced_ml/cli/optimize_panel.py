@@ -290,6 +290,158 @@ def run_optimize_panel_single_seed(
     return result
 
 
+def run_drop_column_validation_for_panels(
+    result: RFEResult,
+    results_path: Path,
+    infile: str,
+    split_dir: Path,
+    scenario: str,
+    model_name: str,
+    split_dirs: list[Path],
+    cat_cols: list[str],
+    meta_num_cols: list[str],
+    corr_threshold: float,
+    corr_method: str,
+) -> None:
+    """Run drop-column essentiality validation for each recommended panel.
+
+    Args:
+        result: RFE result with recommended panels
+        results_path: Path to model's aggregated results directory
+        infile: Path to input data file
+        split_dir: Root directory containing split indices
+        scenario: Data scenario (e.g., "IncidentOnly")
+        model_name: Model name
+        split_dirs: List of split directories
+        cat_cols: Categorical metadata columns
+        meta_num_cols: Numeric metadata columns
+        corr_threshold: Correlation threshold for clustering
+        corr_method: Correlation method
+    """
+    from ced_ml.cli.panel_optimization_helpers import load_split_indices
+    from ced_ml.data.io import read_proteomics_file
+    from ced_ml.data.schema import TARGET_COL, get_positive_label
+    from ced_ml.features.corr_prune import (
+        build_correlation_graph,
+        compute_correlation_matrix,
+        find_connected_components,
+    )
+    from ced_ml.features.drop_column import (
+        aggregate_drop_column_results,
+        compute_drop_column_importance,
+    )
+
+    if not result.recommended_panels:
+        logger.warning("No recommended panels found, skipping drop-column validation")
+        return
+
+    # Load data once
+    df = read_proteomics_file(infile)
+    y_all = (df[TARGET_COL] == get_positive_label()).astype(int).values
+
+    essentiality_dir = results_path / "optimize_panel" / "essentiality"
+    essentiality_dir.mkdir(parents=True, exist_ok=True)
+
+    # Process each recommended panel threshold
+    for threshold_name, panel_size in result.recommended_panels.items():
+        logger.info(f"\nProcessing {threshold_name} panel (size={panel_size})...")
+
+        # Find the curve point matching this panel size
+        matching_points = [p for p in result.curve if p["size"] == panel_size]
+        if not matching_points:
+            logger.warning(f"  No curve point found for size={panel_size}, skipping")
+            continue
+
+        panel_proteins = matching_points[0]["proteins"]
+        logger.info(f"  Panel proteins: {len(panel_proteins)}")
+
+        # Cluster proteins by correlation
+        feature_cols = panel_proteins + cat_cols + meta_num_cols
+        X_all = df[feature_cols]
+
+        if len(panel_proteins) > 1:
+            corr_matrix = compute_correlation_matrix(df[panel_proteins], method=corr_method)
+            G = build_correlation_graph(corr_matrix, corr_threshold)
+            clusters = find_connected_components(G)
+            logger.info(
+                f"  Correlation clustering: {len(panel_proteins)} -> {len(clusters)} clusters"
+            )
+        else:
+            clusters = [[panel_proteins[0]]]
+
+        # Run drop-column across all seeds
+        per_seed_results = []
+        for seed_dir in split_dirs:
+            seed = int(seed_dir.name.replace("split_seed", ""))
+            model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
+
+            if not model_path.exists():
+                logger.warning(f"  Seed {seed}: model not found at {model_path}, skipping")
+                continue
+
+            # Load split indices
+            train_idx, val_idx = load_split_indices(split_dir, scenario, seed)
+
+            # Split data
+            X_train = X_all.iloc[train_idx]
+            y_train = y_all[train_idx]
+            X_val = X_all.iloc[val_idx]
+            y_val = y_all[val_idx]
+
+            # Load model
+            bundle = joblib.load(model_path)
+            estimator = bundle["model"]
+
+            # Run drop-column for this seed
+            try:
+                seed_results = compute_drop_column_importance(
+                    estimator=estimator,
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_val=X_val,
+                    y_val=y_val,
+                    feature_clusters=clusters,
+                    random_state=seed,
+                )
+                per_seed_results.append(seed_results)
+                logger.info(f"  Seed {seed}: {len(seed_results)} clusters evaluated")
+            except Exception as e:
+                logger.warning(f"  Seed {seed}: drop-column failed: {e}")
+
+        if not per_seed_results:
+            logger.warning(f"  No successful drop-column results for {threshold_name}, skipping")
+            continue
+
+        # Aggregate across seeds
+        agg_df = aggregate_drop_column_results(per_seed_results)
+
+        # Add representative column (first protein in each cluster)
+        agg_df["representative"] = agg_df["cluster_features"].str.split(",").str[0]
+
+        # Reorder columns for clarity
+        cols = [
+            "cluster_id",
+            "representative",
+            "cluster_features",
+            "n_features_in_cluster",
+            "mean_delta_auroc",
+            "std_delta_auroc",
+            "min_delta_auroc",
+            "max_delta_auroc",
+            "n_folds",
+            "n_errors",
+        ]
+        agg_df = agg_df[[c for c in cols if c in agg_df.columns]]
+
+        # Save
+        out_file = essentiality_dir / f"panel_{threshold_name}_essentiality.csv"
+        agg_df.to_csv(out_file, index=False)
+        logger.info(f"  Saved essentiality results to {out_file}")
+        logger.info(
+            "  Top 3 essential features: " + ", ".join(agg_df.head(3)["representative"].tolist())
+        )
+
+
 def run_optimize_panel_aggregated(
     results_dir: str | Path,
     infile: str,
@@ -726,5 +878,28 @@ def run_optimize_panel_aggregated(
     )
 
     logger.info("Aggregated panel optimization completed successfully")
+
+    # Run drop-column essentiality validation for recommended panels
+    try:
+        logger.info("\n" + "=" * 60)
+        logger.info("Running drop-column essentiality validation...")
+        logger.info("=" * 60)
+        run_drop_column_validation_for_panels(
+            result=result,
+            results_path=results_path,
+            infile=infile,
+            split_dir=Path(split_dir),
+            scenario=scenario,
+            model_name=model_name,
+            split_dirs=split_dirs,
+            cat_cols=filtered_cat_cols,
+            meta_num_cols=filtered_meta_num_cols,
+            corr_threshold=corr_threshold,
+            corr_method=corr_method,
+        )
+        logger.info("Drop-column essentiality validation completed successfully")
+    except Exception as e:
+        logger.warning(f"Drop-column validation failed: {e}", exc_info=True)
+        logger.warning("Continuing without essentiality validation")
 
     return result

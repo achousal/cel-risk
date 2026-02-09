@@ -673,7 +673,8 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
 
     Args:
         fold_importances: List of importance DataFrames (one per fold)
-                         Each DataFrame must have columns: feature, importance, importance_type
+                         Each DataFrame must have a feature column plus either
+                         importance (legacy) or mean_importance (aggregated format).
 
     Returns:
         DataFrame with columns:
@@ -756,7 +757,20 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
             expanded_dfs.append(pd.DataFrame(rows) if rows else df)
         else:
             expanded_dfs.append(df)
-    valid_dfs = [df for df in expanded_dfs if not df.empty and "feature" in df.columns]
+    normalized_dfs = []
+    for df in expanded_dfs:
+        if df.empty or "feature" not in df.columns:
+            continue
+        if "importance" not in df.columns:
+            if "mean_importance" in df.columns:
+                df = df.copy()
+                df["importance"] = df["mean_importance"]
+            else:
+                # Skip unrecognized schema instead of crashing aggregation.
+                continue
+        normalized_dfs.append(df)
+
+    valid_dfs = normalized_dfs
 
     if not valid_dfs:
         return pd.DataFrame(

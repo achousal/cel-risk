@@ -204,7 +204,7 @@ def build_consensus_panels(
             try:
                 with open(manifest_files[0]) as f:
                     manifest = json.load(f)
-                    proteins = manifest.get("panel_proteins", [])
+                    proteins = manifest.get("proteins", [])
                     if proteins:
                         panel_proteins_per_split.append(set(proteins))
             except Exception as e:

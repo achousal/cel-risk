@@ -55,6 +55,9 @@ class TrainingConfig(BaseModel):
     n_jobs: int = -1
     verbose: int = 1
 
+    # Evaluation flags
+    allow_test_thresholding: bool = False  # Explicit override for threshold-on-test
+
     @model_validator(mode="after")
     def validate_config(self):
         """Cross-field validation."""

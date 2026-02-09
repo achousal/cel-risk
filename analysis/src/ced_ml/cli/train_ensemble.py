@@ -268,8 +268,14 @@ def generate_predictions(
 
         val_metrics = compute_ensemble_metrics(y_val, val_proba, "val")
         predictions["val_metrics"] = val_metrics
-        logger.info(f"Validation AUROC: {val_metrics.get(METRIC_AUROC, 'N/A'):.4f}")
-        logger.info(f"Validation PR-AUC: {val_metrics.get(METRIC_PRAUC, 'N/A'):.4f}")
+
+        # Safe formatting for metrics (may be None in single-class scenarios)
+        auroc = val_metrics.get(METRIC_AUROC)
+        prauc = val_metrics.get(METRIC_PRAUC)
+        auroc_str = f"{auroc:.4f}" if auroc is not None else "N/A"
+        prauc_str = f"{prauc:.4f}" if prauc is not None else "N/A"
+        logger.info(f"Validation AUROC: {auroc_str}")
+        logger.info(f"Validation PR-AUC: {prauc_str}")
     except FileNotFoundError as e:
         logger.warning(f"Could not load validation predictions: {e}")
 
@@ -291,8 +297,14 @@ def generate_predictions(
 
         test_metrics = compute_ensemble_metrics(y_test, test_proba, "test")
         predictions["test_metrics"] = test_metrics
-        logger.info(f"Test AUROC: {test_metrics.get(METRIC_AUROC, 'N/A'):.4f}")
-        logger.info(f"Test PR-AUC: {test_metrics.get(METRIC_PRAUC, 'N/A'):.4f}")
+
+        # Safe formatting for metrics (may be None in single-class scenarios)
+        test_auroc = test_metrics.get(METRIC_AUROC)
+        test_prauc = test_metrics.get(METRIC_PRAUC)
+        test_auroc_str = f"{test_auroc:.4f}" if test_auroc is not None else "N/A"
+        test_prauc_str = f"{test_prauc:.4f}" if test_prauc is not None else "N/A"
+        logger.info(f"Test AUROC: {test_auroc_str}")
+        logger.info(f"Test PR-AUC: {test_prauc_str}")
     except FileNotFoundError as e:
         logger.warning(f"Could not load test predictions: {e}")
 

@@ -105,47 +105,63 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
     def _build_meta_estimator(self) -> LogisticRegression:
         """Build the LogisticRegression meta-learner with valid sklearn settings.
 
-        sklearn >= 1.8 deprecates the ``penalty`` parameter. We use
-        ``l1_ratio`` and ``C`` instead:
-          l1_ratio=0 -> L2, l1_ratio=1 -> L1, l1_ratio=0.5 -> elasticnet,
-          C=np.inf -> no penalty.
+        Maps penalty types to appropriate sklearn parameters:
+          - penalty='l1' -> l1_ratio=1.0
+          - penalty='l2' -> l1_ratio=0.0
+          - penalty='elasticnet' -> l1_ratio=0.5
+          - penalty=None -> no regularization (C=inf)
         """
         penalty = None if self.meta_penalty in (None, "none") else self.meta_penalty
         if penalty not in {"l1", "l2", "elasticnet", None}:
             penalty = "l2"
 
-        # Map penalty string to l1_ratio / C for sklearn >= 1.8
+        # Map penalty string to appropriate parameters
         if penalty is None:
-            l1_ratio = 0.0
+            # No regularization
+            penalty_param = None
+            l1_ratio = None
             C = np.inf
         elif penalty == "l1":
-            l1_ratio = 1.0
+            penalty_param = "l1"
+            l1_ratio = None  # Not used for pure L1
             C = self.meta_C
         elif penalty == "elasticnet":
+            penalty_param = "elasticnet"
             l1_ratio = 0.5
             C = self.meta_C
         else:  # l2
-            l1_ratio = 0.0
+            penalty_param = "l2"
+            l1_ratio = None  # Not used for pure L2
             C = self.meta_C
 
         solver = self.meta_solver
-        if l1_ratio == 1.0:
+        if penalty == "l1":
             if solver not in {"saga", "liblinear"}:
                 solver = "saga"
-        elif l1_ratio == 0.5:
+        elif penalty == "elasticnet":
             solver = "saga"
-        elif C == np.inf:
+        elif penalty is None:
             if solver == "liblinear":
                 solver = "lbfgs"
 
-        return LogisticRegression(
-            l1_ratio=l1_ratio,
-            C=C,
-            max_iter=self.meta_max_iter,
-            solver=solver,
-            random_state=self.random_state,
-            class_weight="balanced",
-        )
+        # Build LogisticRegression with appropriate parameters
+        lr_params = {
+            "C": C,
+            "max_iter": self.meta_max_iter,
+            "solver": solver,
+            "random_state": self.random_state,
+            "class_weight": "balanced",
+        }
+
+        # Only set penalty if not None
+        if penalty_param is not None:
+            lr_params["penalty"] = penalty_param
+
+        # Only set l1_ratio for elasticnet
+        if l1_ratio is not None:
+            lr_params["l1_ratio"] = l1_ratio
+
+        return LogisticRegression(**lr_params)
 
     def _build_meta_features(
         self,

@@ -22,7 +22,7 @@ class TestComputePerModelRanking:
     """Tests for compute_per_model_ranking function."""
 
     def test_stability_only(self):
-        """Ranking with stability frequency only (no OOF or essentiality)."""
+        """Ranking with stability frequency only (no OOF)."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2", "P3", "P4"],
@@ -34,10 +34,11 @@ class TestComputePerModelRanking:
 
         assert len(result) == 4
         assert result.iloc[0]["protein"] == "P1"
-        assert result.iloc[0]["stability_rank"] == 1
         assert result.iloc[0]["final_rank"] == 1
         # No OOF, so oof_importance should be NaN
         assert pd.isna(result.iloc[0]["oof_importance"])
+        # oof_rank should be NaN when no OOF provided
+        assert pd.isna(result.iloc[0]["oof_rank"])
 
     def test_with_oof_importance(self):
         """Ranking with stability and OOF importance."""
@@ -57,13 +58,15 @@ class TestComputePerModelRanking:
         result = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
 
         assert len(result) == 4
-        # P1 should be top: highest stability AND highest OOF importance
+        # P1 should be top: highest OOF importance
         assert result.iloc[0]["protein"] == "P1"
         assert not pd.isna(result.iloc[0]["oof_importance"])
         assert result.iloc[0]["oof_rank"] == 1
+        # final_rank should equal oof_rank
+        assert result.iloc[0]["final_rank"] == result.iloc[0]["oof_rank"]
 
-    def test_oof_weight_dominates(self):
-        """Higher OOF weight prioritizes OOF importance over stability."""
+    def test_oof_determines_final_rank(self):
+        """OOF importance determines final_rank, not stability."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2"],
@@ -78,43 +81,61 @@ class TestComputePerModelRanking:
             }
         )
 
-        result = compute_per_model_ranking(
-            stability_df,
-            oof_importance_df=oof_df,
-            oof_weight=0.9,
-            essentiality_weight=0.0,
-            stability_weight=0.1,
-        )
+        result = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
 
-        # With high oof_weight, P2 should be first (better OOF)
+        # P2 should be first (better OOF importance)
         assert result.iloc[0]["protein"] == "P2"
+        assert result.iloc[0]["final_rank"] == 1
 
-    def test_stability_weight_dominates(self):
-        """Higher stability weight prioritizes stability over OOF."""
+    def test_no_oof_falls_back_to_stability(self):
+        """Without OOF, final_rank follows stability frequency."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2", "P3"],
+                "selection_fraction": [0.7, 0.9, 0.8],
+            }
+        )
+
+        result = compute_per_model_ranking(stability_df)
+
+        # P2 has highest stability -> should be rank 1
+        assert result.iloc[0]["protein"] == "P2"
+        assert result.iloc[0]["final_rank"] == 1
+        # P1 has lowest stability -> should be rank 3
+        p1_row = result[result["protein"] == "P1"].iloc[0]
+        assert p1_row["final_rank"] == 3
+
+    def test_output_columns_new_schema(self):
+        """Output has the expected columns and no legacy columns."""
         stability_df = pd.DataFrame(
             {
                 "protein": ["P1", "P2"],
-                "selection_fraction": [0.9, 0.5],
+                "selection_fraction": [0.9, 0.8],
             }
         )
-        # P2 has better OOF importance but worse stability
         oof_df = pd.DataFrame(
             {
                 "feature": ["P1", "P2"],
-                "mean_importance": [0.1, 0.9],
+                "mean_importance": [0.5, 0.4],
             }
         )
 
-        result = compute_per_model_ranking(
-            stability_df,
-            oof_importance_df=oof_df,
-            oof_weight=0.1,
-            essentiality_weight=0.0,
-            stability_weight=0.9,
-        )
+        result = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
 
-        # With high stability_weight, P1 should be first (better stability)
-        assert result.iloc[0]["protein"] == "P1"
+        expected_cols = {"protein", "stability_freq", "oof_importance", "oof_rank", "final_rank"}
+        assert set(result.columns) == expected_cols
+
+        # Legacy columns must NOT be present
+        for col in [
+            "composite_score",
+            "essentiality",
+            "essentiality_rank",
+            "stability_rank",
+            "norm_oof",
+            "norm_stability",
+            "norm_essentiality",
+        ]:
+            assert col not in result.columns
 
     def test_partial_oof_coverage(self):
         """Handles proteins not in OOF importance."""
@@ -137,38 +158,8 @@ class TestComputePerModelRanking:
         # P3 should have NaN for OOF importance
         p3_row = result[result["protein"] == "P3"].iloc[0]
         assert pd.isna(p3_row["oof_importance"])
-        # P3 composite score should still exist (uses stability only)
-        assert not pd.isna(p3_row["composite_score"])
-
-    def test_with_essentiality(self):
-        """Ranking with stability, OOF importance, and essentiality."""
-        stability_df = pd.DataFrame(
-            {
-                "protein": ["P1", "P2", "P3"],
-                "selection_fraction": [0.9, 0.8, 0.7],
-            }
-        )
-        oof_df = pd.DataFrame(
-            {
-                "feature": ["P1", "P2", "P3"],
-                "mean_importance": [0.5, 0.4, 0.3],
-            }
-        )
-        ess_df = pd.DataFrame(
-            {
-                "representative": ["P1", "P2", "P3"],
-                "mean_delta_auroc": [0.05, 0.04, 0.03],
-            }
-        )
-
-        result = compute_per_model_ranking(
-            stability_df, oof_importance_df=oof_df, essentiality_df=ess_df
-        )
-
-        assert len(result) == 3
-        assert result.iloc[0]["protein"] == "P1"
-        assert not pd.isna(result.iloc[0]["essentiality"])
-        assert result.iloc[0]["essentiality_rank"] == 1
+        # P3 should still have a final_rank (sorted after OOF-ranked proteins)
+        assert not pd.isna(p3_row["final_rank"])
 
     def test_missing_protein_column_raises(self):
         """Missing protein column raises ValueError."""
@@ -195,46 +186,6 @@ class TestComputePerModelRanking:
 
         assert len(result) == 2
         assert result.iloc[0]["stability_freq"] == 0.9
-
-    def test_missing_optional_signals_renormalizes_to_stability(self):
-        """When optional signals are absent, stability carries full normalized weight."""
-        stability_df = pd.DataFrame(
-            {
-                "protein": ["P1", "P2"],
-                "selection_fraction": [0.9, 0.5],
-            }
-        )
-
-        result = compute_per_model_ranking(
-            stability_df=stability_df,
-            oof_weight=0.6,
-            essentiality_weight=0.3,
-            stability_weight=0.1,
-        )
-
-        p1_score = result.loc[result["protein"] == "P1", "composite_score"].iloc[0]
-        p2_score = result.loc[result["protein"] == "P2", "composite_score"].iloc[0]
-        assert p1_score == pytest.approx(1.0)
-        assert p2_score == pytest.approx(0.5)
-
-    def test_invalid_weights_raise(self):
-        """Negative or all-zero weights should fail fast."""
-        stability_df = pd.DataFrame(
-            {
-                "protein": ["P1", "P2"],
-                "selection_fraction": [0.9, 0.8],
-            }
-        )
-
-        with pytest.raises(ValueError, match="non-negative"):
-            compute_per_model_ranking(stability_df, oof_weight=-0.1)
-        with pytest.raises(ValueError, match="At least one signal weight"):
-            compute_per_model_ranking(
-                stability_df,
-                oof_weight=0.0,
-                essentiality_weight=0.0,
-                stability_weight=0.0,
-            )
 
 
 class TestGeometricMeanRankAggregate:
@@ -647,8 +598,37 @@ class TestBuildConsensusPanel:
         assert "models" in result.metadata
         assert "parameters" in result.metadata
         assert "results" in result.metadata
-        # Check composite_ranking weights in parameters
-        assert "composite_ranking" in result.metadata["parameters"]
+        # New: ranking_method replaces composite_ranking
+        assert (
+            result.metadata["parameters"]["ranking_method"]
+            == "oof_importance_with_stability_filter"
+        )
+        assert "composite_ranking" not in result.metadata["parameters"]
+
+    def test_per_model_rankings_schema(self, mock_data):
+        """Per-model rankings DataFrame has the new simplified schema."""
+        df_train, model_stability, model_oof = mock_data
+
+        result = build_consensus_panel(
+            model_stability=model_stability,
+            df_train=df_train,
+            model_oof_importance=model_oof,
+            stability_threshold=0.75,
+        )
+
+        expected_cols = {
+            "model",
+            "protein",
+            "stability_freq",
+            "oof_importance",
+            "oof_rank",
+            "final_rank",
+        }
+        assert set(result.per_model_rankings.columns) == expected_cols
+
+        # Legacy columns must NOT be present
+        for col in ["composite_score", "essentiality", "essentiality_rank", "stability_rank"]:
+            assert col not in result.per_model_rankings.columns
 
 
 class TestSaveConsensusResults:
@@ -738,3 +718,110 @@ class TestSaveConsensusResults:
 
             assert loaded["key"] == "value"
             assert loaded["nested"]["a"] == 1
+
+
+class TestLoadModelOofImportance:
+    """Tests for load_model_oof_importance filename resolution (V-03 fix)."""
+
+    def test_finds_model_specific_filename(self, tmp_path):
+        """Finds the file written by aggregate_importance (oof_importance__{model}.csv)."""
+        from ced_ml.cli.consensus_panel import load_model_oof_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        oof_df = pd.DataFrame({"feature": ["P1", "P2"], "mean_importance": [0.5, 0.3]})
+        oof_df.to_csv(importance_dir / "oof_importance__LR_EN.csv", index=False)
+
+        result = load_model_oof_importance(tmp_path, model_name="LR_EN")
+
+        assert result is not None
+        assert len(result) == 2
+        assert "feature" in result.columns
+        assert "mean_importance" in result.columns
+
+    def test_falls_back_to_legacy_name(self, tmp_path):
+        """Falls back to aggregated_oof_importance.csv if model-specific not found."""
+        from ced_ml.cli.consensus_panel import load_model_oof_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        oof_df = pd.DataFrame({"feature": ["P1", "P2"], "mean_importance": [0.5, 0.3]})
+        oof_df.to_csv(importance_dir / "aggregated_oof_importance.csv", index=False)
+
+        result = load_model_oof_importance(tmp_path, model_name="LR_EN")
+
+        assert result is not None
+        assert len(result) == 2
+
+    def test_returns_none_when_no_file_exists(self, tmp_path):
+        """Returns None when no importance file exists."""
+        from ced_ml.cli.consensus_panel import load_model_oof_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        result = load_model_oof_importance(tmp_path, model_name="LR_EN")
+        assert result is None
+
+    def test_backward_compatible_without_model_name(self, tmp_path):
+        """Works without model_name for backward compatibility (legacy paths only)."""
+        from ced_ml.cli.consensus_panel import load_model_oof_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        oof_df = pd.DataFrame({"feature": ["P1", "P2"], "mean_importance": [0.5, 0.3]})
+        oof_df.to_csv(importance_dir / "aggregated_oof_importance.csv", index=False)
+
+        result = load_model_oof_importance(tmp_path)
+        assert result is not None
+
+    def test_standardizes_column_names(self, tmp_path):
+        """Standardizes 'protein' -> 'feature' and 'importance' -> 'mean_importance'."""
+        from ced_ml.cli.consensus_panel import load_model_oof_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        oof_df = pd.DataFrame({"protein": ["P1", "P2"], "importance": [0.5, 0.3]})
+        oof_df.to_csv(importance_dir / "oof_importance__RF.csv", index=False)
+
+        result = load_model_oof_importance(tmp_path, model_name="RF")
+
+        assert result is not None
+        assert "feature" in result.columns
+        assert "mean_importance" in result.columns
+
+
+class TestOofDeterminesRanking:
+    """Verify that OOF importance fully determines ranking (no weighted composite)."""
+
+    def test_oof_signal_changes_ranking(self):
+        """OOF importance drives ranking when present."""
+        stability_df = pd.DataFrame(
+            {
+                "protein": ["P1", "P2", "P3", "P4"],
+                "selection_fraction": [0.95, 0.90, 0.85, 0.80],
+            }
+        )
+        # OOF importance inverts the stability order
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["P1", "P2", "P3", "P4"],
+                "mean_importance": [0.1, 0.3, 0.7, 0.9],
+            }
+        )
+
+        result_without_oof = compute_per_model_ranking(stability_df)
+        result_with_oof = compute_per_model_ranking(stability_df, oof_importance_df=oof_df)
+
+        order_without = result_without_oof["protein"].tolist()
+        order_with = result_with_oof["protein"].tolist()
+
+        # Rankings MUST differ: without OOF, P1 is first (best stability);
+        # with OOF, P4 should be first (best OOF importance)
+        assert order_without != order_with
+        assert order_without[0] == "P1"  # stability-driven
+        assert order_with[0] == "P4"  # OOF-driven

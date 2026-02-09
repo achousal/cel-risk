@@ -296,7 +296,19 @@ def load_split_indices(
         import glob
 
         pattern = str(split_path / f"train_idx_*_seed{seed}.csv")
-        matches = glob.glob(pattern)
+        matches = sorted(glob.glob(pattern))  # Sort for deterministic selection
+
+        # Error if multiple scenarios found (ambiguous)
+        if len(matches) > 1:
+            scenarios = [
+                Path(m).name.replace("train_idx_", "").replace(f"_seed{seed}.csv", "")
+                for m in matches
+            ]
+            raise ValueError(
+                f"Ambiguous scenario: found {len(matches)} candidates for seed {seed}: {scenarios}. "
+                f"Specify --scenario explicitly."
+            )
+
         if matches:
             # Extract scenario from filename: train_idx_{scenario}_seed{seed}.csv
             filename = Path(matches[0]).name

@@ -192,7 +192,9 @@ def compute_holdout_metrics(
     if val_threshold is None:
         # Never silently use test_threshold as replacement (ADR-009 violation).
         # Using test_threshold would leak test-set information into holdout decisions.
-        logger.warning(
+        # Log on the root logger so test harnesses using caplog/root handlers
+        # reliably capture this warning even when ced_ml logger propagation is disabled.
+        logging.getLogger().warning(
             "val_threshold missing from model bundle. Using default threshold=0.5. "
             "This indicates an older model bundle format. "
             "Models should be retrained with validation-based threshold selection (ADR-009)."

@@ -113,6 +113,7 @@ def panel_training_config(tmp_path):
             "objective": "fixed_spec",
             "fixed_spec": 0.95,
         },
+        "allow_test_thresholding": True,
     }
 
     config_path = tmp_path / "panel_config.yaml"

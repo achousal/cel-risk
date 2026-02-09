@@ -144,15 +144,24 @@ def compute_pooled_metrics(
             logger.debug("Empty pooled DataFrame, no metrics computed")
         return {}
 
-    # Find the prediction column (might be y_prob, y_pred, risk_score, etc.)
-    pred_cols = [
-        c
-        for c in pooled_df.columns
-        if c in ["y_prob", pred_col, "risk_score", "prob", "prediction"]
-    ]
-    if not pred_cols:
+    # Prefer adjusted probabilities (prevalence-adjusted), fall back to raw
+    # Check in priority order
+    preferred_cols = ["y_prob_adjusted", "y_prob", "risk_score"]
+    actual_pred_col = None
+    for col in preferred_cols:
+        if col in pooled_df.columns:
+            actual_pred_col = col
+            break
+
+    if actual_pred_col is None:
+        if logger:
+            logger.warning(f"No standard prediction columns found in {pooled_df.columns}")
         return {}
-    actual_pred_col = pred_cols[0]
+
+    # Log which scale is being used when both are present
+    if "y_prob_adjusted" in pooled_df.columns and "y_prob" in pooled_df.columns:
+        if logger:
+            logger.info(f"Using {actual_pred_col} for pooled metrics (both scales present)")
 
     y_true = pooled_df[y_col].values
     y_pred = pooled_df[actual_pred_col].values

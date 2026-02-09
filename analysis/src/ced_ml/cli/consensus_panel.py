@@ -161,23 +161,39 @@ def load_model_stability(
 
 def load_model_oof_importance(
     aggregated_dir: Path,
+    model_name: str = "",
 ) -> pd.DataFrame | None:
     """Load OOF grouped importance from aggregated results (if available).
 
     Args:
         aggregated_dir: Path to model's aggregated directory.
+        model_name: Model name (e.g., "LR_EN") used to locate the importance
+            file written by aggregate_importance() as
+            ``importance/oof_importance__{model_name}.csv``.
 
     Returns:
         DataFrame with OOF importance (columns: feature, mean_importance, etc.), or None.
     """
-    # Check for aggregated OOF importance file
-    oof_file = aggregated_dir / "importance" / "aggregated_oof_importance.csv"
+    oof_file = None
 
-    if not oof_file.exists():
-        # Try alternative location
-        oof_file = aggregated_dir / "importance" / "importance_aggregated.csv"
+    # Primary: match what aggregate_importance() actually writes
+    if model_name:
+        candidate = aggregated_dir / "importance" / f"oof_importance__{model_name}.csv"
+        if candidate.exists():
+            oof_file = candidate
 
-    if not oof_file.exists():
+    # Legacy fallbacks
+    if oof_file is None:
+        candidate = aggregated_dir / "importance" / "aggregated_oof_importance.csv"
+        if candidate.exists():
+            oof_file = candidate
+
+    if oof_file is None:
+        candidate = aggregated_dir / "importance" / "importance_aggregated.csv"
+        if candidate.exists():
+            oof_file = candidate
+
+    if oof_file is None:
         return None
 
     try:
@@ -216,6 +232,11 @@ def load_model_essentiality(
         ess_file = aggregated_dir / "optimize_panel" / "drop_column_validation.csv"
 
     if not ess_file.exists():
+        logger.debug(
+            f"No essentiality file found in {aggregated_dir / 'optimize_panel'}. "
+            f"Essentiality signal will be absent from composite ranking. "
+            f"This is expected unless a drop-column validation step has been run."
+        )
         return None
 
     try:
@@ -239,16 +260,17 @@ def run_consensus_panel(
     require_significance: bool = False,
     significance_alpha: float = 0.05,
     min_significant_models: int = 2,
-    oof_weight: float = 0.6,
-    essentiality_weight: float = 0.3,
-    stability_weight: float = 0.1,
     run_essentiality: bool = True,
     essentiality_corr_threshold: float = 0.75,
+    include_brier: bool = True,
+    include_pr_auc: bool = True,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
 
-    Uses composite ranking per ADR-004: OOF importance (primary) +
-    Essentiality (secondary) + Stability (tie-break).
+    Three-step workflow:
+        1. Per-model ranking: stability as hard filter, OOF importance as rank
+        2. Cross-model RRA: geometric mean rank aggregation
+        3. Post-hoc drop-column on final panel (interpretation, not ranking input)
 
     Args:
         run_id: Run ID to process.
@@ -263,14 +285,13 @@ def run_consensus_panel(
         require_significance: Whether to filter models by permutation test significance.
         significance_alpha: P-value threshold for significance filtering.
         min_significant_models: Minimum number of significant models required.
-        oof_weight: Weight for OOF importance (default 0.6).
-        essentiality_weight: Weight for essentiality (default 0.3).
-        stability_weight: Weight for stability (default 0.1).
         run_essentiality: Whether to run within-panel essentiality validation (default True).
             Refits a model on only the consensus panel features and runs drop-column
             to measure each cluster's contribution. This is a post-hoc
             interpretation artifact, not an input to panel selection.
         essentiality_corr_threshold: Correlation threshold for clustering in drop-column (default 0.75).
+        include_brier: Whether to compute delta-Brier in post-hoc essentiality (default True).
+        include_pr_auc: Whether to compute delta-PR-AUC in post-hoc essentiality (default True).
 
     Returns:
         ConsensusResult with final panel and intermediate data.
@@ -386,7 +407,6 @@ def run_consensus_panel(
     logger.info("Loading ranking data from each model...")
     model_stability = {}
     model_oof_importance = {}
-    model_essentiality = {}
 
     for model_name, aggregated_dir in model_dirs.items():
         # Load stability (always needed)
@@ -395,24 +415,17 @@ def run_consensus_panel(
 
         n_stable = (stability_df["selection_fraction"] >= stability_threshold).sum()
 
-        # Load OOF importance and essentiality
+        # Load OOF importance
         has_oof = False
-        has_essentiality = False
-
-        oof_df = load_model_oof_importance(aggregated_dir)
+        oof_df = load_model_oof_importance(aggregated_dir, model_name)
         if oof_df is not None:
             model_oof_importance[model_name] = oof_df
             has_oof = True
 
-        ess_df = load_model_essentiality(aggregated_dir)
-        if ess_df is not None:
-            model_essentiality[model_name] = ess_df
-            has_essentiality = True
-
         logger.info(
             f"  {model_name}: {len(stability_df)} total proteins, "
             f"{n_stable} stable (>={stability_threshold}), "
-            f"OOF={'yes' if has_oof else 'no'}, essentiality={'yes' if has_essentiality else 'no'}"
+            f"OOF={'yes' if has_oof else 'no'}"
         )
 
     # Load training data for correlation computation
@@ -490,10 +503,6 @@ def run_consensus_panel(
         target_size=target_size,
         rra_method=rra_method,
         model_oof_importance=model_oof_importance,
-        model_essentiality=model_essentiality,
-        oof_weight=oof_weight,
-        essentiality_weight=essentiality_weight,
-        stability_weight=stability_weight,
     )
 
     # Save results
@@ -543,6 +552,9 @@ def run_consensus_panel(
             # tuned hyperparameters) and refit it on ONLY the panel features so
             # that the estimator's expected input dimension matches the panel.
             drop_column_results_per_fold = []
+            brier_deltas_per_fold = []
+            pr_auc_deltas_per_fold = []
+
             for split_dir_path in split_dirs:
                 seed = int(split_dir_path.name.replace("split_seed", ""))
 
@@ -589,6 +601,7 @@ def run_consensus_panel(
                 )
                 panel_pipeline.fit(X_train_seed, y_train_seed)
 
+                # Primary: delta-AUROC via drop-column
                 fold_results = compute_drop_column_importance(
                     estimator=panel_pipeline,
                     X_train=X_train_seed,
@@ -599,11 +612,58 @@ def run_consensus_panel(
                     random_state=seed,
                 )
                 drop_column_results_per_fold.append(fold_results)
+
+                # Secondary: delta-Brier (calibration impact)
+                if include_brier:
+                    from ced_ml.features.drop_column import _compute_brier_deltas
+
+                    brier_deltas = _compute_brier_deltas(
+                        model=panel_pipeline,
+                        X_train=X_train_seed,
+                        y_train=y_train_seed,
+                        X_val=X_val_seed,
+                        y_val=y_val_seed,
+                        feature_clusters=clusters,
+                        random_state=seed,
+                    )
+                    brier_deltas_per_fold.append(brier_deltas)
+
+                # Secondary: delta-PR-AUC (precision-recall impact)
+                if include_pr_auc:
+                    from ced_ml.features.drop_column import _compute_pr_auc_deltas
+
+                    pr_auc_deltas = _compute_pr_auc_deltas(
+                        model=panel_pipeline,
+                        X_train=X_train_seed,
+                        y_train=y_train_seed,
+                        X_val=X_val_seed,
+                        y_val=y_val_seed,
+                        feature_clusters=clusters,
+                        random_state=seed,
+                    )
+                    pr_auc_deltas_per_fold.append(pr_auc_deltas)
+
                 logger.info(f"  Seed {seed}: completed within-panel essentiality validation")
 
             if drop_column_results_per_fold:
-                # Aggregate results across folds
+                # Aggregate primary AUROC results across folds
                 drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
+
+                # Aggregate Brier deltas and join by cluster_id
+                if include_brier and brier_deltas_per_fold:
+                    import numpy as np
+
+                    brier_arr = np.array(brier_deltas_per_fold)  # (n_folds, n_clusters)
+                    drop_column_df["mean_delta_brier"] = brier_arr.mean(axis=0)
+                    drop_column_df["std_delta_brier"] = brier_arr.std(axis=0)
+
+                # Aggregate PR-AUC deltas and join by cluster_id
+                if include_pr_auc and pr_auc_deltas_per_fold:
+                    import numpy as np
+
+                    pr_auc_arr = np.array(pr_auc_deltas_per_fold)
+                    drop_column_df["mean_delta_pr_auc"] = pr_auc_arr.mean(axis=0)
+                    drop_column_df["std_delta_pr_auc"] = pr_auc_arr.std(axis=0)
 
                 # Save essentiality results
                 ess_path = essentiality_dir / "within_panel_essentiality.csv"
@@ -620,8 +680,17 @@ def run_consensus_panel(
                     "mean_delta_auroc": float(drop_column_df["mean_delta_auroc"].mean()),
                     "max_delta_auroc": float(drop_column_df["mean_delta_auroc"].max()),
                     "top_cluster_id": str(drop_column_df.iloc[0]["cluster_id"]),
-                    "top_cluster_delta": float(drop_column_df.iloc[0]["mean_delta_auroc"]),
+                    "top_cluster_delta_auroc": float(drop_column_df.iloc[0]["mean_delta_auroc"]),
                 }
+
+                if "mean_delta_brier" in drop_column_df.columns:
+                    essentiality_summary["mean_delta_brier"] = float(
+                        drop_column_df["mean_delta_brier"].mean()
+                    )
+                if "mean_delta_pr_auc" in drop_column_df.columns:
+                    essentiality_summary["mean_delta_pr_auc"] = float(
+                        drop_column_df["mean_delta_pr_auc"].mean()
+                    )
 
                 # Save summary
                 import json
@@ -645,9 +714,7 @@ def run_consensus_panel(
     print(f"Run ID: {run_id}")
     print(f"Models: {', '.join(model_dirs.keys())}")
     print("\nParameters:")
-    print(
-        f"  Composite weights: OOF={oof_weight}, Ess={essentiality_weight}, Stab={stability_weight}"
-    )
+    print("  Ranking: stability filter + OOF importance")
     print(f"  Stability threshold: {stability_threshold}")
     print(f"  Correlation threshold: {corr_threshold}")
     print(f"  Target size: {target_size}")
@@ -698,9 +765,13 @@ def run_consensus_panel(
         print(f"  Folds validated: {essentiality_summary['n_folds_validated']}")
         print(f"  Mean delta AUROC: {essentiality_summary['mean_delta_auroc']:+.4f}")
         print(f"  Max delta AUROC: {essentiality_summary['max_delta_auroc']:+.4f}")
+        if "mean_delta_pr_auc" in essentiality_summary:
+            print(f"  Mean delta PR-AUC: {essentiality_summary['mean_delta_pr_auc']:+.4f}")
+        if "mean_delta_brier" in essentiality_summary:
+            print(f"  Mean delta Brier: {essentiality_summary['mean_delta_brier']:+.4f}")
         print(
             f"  Top cluster: {essentiality_summary['top_cluster_id']} "
-            f"(delta={essentiality_summary['top_cluster_delta']:+.4f})"
+            f"(delta AUROC={essentiality_summary['top_cluster_delta_auroc']:+.4f})"
         )
 
     print(f"\nOutput saved to: {outdir}")

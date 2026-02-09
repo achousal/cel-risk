@@ -241,6 +241,7 @@ def minimal_training_config(tmp_path):
             "objective": "youden",
             "fixed_spec": 0.95,
         },
+        "allow_test_thresholding": True,
         "lr": {
             "C_min": 0.1,
             "C_max": 10.0,
@@ -317,6 +318,7 @@ def fast_training_config(tmp_path):
             "objective": "youden",
             "fixed_spec": 0.95,
         },
+        "allow_test_thresholding": True,
         "lr": {
             "C_min": 0.1,
             "C_max": 10.0,
@@ -503,6 +505,7 @@ def ultra_fast_training_config(tmp_path):
             "objective": "youden",
             "fixed_spec": 0.95,
         },
+        "allow_test_thresholding": True,
         "lr": {
             "C_min": 0.1,
             "C_max": 10.0,
@@ -577,6 +580,7 @@ def fixed_panel_training_config(tmp_path):
             "objective": "youden",
             "fixed_spec": 0.95,
         },
+        "allow_test_thresholding": True,
         "lr": {
             "C_min": 0.1,
             "C_max": 10.0,

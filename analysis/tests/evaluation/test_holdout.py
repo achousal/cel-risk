@@ -423,3 +423,56 @@ class TestHoldoutEdgeCases:
         # F1 fix: Should raise ValueError for missing prevalence keys
         with pytest.raises(ValueError, match="missing valid 'prevalence.train_prevalence'"):
             compute_holdout_metrics(y_true, proba, bundle, "IncidentOnly", clinical_points=[])
+
+    def test_val_threshold_missing_uses_default(self, caplog):
+        """Test that missing val_threshold uses 0.5 default, not test_threshold (ADR-009 compliance).
+
+        This is the 1.5-C1 fix: prevents test-set information leakage by never falling back
+        to test_threshold when val_threshold is missing.
+        """
+        y_true = np.array([0, 0, 0, 1, 1])
+        proba = np.array([0.1, 0.2, 0.3, 0.8, 0.9])
+
+        # Bundle with test_threshold present but val_threshold missing (old bundle format)
+        bundle = {
+            "model_name": "LR",
+            "model_label": "Logistic",
+            "split_id": 0,
+            "thresholds": {
+                "objective_name": "max_f1",
+                "objective": 0.5,
+                "max_f1": 0.5,
+                "spec90": 0.7,
+                "test_threshold": 0.6,  # Present but should NOT be used
+                # val_threshold is missing
+                "control_specs": {},
+            },
+            "prevalence": {
+                "train_prevalence": 0.4,
+                "test_prevalence": 0.01,
+            },
+        }
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            metrics = compute_holdout_metrics(
+                y_true,
+                proba,
+                bundle,
+                "IncidentOnly",
+                clinical_points=[],
+            )
+
+        # Verify warning was issued
+        assert any("val_threshold missing" in record.message for record in caplog.records)
+        assert any("ADR-009" in record.message for record in caplog.records)
+
+        # Verify default threshold 0.5 was used (not test_threshold=0.6)
+        assert "thr_primary" in metrics
+        assert metrics["thr_primary"] == 0.5, "Should use default 0.5, not test_threshold=0.6"
+
+        # Verify metrics were computed successfully (no crash from missing val_threshold)
+        assert "AUROC_holdout" in metrics
+        assert "Brier_holdout" in metrics
+        assert "thr_objective_name" in metrics

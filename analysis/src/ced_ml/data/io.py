@@ -275,19 +275,21 @@ def validate_required_columns(df: pd.DataFrame) -> None:
             f"Metadata columns must be numeric but found non-numeric dtypes: {non_numeric_metadata}"
         )
 
-    # Validate protein columns are numeric (sample check on first 10 proteins)
+    # Validate protein columns are numeric (validate ALL proteins, not just sample)
     protein_cols = [col for col in df.columns if col.endswith(PROTEIN_SUFFIX)]
     if protein_cols:
-        sample_proteins = protein_cols[:10]
         non_numeric_proteins = []
-        for col in sample_proteins:
+        for col in protein_cols:
             if not pd.api.types.is_numeric_dtype(df[col]):
                 non_numeric_proteins.append(f"{col} ({df[col].dtype})")
 
         if non_numeric_proteins:
-            raise ValueError(
-                f"Protein columns must be numeric but found non-numeric dtypes in sample: {non_numeric_proteins}"
-            )
+            # Cap error message display to 20 proteins for readability
+            shown = non_numeric_proteins[:20]
+            msg = f"Protein columns must be numeric. Found {len(non_numeric_proteins)} non-numeric: {shown}"
+            if len(non_numeric_proteins) > 20:
+                msg += f" ... and {len(non_numeric_proteins) - 20} more"
+            raise ValueError(msg)
 
 
 def validate_binary_outcome(y) -> None:

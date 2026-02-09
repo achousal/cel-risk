@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.metrics import brier_score_loss, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 if TYPE_CHECKING:
     from sklearn.pipeline import Pipeline
@@ -711,3 +711,79 @@ def _compute_brier_deltas(
             delta_brier_list.append(np.nan)
 
     return delta_brier_list
+
+
+def _compute_pr_auc_deltas(
+    model: Pipeline,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    feature_clusters: list[list[str]],
+    random_state: int,
+) -> list[float]:
+    """Compute delta_pr_auc for each feature cluster.
+
+    PR-AUC (average precision) is especially informative for imbalanced datasets.
+    delta_pr_auc = original_pr_auc - reduced_pr_auc.
+    Positive delta means removing the cluster degraded precision-recall performance.
+
+    Args:
+        model: Fitted sklearn Pipeline.
+        X_train: Training features.
+        y_train: Training labels.
+        X_val: Validation features.
+        y_val: Validation labels.
+        feature_clusters: List of feature clusters to drop.
+        random_state: Random state for cloning.
+
+    Returns:
+        List of delta_pr_auc values (one per cluster).
+    """
+    # Compute original PR-AUC
+    try:
+        y_pred_proba_original = model.predict_proba(X_val)[:, 1]
+        original_pr_auc = average_precision_score(y_val, y_pred_proba_original)
+        logger.debug(f"Original PR-AUC: {original_pr_auc:.6f}")
+    except Exception as e:
+        logger.error(f"Failed to compute original PR-AUC: {e}")
+        return [np.nan] * len(feature_clusters)
+
+    delta_pr_auc_list = []
+
+    for cluster_id, cluster_features in enumerate(feature_clusters):
+        try:
+            # Drop cluster and refit
+            features_to_keep = [f for f in X_train.columns if f not in cluster_features]
+
+            if len(features_to_keep) == 0:
+                logger.warning(f"Cluster {cluster_id}: all features dropped, skipping PR-AUC")
+                delta_pr_auc_list.append(np.nan)
+                continue
+
+            X_train_reduced = X_train[features_to_keep]
+            X_val_reduced = X_val[features_to_keep]
+
+            # Clone and refit with random_state propagation
+            model_clone = clone(model)
+            _propagate_random_state(model_clone, random_state)
+            model_clone.fit(X_train_reduced, y_train)
+
+            # Evaluate PR-AUC
+            y_pred_proba_reduced = model_clone.predict_proba(X_val_reduced)[:, 1]
+            reduced_pr_auc = average_precision_score(y_val, y_pred_proba_reduced)
+
+            # delta = original - reduced (positive means cluster was important)
+            delta_pr_auc = original_pr_auc - reduced_pr_auc
+            delta_pr_auc_list.append(delta_pr_auc)
+
+            logger.debug(
+                f"Cluster {cluster_id}: original_pr_auc={original_pr_auc:.6f}, "
+                f"reduced_pr_auc={reduced_pr_auc:.6f}, delta_pr_auc={delta_pr_auc:.6f}"
+            )
+
+        except Exception as e:
+            logger.error(f"Cluster {cluster_id}: Failed to compute PR-AUC: {e}")
+            delta_pr_auc_list.append(np.nan)
+
+    return delta_pr_auc_list

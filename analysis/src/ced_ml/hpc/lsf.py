@@ -530,8 +530,8 @@ def submit_hpc_pipeline(
     env_info = detect_environment(base_dir)
     pipeline_logger.info(f"Python environment: {env_info.env_type}")
 
-    # Create log directory
-    run_logs_dir = logs_dir / "training" / f"run_{run_id}"
+    # Create log directory (structure: logs/run_{ID}/training/)
+    run_logs_dir = logs_dir / f"run_{run_id}" / "training"
     run_logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Get default resource config

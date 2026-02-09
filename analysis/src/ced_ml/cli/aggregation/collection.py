@@ -56,7 +56,13 @@ def collect_ensemble_predictions(
                 logger.debug(f"No {pred_type} predictions dir in ENSEMBLE/{ensemble_dir.name}")
             continue
 
-        csv_files = list(pred_dir.glob("*__ENSEMBLE.csv"))
+        pred_file_patterns = {
+            "test": "test_preds__ENSEMBLE.csv",
+            "val": "val_preds__ENSEMBLE.csv",
+            "train_oof": "train_oof__ENSEMBLE.csv",
+        }
+        file_pattern = pred_file_patterns[pred_type]
+        csv_files = list(pred_dir.glob(file_pattern))
         if not csv_files:
             if logger:
                 logger.debug(f"No ENSEMBLE CSV files in {pred_dir}")
@@ -228,39 +234,70 @@ def collect_ensemble_hyperparams(
     for split_dir in ensemble_dirs:
         seed = int(split_dir.name.replace("split_seed", ""))
 
-        # Ensemble meta-learner config is in config.yaml
+        # Ensemble meta-learner config is in run_settings.json (canonical source)
+        settings_path = split_dir / "core" / "run_settings.json"
         config_path = split_dir / "config.yaml"
-        if not config_path.exists():
-            if logger:
-                logger.debug(f"No config file in {split_dir.name}")
-            continue
 
-        try:
-            import yaml
+        # Prefer run_settings.json (matches ensemble_metadata.py pattern)
+        if settings_path.exists():
+            try:
+                import json
 
-            with open(config_path) as f:
-                config = yaml.safe_load(f)
+                with open(settings_path) as f:
+                    settings = json.load(f)
 
-            # Extract ensemble settings
-            ensemble_config = config.get("ensemble", {})
-            meta_model = ensemble_config.get("meta_model", {})
+                # Extract ensemble settings from JSON
+                ensemble_config = settings.get("ensemble", {})
+                meta_model = ensemble_config.get("meta_model", {})
 
-            row = {
-                "split_seed": seed,
-                "model": "ENSEMBLE",
-                "method": ensemble_config.get("method", "stacking"),
-                "base_models": ", ".join(ensemble_config.get("base_models", [])),
-                "meta_model_type": meta_model.get("type", "logistic_regression"),
-                "meta_model_penalty": meta_model.get("penalty", "l2"),
-                "meta_model_C": meta_model.get("C", 1.0),
-            }
-            all_params.append(row)
+                row = {
+                    "split_seed": seed,
+                    "model": "ENSEMBLE",
+                    "method": ensemble_config.get("method", "stacking"),
+                    "base_models": ", ".join(ensemble_config.get("base_models", [])),
+                    "meta_model_type": meta_model.get("type", "logistic_regression"),
+                    "meta_model_penalty": meta_model.get("penalty", "l2"),
+                    "meta_model_C": meta_model.get("C", 1.0),
+                }
+                all_params.append(row)
+                continue
+            except Exception as e:
+                if logger:
+                    logger.debug(f"Could not read run_settings.json from {split_dir.name}: {e}")
 
-            if logger:
-                logger.debug(f"Loaded ensemble config from {split_dir.name}")
-        except Exception as e:
-            if logger:
-                logger.warning(f"Failed to read {config_path}: {e}")
+        # Fallback to config.yaml for backward compatibility
+        if config_path.exists():
+            try:
+                import yaml
+
+                with open(config_path) as f:
+                    config = yaml.safe_load(f)
+
+                # Extract ensemble settings
+                ensemble_config = config.get("ensemble", {})
+                meta_model = ensemble_config.get("meta_model", {})
+
+                row = {
+                    "split_seed": seed,
+                    "model": "ENSEMBLE",
+                    "method": ensemble_config.get("method", "stacking"),
+                    "base_models": ", ".join(ensemble_config.get("base_models", [])),
+                    "meta_model_type": meta_model.get("type", "logistic_regression"),
+                    "meta_model_penalty": meta_model.get("penalty", "l2"),
+                    "meta_model_C": meta_model.get("C", 1.0),
+                }
+                all_params.append(row)
+                if logger:
+                    logger.debug(
+                        f"Using config.yaml fallback for {split_dir.name} (run_settings.json not found)"
+                    )
+                continue
+            except Exception as e:
+                if logger:
+                    logger.debug(f"Could not read config.yaml from {split_dir.name}: {e}")
+
+        if logger:
+            logger.debug(f"No config files found in {split_dir.name}")
 
     if not all_params:
         if logger:

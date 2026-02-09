@@ -337,6 +337,7 @@ def build_logistic_regression(
         Configured LogisticRegression estimator
     """
     return LogisticRegression(
+        penalty="elasticnet",
         solver=solver,
         C=C,
         l1_ratio=l1_ratio,

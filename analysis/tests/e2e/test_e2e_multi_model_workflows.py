@@ -116,6 +116,7 @@ def fast_multi_config(tmp_path):
             "strategy": "oof_posthoc",
         },
         "thresholds": {"objective": "youden"},
+        "allow_test_thresholding": True,
         "lr": {"C_min": 1.0, "C_max": 10.0, "C_points": 1, "l1_ratio": [0.5]},
         "rf": {
             "n_estimators_grid": [30],
@@ -170,6 +171,8 @@ class TestSharedRunIdCoordination:
                 "1",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -244,6 +247,8 @@ class TestSharedRunIdCoordination:
                 "1",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -336,6 +341,8 @@ class TestCrossModelAggregation:
                 "2",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -423,6 +430,8 @@ class TestCrossModelAggregation:
                 "2",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -514,6 +523,8 @@ class TestConsensusPanelIntegration:
                 "2",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -620,6 +631,8 @@ class TestConsensusPanelIntegration:
                 "2",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -728,6 +741,8 @@ class TestEnsembleMultiModelWorkflow:
                 "1",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -814,6 +829,8 @@ class TestEnsembleMultiModelWorkflow:
                 "1",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 
@@ -1005,6 +1022,8 @@ class TestMultiModelMetadataConsistency:
                 "1",
                 "--seed-start",
                 "42",
+                "--val-size",
+                "0.25",
             ],
         )
 

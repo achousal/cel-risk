@@ -203,6 +203,13 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
             f"(std: {np.std(ctx.nested_rfecv_result.fold_val_aurocs):.4f})"
         )
 
+    # OOF importance
+    if ctx.oof_importance_df is not None:
+        cv_dir = Path(outdirs.cv)
+        oof_importance_path = cv_dir / f"oof_importance__{config.model}.csv"
+        ctx.oof_importance_df.to_csv(oof_importance_path, index=False)
+        logger.info(f"OOF importance saved: {oof_importance_path.name}")
+
     # Final test panel
     if ctx.final_selected_proteins:
         writer = ResultsWriter(ctx.outdirs)

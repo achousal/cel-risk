@@ -217,6 +217,7 @@ class TestConfigOverridePrecedence:
             },
             "calibration": {"enabled": True, "method": "isotonic", "strategy": "oof_posthoc"},
             "thresholds": {"objective": "youden", "fixed_spec": 0.95},
+            "allow_test_thresholding": True,  # Test doesn't care about threshold behavior
             "lr": {
                 "C_min": 0.1,
                 "C_max": 10.0,
@@ -309,6 +310,7 @@ class TestConfigOverridePrecedence:
             },
             "calibration": {"enabled": True, "method": "isotonic", "strategy": "oof_posthoc"},
             "thresholds": {"objective": "youden", "fixed_spec": 0.95},
+            "allow_test_thresholding": True,  # Test doesn't care about threshold behavior
             "lr": {
                 "C_min": 0.1,
                 "C_max": 10.0,

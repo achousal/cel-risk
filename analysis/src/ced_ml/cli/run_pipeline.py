@@ -993,8 +993,6 @@ def run_pipeline(
         if consensus_config_path.exists():
             consensus_cfg = load_yaml(consensus_config_path)
 
-        # Extract composite ranking weights and essentiality config
-        composite_cfg = consensus_cfg.get("composite_ranking", {})
         essentiality_cfg = consensus_cfg.get("essentiality", {})
         run_consensus_panel(
             run_id=shared_run_id,
@@ -1004,11 +1002,10 @@ def run_pipeline(
             corr_threshold=consensus_cfg.get("corr_threshold", 0.85),
             target_size=consensus_cfg.get("target_size", 25),
             rra_method=consensus_cfg.get("rra_method", "geometric_mean"),
-            oof_weight=composite_cfg.get("oof_weight", 0.6),
-            essentiality_weight=composite_cfg.get("essentiality_weight", 0.3),
-            stability_weight=composite_cfg.get("stability_weight", 0.1),
             run_essentiality=essentiality_cfg.get("enabled", True),
             essentiality_corr_threshold=essentiality_cfg.get("corr_threshold", 0.75),
+            include_brier=essentiality_cfg.get("include_brier", True),
+            include_pr_auc=essentiality_cfg.get("include_pr_auc", True),
             outdir=None,
             log_level=log_level,
         )
@@ -1029,19 +1026,26 @@ def run_pipeline(
                 logger.info(f"\nTesting {model_name} (split_seed={split_seed})")
 
                 try:
+                    # Note: run_permutation_test_cli expects split_seeds as list,
+                    # we wrap single seed for per-seed execution
                     run_permutation_test_cli(
                         run_id=shared_run_id,
                         model=model_name,
-                        split_seed=split_seed,
+                        split_seeds=[split_seed],
                         n_perms=permutation_n_perms,
                         n_jobs=permutation_n_jobs,
                         log_level=log_level,
                     )
                     logger.info(f"Completed permutation test for {model_name} seed={split_seed}")
                 except Exception as e:
-                    logger.warning(
-                        f"Permutation test failed for {model_name} seed={split_seed}: {e}"
-                    )
+                    msg = f"Permutation test failed for {model_name} seed={split_seed}: {e}"
+                    if hpc:
+                        # HPC mode: log warning and continue (job independence)
+                        logger.warning(msg)
+                    else:
+                        # Local mode: fail fast
+                        logger.error(msg)
+                        raise
 
         step_timings.append(("Permutation testing", time.monotonic() - t0))
 

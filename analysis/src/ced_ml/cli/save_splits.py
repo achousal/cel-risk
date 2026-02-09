@@ -314,7 +314,7 @@ def _create_holdout(
         # Fixed seed 42 for holdout ensures consistent final evaluation set across experiments
         # This is intentional - holdout should be stable for valid cross-experiment comparison
         holdout_seed = 42
-        dev_pos_unsorted, holdout_pos, _, y_holdout = train_test_split(
+        _, holdout_pos, _, y_holdout = train_test_split(
             full_idx,
             y_full,
             test_size=config.holdout_size,

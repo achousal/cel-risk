@@ -1,11 +1,10 @@
 """Nested RFECV for robust feature discovery within CV folds.
 
-This module provides RFECV (Recursive Feature Elimination with Cross-Validation)
-that operates WITHIN each outer CV fold during training, ensuring:
-1. No data leakage - feature selection uses only train fold data
-2. Automatic optimal size - internal CV finds best panel size per fold
-3. Unbiased evaluation - validation happens on held-out fold
-4. Consensus panel - aggregates selections across folds
+RFECV runs within each outer CV fold during training to ensure:
+- No data leakage (feature selection uses only train fold data)
+- Automatic optimal size (internal CV finds best panel size per fold)
+- Unbiased evaluation (validation on held-out fold)
+- Consensus panel (aggregates selections across folds)
 
 Workflow:
 1. Outer CV fold splits data into train/val
@@ -13,22 +12,9 @@ Workflow:
 3. Selected features evaluated on held-out val fold
 4. Aggregate: consensus panel = features in >= threshold folds
 
-Complementary to features/rfe.py (post-hoc panel optimization):
-- nested_rfe.py (this module): Scientific discovery during training
-  → "What features are robustly selected across CV folds?"
-  → Use for: Publishing, understanding stability, early discovery
-  → Output: Consensus panel (features in ≥80% of folds)
-  → Speed: Slower (~45× more model fits)
-
-- rfe.py (ced optimize-panel): Clinical deployment after training
-  → "What's the minimum panel size maintaining AUROC ≥ 0.90?"
-  → Use for: Stakeholder decisions, cost-benefit trade-offs
-  → Output: Pareto curve (panel size vs. AUROC)
-  → Speed: Faster (single model evaluation per size)
-
-Typical workflow: Use both sequentially
-  1. Enable rfe_enabled: true during training (robust discovery)
-  2. Run ced optimize-panel after training (deployment trade-offs)
+Complementary to rfe.py:
+- nested_rfe.py: Discovery during training, slower, consensus panel
+- rfe.py: Post-hoc optimization, faster, Pareto curve for deployment
 """
 
 import json
@@ -52,16 +38,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RFECVFoldResult:
-    """Results from RFECV on a single CV fold.
-
-    Attributes:
-        fold_idx: Outer fold index.
-        optimal_n_features: Number of features selected by RFECV.
-        selected_features: List of selected feature names.
-        cv_scores: Cross-validation scores at each feature count.
-        feature_ranking: Dict mapping feature -> rank (1 = selected).
-        val_auroc: AUROC on held-out validation fold.
-    """
+    """Results from RFECV on a single CV fold."""
 
     fold_idx: int = 0
     optimal_n_features: int = 0
@@ -73,16 +50,7 @@ class RFECVFoldResult:
 
 @dataclass
 class NestedRFECVResult:
-    """Aggregated results from nested RFECV across CV folds.
-
-    Attributes:
-        fold_results: RFECVFoldResult per outer fold.
-        consensus_panel: Features selected in >= threshold folds.
-        feature_stability: Dict mapping feature -> selection fraction.
-        optimal_sizes: List of optimal sizes per fold.
-        mean_optimal_size: Mean optimal panel size across folds.
-        fold_val_aurocs: Validation AUROC per fold.
-    """
+    """Aggregated results from nested RFECV across CV folds."""
 
     fold_results: list[RFECVFoldResult] = field(default_factory=list)
     consensus_panel: list[str] = field(default_factory=list)
@@ -90,6 +58,51 @@ class NestedRFECVResult:
     optimal_sizes: list[int] = field(default_factory=list)
     mean_optimal_size: float = 0.0
     fold_val_aurocs: list[float] = field(default_factory=list)
+
+
+def _get_predictions(estimator: Any, X: np.ndarray) -> np.ndarray:
+    """Get predictions from estimator, handling both predict_proba and decision_function.
+
+    Args:
+        estimator: Fitted estimator.
+        X: Feature matrix.
+
+    Returns:
+        1D array of predictions (probabilities or decision scores).
+    """
+    if hasattr(estimator, "predict_proba"):
+        return estimator.predict_proba(X)[:, 1]
+    return estimator.decision_function(X)
+
+
+def _fit_rfecv_with_fallback(rfecv: RFECV, X: np.ndarray, y: np.ndarray, n_jobs: int) -> RFECV:
+    """Fit RFECV with automatic fallback to serial execution if parallel fails.
+
+    Args:
+        rfecv: RFECV instance to fit.
+        X: Feature matrix.
+        y: Labels.
+        n_jobs: Number of parallel jobs requested.
+
+    Returns:
+        Fitted RFECV instance.
+    """
+    parallel_requested = n_jobs is not None and int(n_jobs) != 1
+    try:
+        rfecv.fit(X, y)
+        return rfecv
+    except (PermissionError, NotImplementedError, OSError) as exc:
+        if not parallel_requested:
+            raise
+        logger.warning(
+            "RFECV parallel execution unavailable in current runtime (%s). "
+            "Retrying with n_jobs=1.",
+            exc,
+        )
+        rfecv_serial = clone(rfecv)
+        rfecv_serial.n_jobs = 1
+        rfecv_serial.fit(X, y)
+        return rfecv_serial
 
 
 def run_rfecv_within_fold(
@@ -109,9 +122,6 @@ def run_rfecv_within_fold(
 ) -> RFECVFoldResult:
     """Run RFECV within a single outer CV fold.
 
-    RFECV uses internal CV on train_fold to find optimal feature count,
-    then evaluates on val_fold for unbiased performance estimate.
-
     Args:
         X_train_fold: Training features for this fold.
         y_train_fold: Training labels for this fold.
@@ -130,26 +140,20 @@ def run_rfecv_within_fold(
     Returns:
         RFECVFoldResult with selected features and performance.
     """
-    # Validate inputs
     if len(feature_names) != X_train_fold.shape[1]:
         raise ValueError(
             f"feature_names length ({len(feature_names)}) != X columns ({X_train_fold.shape[1]})"
         )
 
-    # Setup internal CV
-    inner_cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
-
-    # Validate min_features
     if min_features < 1:
         logger.warning(
-            f"min_features_to_select={min_features} is invalid (must be >= 1). " "Clamping to 1."
+            f"min_features_to_select={min_features} is invalid (must be >= 1). Clamping to 1."
         )
         min_features = 1
 
-    # Clone estimator to avoid mutation
+    inner_cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
     base_estimator = clone(estimator)
 
-    # Run RFECV
     rfecv = RFECV(
         estimator=base_estimator,
         step=step,
@@ -161,56 +165,21 @@ def run_rfecv_within_fold(
 
     logger.debug(f"Fold {fold_idx}: Running RFECV on {len(feature_names)} features...")
 
-    # Fit RFECV on train fold
-    parallel_requested = n_jobs is not None and int(n_jobs) != 1
-    try:
-        rfecv.fit(X_train_fold.values, y_train_fold)
-    except (PermissionError, NotImplementedError, OSError) as exc:
-        if parallel_requested:
-            logger.warning(
-                "RFECV parallel execution unavailable in current runtime (%s). "
-                "Retrying with n_jobs=1.",
-                exc,
-            )
-            rfecv = RFECV(
-                estimator=base_estimator,
-                step=step,
-                cv=inner_cv,
-                scoring=scoring,
-                min_features_to_select=min_features,
-                n_jobs=1,
-            )
-            rfecv.fit(X_train_fold.values, y_train_fold)
-        else:
-            raise
+    rfecv = _fit_rfecv_with_fallback(rfecv, X_train_fold.values, y_train_fold, n_jobs)
 
-    # Extract results
     optimal_n = rfecv.n_features_
     support_mask = rfecv.support_
-    ranking = rfecv.ranking_
-
-    # Get selected feature names
     selected_features = [
         f for f, selected in zip(feature_names, support_mask, strict=False) if selected
     ]
-
-    # Build feature ranking dict (1 = selected, higher = eliminated earlier)
-    feature_ranking = {f: int(r) for f, r in zip(feature_names, ranking, strict=False)}
-
-    # Get CV scores curve
+    feature_ranking = {f: int(r) for f, r in zip(feature_names, rfecv.ranking_, strict=False)}
     cv_scores = list(rfecv.cv_results_["mean_test_score"])
 
-    # Evaluate on held-out validation fold
+    X_train_selected = X_train_fold.iloc[:, support_mask]
     X_val_selected = X_val_fold.iloc[:, support_mask]
-    rfecv.estimator_.fit(X_train_fold.iloc[:, support_mask].values, y_train_fold)
+    rfecv.estimator_.fit(X_train_selected.values, y_train_fold)
 
-    # Get predictions (use decision_function for models without predict_proba)
-    if hasattr(rfecv.estimator_, "predict_proba"):
-        val_probs = rfecv.estimator_.predict_proba(X_val_selected.values)[:, 1]
-    else:
-        # Use decision_function for models like LinearSVC
-        val_probs = rfecv.estimator_.decision_function(X_val_selected.values)
-
+    val_probs = _get_predictions(rfecv.estimator_, X_val_selected.values)
     val_auroc = auroc(y_val_fold, val_probs)
 
     logger.info(
@@ -227,56 +196,33 @@ def run_rfecv_within_fold(
     )
 
 
-def extract_estimator_for_rfecv(
-    fitted_pipeline: Pipeline,
-) -> Any:
-    """Extract the classifier from a fitted pipeline for use with RFECV.
-
-    RFECV requires an estimator with coef_ or feature_importances_.
-    This extracts and clones the appropriate estimator.
+def _unwrap_calibrated_classifier(obj: Any) -> Any:
+    """Unwrap CalibratedClassifierCV to get base estimator.
 
     Args:
-        fitted_pipeline: Fitted sklearn Pipeline.
+        obj: Potentially wrapped estimator.
 
     Returns:
-        Cloned estimator suitable for RFECV.
-
-    Raises:
-        ValueError: If no suitable estimator found.
+        Unwrapped estimator.
     """
     from sklearn.calibration import CalibratedClassifierCV
 
-    # Unwrap OOFCalibratedModel if present
-    if hasattr(fitted_pipeline, "base_model"):
-        fitted_pipeline = fitted_pipeline.base_model
+    if not isinstance(obj, CalibratedClassifierCV):
+        return obj
 
-    # Unwrap CalibratedClassifierCV
-    if isinstance(fitted_pipeline, CalibratedClassifierCV):
-        if hasattr(fitted_pipeline, "estimator"):
-            pipeline = fitted_pipeline.estimator
-        else:
-            pipeline = getattr(fitted_pipeline, "base_estimator", fitted_pipeline)
-    else:
-        pipeline = fitted_pipeline
+    if hasattr(obj, "calibrated_classifiers_") and obj.calibrated_classifiers_:
+        return obj.calibrated_classifiers_[0].estimator
+    if hasattr(obj, "estimator"):
+        return obj.estimator
+    return getattr(obj, "base_estimator", obj)
 
-    # Extract classifier from pipeline
-    if isinstance(pipeline, Pipeline):
-        clf = pipeline.named_steps.get("clf")
-        if clf is None:
-            raise ValueError("Pipeline has no 'clf' step")
-    else:
-        clf = pipeline
 
-    # Unwrap CalibratedClassifierCV from classifier
-    if isinstance(clf, CalibratedClassifierCV):
-        if hasattr(clf, "calibrated_classifiers_") and clf.calibrated_classifiers_:
-            # Get the base estimator from first calibrated classifier
-            clf = clf.calibrated_classifiers_[0].estimator
-        elif hasattr(clf, "estimator"):
-            clf = clf.estimator
+def _validate_estimator_for_rfecv(clf: Any) -> None:
+    """Validate estimator has required attributes for RFECV.
 
-    # Validate estimator has required attributes
-    # Note: We check the class, not instance, since we'll be fitting a fresh clone
+    Args:
+        clf: Estimator to validate.
+    """
     estimator_class = type(clf)
     has_coef = hasattr(clf, "coef_") or "coef_" in dir(estimator_class)
     has_importance = hasattr(clf, "feature_importances_") or "feature_importances_" in dir(
@@ -289,6 +235,34 @@ def extract_estimator_for_rfecv(
             "RFECV may fail."
         )
 
+
+def extract_estimator_for_rfecv(fitted_pipeline: Pipeline) -> Any:
+    """Extract the classifier from a fitted pipeline for use with RFECV.
+
+    Args:
+        fitted_pipeline: Fitted sklearn Pipeline.
+
+    Returns:
+        Cloned estimator suitable for RFECV.
+
+    Raises:
+        ValueError: If no suitable estimator found.
+    """
+    if hasattr(fitted_pipeline, "base_model"):
+        fitted_pipeline = fitted_pipeline.base_model
+
+    pipeline = _unwrap_calibrated_classifier(fitted_pipeline)
+
+    if isinstance(pipeline, Pipeline):
+        clf = pipeline.named_steps.get("clf")
+        if clf is None:
+            raise ValueError("Pipeline has no 'clf' step")
+    else:
+        clf = pipeline
+
+    clf = _unwrap_calibrated_classifier(clf)
+    _validate_estimator_for_rfecv(clf)
+
     return clone(clf)
 
 
@@ -298,16 +272,13 @@ def compute_consensus_panel(
 ) -> tuple[list[str], dict[str, float]]:
     """Compute consensus panel from fold-wise selections.
 
-    A feature is included in the consensus panel if it was selected in
-    >= threshold fraction of folds. This ensures robust feature selection.
-
     Args:
         fold_selections: List of selected feature lists per fold.
-        threshold: Minimum selection fraction for consensus (default 0.80).
+        threshold: Minimum selection fraction for consensus.
 
     Returns:
-        Tuple of (consensus_panel, stability_dict).
-        stability_dict maps feature -> selection fraction.
+        Tuple of (consensus_panel, stability_dict) where stability_dict
+        maps feature to selection fraction.
     """
     if not fold_selections:
         return [], {}
@@ -321,8 +292,6 @@ def compute_consensus_panel(
 
     stability = {f: count / n_folds for f, count in feature_counts.items()}
     consensus = [f for f, frac in stability.items() if frac >= threshold]
-
-    # Sort by stability (most stable first), then alphabetically
     consensus.sort(key=lambda f: (-stability[f], f))
 
     return consensus, stability
@@ -357,30 +326,12 @@ def aggregate_rfecv_results(
     )
 
 
-def save_nested_rfecv_results(
-    result: NestedRFECVResult,
-    output_dir: str | Path,
-    model_name: str,
-    split_seed: int,
-) -> dict[str, str]:
-    """Save nested RFECV results to output directory.
-
-    Args:
-        result: NestedRFECVResult from nested CV.
-        output_dir: Directory to save outputs.
-        model_name: Model name for metadata.
-        split_seed: Split seed for metadata.
+def _save_consensus_panel(result: NestedRFECVResult, output_dir: Path) -> tuple[str, str]:
+    """Save consensus panel and feature stability CSVs.
 
     Returns:
-        Dict mapping artifact name -> file path.
+        Tuple of (consensus_panel_path, stability_path).
     """
-    from datetime import datetime
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    paths: dict[str, str] = {}
-
-    # 1. Consensus panel CSV
     consensus_path = output_dir / "consensus_panel.csv"
     consensus_df = pd.DataFrame(
         [
@@ -389,9 +340,7 @@ def save_nested_rfecv_results(
         ]
     )
     consensus_df.to_csv(consensus_path, index=False)
-    paths["consensus_panel"] = str(consensus_path)
 
-    # 2. Feature stability CSV (all features)
     stability_path = output_dir / "feature_stability.csv"
     stability_df = pd.DataFrame(
         [
@@ -400,43 +349,60 @@ def save_nested_rfecv_results(
         ]
     )
     stability_df.to_csv(stability_path, index=False)
-    paths["feature_stability"] = str(stability_path)
 
-    # 3. Fold-wise results CSV
+    return str(consensus_path), str(stability_path)
+
+
+def _save_fold_results(result: NestedRFECVResult, output_dir: Path) -> str:
+    """Save fold-wise results CSV.
+
+    Returns:
+        Path to fold_results.csv.
+    """
     fold_results_path = output_dir / "fold_results.csv"
-    fold_rows = []
-    for r in result.fold_results:
-        fold_rows.append(
-            {
-                "fold": r.fold_idx,
-                "optimal_n_features": r.optimal_n_features,
-                "val_auroc": r.val_auroc,
-                "n_cv_scores": len(r.cv_scores),
-                "selected_features": json.dumps(r.selected_features),
-            }
-        )
-    fold_df = pd.DataFrame(fold_rows)
-    fold_df.to_csv(fold_results_path, index=False)
-    paths["fold_results"] = str(fold_results_path)
+    fold_rows = [
+        {
+            "fold": r.fold_idx,
+            "optimal_n_features": r.optimal_n_features,
+            "val_auroc": r.val_auroc,
+            "n_cv_scores": len(r.cv_scores),
+            "selected_features": json.dumps(r.selected_features),
+        }
+        for r in result.fold_results
+    ]
+    pd.DataFrame(fold_rows).to_csv(fold_results_path, index=False)
+    return str(fold_results_path)
 
-    # 4. CV scores curve per fold (for plotting)
+
+def _save_cv_scores_curve(result: NestedRFECVResult, output_dir: Path) -> str | None:
+    """Save CV scores curve CSV.
+
+    Returns:
+        Path to cv_scores_curve.csv if data exists, else None.
+    """
+    cv_rows = [
+        {"fold": r.fold_idx, "n_features": i + 1, "cv_score": score}
+        for r in result.fold_results
+        for i, score in enumerate(r.cv_scores)
+    ]
+    if not cv_rows:
+        return None
+
     cv_scores_path = output_dir / "cv_scores_curve.csv"
-    cv_rows = []
-    for r in result.fold_results:
-        for i, score in enumerate(r.cv_scores):
-            cv_rows.append(
-                {
-                    "fold": r.fold_idx,
-                    "n_features": i + 1,  # RFECV scores are 1-indexed by n_features
-                    "cv_score": score,
-                }
-            )
-    if cv_rows:
-        cv_df = pd.DataFrame(cv_rows)
-        cv_df.to_csv(cv_scores_path, index=False)
-        paths["cv_scores_curve"] = str(cv_scores_path)
+    pd.DataFrame(cv_rows).to_csv(cv_scores_path, index=False)
+    return str(cv_scores_path)
 
-    # 5. Summary JSON
+
+def _save_summary_json(
+    result: NestedRFECVResult, output_dir: Path, model_name: str, split_seed: int
+) -> str:
+    """Save summary JSON.
+
+    Returns:
+        Path to nested_rfecv_summary.json.
+    """
+    from datetime import datetime
+
     summary_path = output_dir / "nested_rfecv_summary.json"
     summary = {
         "model": model_name,
@@ -455,26 +421,72 @@ def save_nested_rfecv_results(
         "timestamp": datetime.now().isoformat(),
     }
     save_json(summary, summary_path)
-    paths["summary"] = str(summary_path)
+    return str(summary_path)
 
-    # 6. RFECV selection curve plot (if cv_scores_curve exists)
-    if "cv_scores_curve" in paths:
-        try:
-            from ced_ml.plotting.panel_curve import plot_rfecv_selection_curve
 
-            selection_curve_plot = output_dir / "rfecv_selection_curve.png"
-            plot_rfecv_selection_curve(
-                cv_scores_curve_path=paths["cv_scores_curve"],
-                out_path=selection_curve_plot,
-                title="RFECV Feature Selection Curve",
-                model_name=f"{model_name} (split_seed={split_seed})",
-            )
-            paths["selection_curve_plot"] = str(selection_curve_plot)
-            logger.info(f"Saved RFECV selection curve plot to {selection_curve_plot}")
-        except ImportError:
-            logger.warning("Matplotlib not available, skipping RFECV selection curve plot")
-        except Exception as e:
-            logger.warning(f"Failed to generate RFECV selection curve plot: {e}")
+def _save_selection_curve_plot(
+    cv_scores_path: str, output_dir: Path, model_name: str, split_seed: int
+) -> str | None:
+    """Save RFECV selection curve plot.
+
+    Returns:
+        Path to plot if successful, else None.
+    """
+    try:
+        from ced_ml.plotting.panel_curve import plot_rfecv_selection_curve
+
+        selection_curve_plot = output_dir / "rfecv_selection_curve.png"
+        plot_rfecv_selection_curve(
+            cv_scores_curve_path=cv_scores_path,
+            out_path=selection_curve_plot,
+            title="RFECV Feature Selection Curve",
+            model_name=f"{model_name} (split_seed={split_seed})",
+        )
+        logger.info(f"Saved RFECV selection curve plot to {selection_curve_plot}")
+        return str(selection_curve_plot)
+    except ImportError:
+        logger.warning("Matplotlib not available, skipping RFECV selection curve plot")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to generate RFECV selection curve plot: {e}")
+        return None
+
+
+def save_nested_rfecv_results(
+    result: NestedRFECVResult,
+    output_dir: str | Path,
+    model_name: str,
+    split_seed: int,
+) -> dict[str, str]:
+    """Save nested RFECV results to output directory.
+
+    Args:
+        result: NestedRFECVResult from nested CV.
+        output_dir: Directory to save outputs.
+        model_name: Model name for metadata.
+        split_seed: Split seed for metadata.
+
+    Returns:
+        Dict mapping artifact name to file path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, str] = {}
+
+    consensus_path, stability_path = _save_consensus_panel(result, output_dir)
+    paths["consensus_panel"] = consensus_path
+    paths["feature_stability"] = stability_path
+
+    paths["fold_results"] = _save_fold_results(result, output_dir)
+
+    cv_scores_path = _save_cv_scores_curve(result, output_dir)
+    if cv_scores_path:
+        paths["cv_scores_curve"] = cv_scores_path
+        plot_path = _save_selection_curve_plot(cv_scores_path, output_dir, model_name, split_seed)
+        if plot_path:
+            paths["selection_curve_plot"] = plot_path
+
+    paths["summary"] = _save_summary_json(result, output_dir, model_name, split_seed)
 
     logger.info(f"Saved nested RFECV results to {output_dir}")
     return paths

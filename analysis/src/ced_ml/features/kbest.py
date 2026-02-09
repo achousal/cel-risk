@@ -78,42 +78,6 @@ def rank_features_by_score(
     return ranked_indices[:k_effective]
 
 
-def _impute_proteins(
-    X_proteins: pd.DataFrame,
-    strategy: str = "median",
-) -> pd.DataFrame:
-    """Impute missing values in protein matrix.
-
-    Args:
-        X_proteins: Protein feature matrix (may contain NaN)
-        strategy: "median" or "mean"
-
-    Returns:
-        Imputed DataFrame (no missing values)
-    """
-    if strategy.strip().lower() == "mean":
-        fill_values = X_proteins.mean(axis=0, skipna=True)
-    else:
-        fill_values = X_proteins.median(axis=0, skipna=True)
-
-    return X_proteins.fillna(fill_values)
-
-
-def _get_feature_names_from_preprocessor(preprocessor) -> np.ndarray:
-    """Extract feature names from fitted ColumnTransformer.
-
-    Args:
-        preprocessor: Fitted sklearn ColumnTransformer
-
-    Returns:
-        Array of feature names
-
-    Raises:
-        AttributeError: If preprocessor does not have get_feature_names_out()
-    """
-    return preprocessor.get_feature_names_out()
-
-
 def build_kbest_pipeline_step(k: int) -> Any:
     """Build SelectKBest pipeline step for feature selection.
 

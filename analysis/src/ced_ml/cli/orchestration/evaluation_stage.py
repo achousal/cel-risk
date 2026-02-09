@@ -53,8 +53,13 @@ def evaluate_splits(ctx: TrainingContext) -> TrainingContext:
     log_section(logger, "Validation Set Evaluation")
 
     if not ctx.has_validation_set:
+        if not config.allow_test_thresholding:
+            raise ValueError(
+                "No validation set available (val_size=0) and threshold-on-test not explicitly allowed. "
+                "Set allow_test_thresholding=True in config to proceed (not recommended for production)."
+            )
         logger.warning("No validation set available (val_size=0). Skipping validation evaluation.")
-        logger.warning("Threshold will be computed on test set (not recommended for production).")
+        logger.warning("Threshold will be computed on test set (allow_test_thresholding=True).")
         val_metrics = None
         val_threshold = None
         val_target_prev = train_prev
