@@ -79,8 +79,8 @@ ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
 | Stage | Component | Purpose | Runtime |
 |-------|-----------|---------|---------|
 | **1. Model Gate** | Permutation test | Filter models with real signal (p < 0.05) | ~1-4 hrs per model (HPC) |
-| **2. Per-Model Evidence** | OOF importance (primary), drop-column (secondary), RFE (tertiary), stability (filter) | Four complementary importance ranks | Computed during training/aggregation |
-| **3. Consensus** | Multi-list RRA | Cross-model robust biomarkers (FDR-adjusted) | ~15 min |
+| **2. Per-Model Evidence** | OOF importance (primary), stability (hard filter), RFE (sizing), drop-column (post-hoc) | Ranking and interpretation per model | Computed during training/aggregation |
+| **3. Consensus** | Geometric mean rank aggregation | Cross-model robust biomarkers | ~15 min |
 
 **Typical workflow:**
 ```bash

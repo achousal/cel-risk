@@ -68,8 +68,8 @@ See [ADR-004: Three-Stage Feature Selection and Consensus Workflow](adr/ADR-004-
 | Stage | Component | Phase | Runtime | Output |
 |-------|-----------|-------|---------|--------|
 | **Stage 1** | Model gate (permutation test) | After training | 1-4 hrs per model (HPC) | p-value per model |
-| **Stage 2** | Per-model evidence (4 inputs) | During training + aggregation | Computed alongside training | OOF importance, essentiality, RFE, stability ranks |
-| **Stage 3** | Multi-list RRA consensus | After aggregation | ~15 min | Cross-model panel with FDR-corrected q-values |
+| **Stage 2** | Per-model evidence | During training + aggregation | Computed alongside training | OOF importance (primary), stability (hard filter), RFE (sizing), drop-column (post-hoc) |
+| **Stage 3** | Geometric mean rank aggregation | After aggregation | ~15 min | Cross-model consensus panel |
 
 **Stage 1: Model Gate (CLI: `ced permutation-test --run-id <RUN_ID> --model <MODEL>`)**
 - Label permutation test of classifier AUROC using same CV/training recipe
@@ -84,10 +84,10 @@ Input 1 (primary): **OOF grouped importance**
 - Linear: standardized |coef| on standardized inputs + stability across repeats
 - Correlation grouping prevents "twin feature" artifacts
 
-Input 2 (secondary): **Drop-column / LOCO essentiality**
-- Run on final candidate panel (or shortlist)
+Input 2 (post-hoc): **Drop-column / LOCO essentiality**
+- Post-hoc interpretation on the final consensus panel (NOT an input to ranking)
 - Fixed hyperparams (refit-only) to measure "is this block essential?"
-- More faithful necessity test than single-feature PFI under correlation
+- Reports delta-AUROC (primary), delta-PR-AUC, delta-Brier
 
 Input 3 (tertiary): **RFE rank**
 - Panel sizing / selection path, not primary scientific ranking
@@ -97,14 +97,13 @@ Input 4 (filter/tie-break): **Stability frequency**
 - Filter out noisy blocks (min stability threshold)
 - Resolve ties when other inputs are similar
 
-**Stage 3: Sequential Filtering + Multi-list RRA (CLI: `ced consensus-panel --run-id <RUN_ID>`)**
+**Stage 3: Cross-Model Consensus (CLI: `ced consensus-panel --run-id <RUN_ID>`)**
 
-1. **Filter by stability (optional):** Keep blocks with stability ≥ s (e.g., 0.6–0.75)
-2. **Rank by OOF importance (primary):** Keep top K₁ blocks (e.g., 150) per model
-3. **Run RFE inside shortlist:** Pick panel size (e.g., 25–40)
-4. **Run grouped LOCO:** Mark essentials (ΔAUROC above noise floor or top K₂)
-5. **Multi-list RRA:** Combine ranks from (importance, essentiality, RFE) → rra_p → BH correction → rra_q
-6. **Select by FDR:** Keep blocks with rra_q < α (or top-K for fixed panel size)
+1. **Per-model ranking:** Hard filter by stability (>= threshold), rank survivors by OOF importance
+2. **Cross-model aggregation:** Geometric mean of normalized reciprocal ranks across models (missing = bottom rank)
+3. **Correlation clustering:** Cluster top candidates, select representatives by consensus score
+4. **Top-N selection:** Extract final panel of target size
+5. **Post-hoc drop-column:** Refit on panel features, run drop-column per cluster -- interpretation artifact only
 
 **Other methods**:
 - Nested RFECV (during training, slow 5-22 hrs)
@@ -116,15 +115,15 @@ Input 4 (filter/tie-break): **Stability frequency**
 - [features/drop_column.py](../src/ced_ml/features/drop_column.py) - Stage 2 Input 2: LOCO essentiality
 - [features/rfe.py](../src/ced_ml/features/rfe.py) - Stage 2 Input 3: RFE rank
 - [features/stability.py](../src/ced_ml/features/stability.py) - Stage 2 Input 4: Stability frequency
-- [features/consensus.py](../src/ced_ml/features/consensus.py) - Stage 3: Multi-list RRA consensus
+- [features/consensus/](../src/ced_ml/features/consensus/) - Stage 3: Geometric mean rank aggregation consensus
 - [cli/permutation_test.py](../src/ced_ml/cli/permutation_test.py) - Stage 1 CLI
 - [cli/consensus_panel.py](../src/ced_ml/cli/consensus_panel.py) - Stage 3 CLI
 
 **See ADRs:**
-- [ADR-004: Three-Stage Feature Selection and Consensus Workflow](adr/ADR-004-four-strategy-feature-selection.md) - Model gate, evidence, RRA consensus
+- [ADR-004: Three-Stage Feature Selection and Consensus Workflow](adr/ADR-004-four-strategy-feature-selection.md) - Model gate, evidence, geometric mean rank consensus
 
 **See detailed guide:**
-- [FEATURE_SELECTION.md](reference/FEATURE_SELECTION.md) - Consolidated guide covering all 5 strategies (hybrid, RFECV, post-hoc RFE, consensus panel, fixed panel)
+- [FEATURE_SELECTION.md](reference/FEATURE_SELECTION.md) - Consolidated guide covering the three-stage workflow
 
 ### 2.3 Nested Cross-Validation
 
@@ -373,7 +372,7 @@ src/ced_ml/
 - `features/drop_column.py` - Stage 2 Input 2: Drop-column / LOCO essentiality
 - `features/rfe.py` - Stage 2 Input 3: RFE rank (panel sizing)
 - `features/stability.py` - Stage 2 Input 4: Stability frequency tracking
-- `features/consensus.py` - Stage 3: Multi-list RRA consensus with FDR correction
+- `features/consensus/` - Stage 3: Geometric mean rank aggregation consensus (ranking, aggregation, clustering, builder)
 - `features/corr_prune.py` - Correlation clustering for grouped importance / drop-column
 - `features/importance.py` - Linear coefficient and tree importance extraction (base for grouped importance)
 - `features/nested_rfe.py` - Legacy: Nested RFECV (deprecated)

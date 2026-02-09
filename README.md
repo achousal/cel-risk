@@ -10,7 +10,7 @@
 ---
 
 **Core features:**
-- Three-stage feature selection: permutation-gated model filtering → four-strategy ranking (OOF importance, drop-column, RFE, stability) → cross-model consensus via robust rank aggregation
+- Three-stage feature selection: permutation-gated model filtering -> stability filter + OOF importance ranking -> cross-model consensus via geometric mean rank aggregation
 - Nested cross-validation with Bayesian hyperparameter optimization
 - Multi-model stacking ensemble with OOF-based calibration
 - Temporal validation with holdout test sets
@@ -155,7 +155,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
 ## Citation
 
 ```bibtex
-@software{chousal2026celiacriskml,
+@software{chousal2026celiacrisks,
   author = {Chousal, Andres and Chowell Lab},
   title = {CeliacRisks: ML Pipeline for Disease Risk Prediction},
   year = {2026},

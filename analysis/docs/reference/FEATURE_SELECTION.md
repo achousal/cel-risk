@@ -1,6 +1,6 @@
 # Feature Selection and Consensus Workflow
 
-**Status:** Current | **Updated:** 2026-02-04
+**Status:** Current | **Updated:** 2026-02-09
 
 ## Overview
 
@@ -83,28 +83,33 @@ Four complementary importance measures per model (ranked independently):
 
 ---
 
-### Input 2 (Secondary): Drop-Column Essentiality
+### Input 2 (Post-hoc): Drop-Column Essentiality
 
-**Rationale:** More faithful necessity test than single-feature PFI, especially under correlation.
+**Rationale:** More faithful necessity test than single-feature PFI, especially under correlation. Used as **post-hoc interpretation** on the final consensus panel, not as an input to ranking.
 
-**Method:** For each cluster in candidate panel:
+**Method:** For each cluster in the final consensus panel:
 1. Remove cluster and refit model (fixed hyperparams, refit-only)
-2. Compute AUROC on held-out fold
-3. Essentiality = `original_auroc - ablated_auroc`
+2. Compute metrics on held-out fold
+3. delta-AUROC = `original_auroc - ablated_auroc` (primary)
+4. delta-PR-AUC = `original_pr_auc - ablated_pr_auc` (secondary)
+5. delta-Brier = `original_brier - ablated_brier` (calibration impact)
 
-**When to run:** On final candidate panel (or shortlist) after feature selection.
+**When to run:** Automatically as part of `ced consensus-panel` (post-hoc validation).
 
 **Default mode:** Fixed hyperparams (refit-only) to answer: "Is this cluster essential under this modeling recipe?"
 
-**Output:** `drop_column/{model}/aggregated_results.csv`
+**Output:** `consensus/essentiality/within_panel_essentiality.csv`
 
 **Columns:**
 - `cluster_id` - Cluster ID
 - `representative` - Cluster representative feature
-- `features` - All features in cluster (JSON list)
-- `mean_delta_auroc` - Mean ΔAUROC across CV folds
+- `cluster_features` - Comma-separated protein list
+- `mean_delta_auroc` - Mean ΔAUROC across folds (primary)
 - `std_delta_auroc` - Standard deviation
-- `rank` - Rank by mean ΔAUROC (1 = most essential)
+- `mean_delta_pr_auc` - Mean ΔPR-AUC across folds
+- `std_delta_pr_auc` - Standard deviation
+- `mean_delta_brier` - Mean ΔBrier across folds
+- `std_delta_brier` - Standard deviation
 
 **Implementation:**
 - [drop_column.py](../../src/ced_ml/features/drop_column.py) - Drop-column validation
@@ -166,48 +171,38 @@ stability_freq = (# folds selecting feature) / (total folds)
 
 ---
 
-## Stage 3: Sequential Filtering
+## Stage 3: Cross-Model Consensus
 
-**Input:** Significant models from Stage 1, four evidence types from Stage 2.
+**Input:** Significant models from Stage 1, OOF importance ranks from Stage 2.
 
 **Output:** Cross-model consensus panel for clinical deployment.
 
-### Algorithm
+### Three-Step Consensus Workflow
 
 ```
-For each significant model:
-    1. Filter by stability: Keep blocks with stability_freq >= s (e.g., 0.60-0.75)
-    2. Rank by OOF grouped importance: Keep top K_1 blocks (e.g., 150)
-    3. Run RFE inside shortlist to pick panel size (e.g., 25-40)
-    4. Run grouped LOCO/drop-column on chosen panel
-       Keep blocks with ΔAUROC above noise floor or top K_2 (e.g., 25)
-```
+Step 1 -- Per-model ranking:
+    For each significant model:
+        1. Hard filter: Keep proteins with stability_freq >= threshold (e.g., 0.90-0.95)
+        2. Rank survivors by OOF grouped importance (descending)
+        3. If OOF unavailable, fall back to stability frequency ranking
 
-### RRA Consensus (Multi-List)
+Step 2 -- Cross-model RRA:
+    Aggregate per-model OOF importance ranks via geometric mean of
+    normalized reciprocal ranks.
+    - Missing proteins penalized (assigned bottom rank)
+    - Correlation-cluster top candidates, select representatives
+    - Extract top-N panel
 
-**Preferred approach:** Contribute multiple rank lists per model.
-
-```
-For each significant model:
-    - List 1: OOF grouped importance ranks (primary)
-    - List 2: Essentiality ranks (secondary, if available)
-    - List 3: RFE ranks (tertiary, if available)
-
-Run RRA across all lists:
-    - Missing features = bottom rank (conservative)
-    - Compute rra_score (geometric mean of reciprocal ranks)
-    - Compute rra_p (p-value from RRA null distribution)
-    - Apply Benjamini-Hochberg FDR correction → rra_q
-
-Select blocks by:
-    - Option A: rra_q < alpha (e.g., 0.05)
-    - Option B: Top-K for fixed panel size (e.g., 25-40)
-
-Post-filter by stability as tie-breaker.
+Step 3 -- Post-hoc drop-column (interpretation only):
+    On the final consensus panel:
+    - Refit model on panel features only
+    - Run drop-column per cluster across all CV folds
+    - Report delta-AUROC (primary), delta-PR-AUC, delta-Brier
+    - Saved as interpretation artifact, NOT used for ranking
 ```
 
 **Implementation:**
-- [consensus.py](../../src/ced_ml/features/consensus.py) - RRA aggregation
+- [consensus/](../../src/ced_ml/features/consensus/) - Consensus package (ranking, aggregation, clustering, builder)
 - [consensus_panel.py (CLI)](../../src/ced_ml/cli/consensus_panel.py) - CLI
 
 **CLI:**
@@ -216,15 +211,21 @@ Post-filter by stability as tie-breaker.
 ced consensus-panel --run-id <RUN_ID>
 ```
 
-**Output:** `consensus_panel/`
+**Output:** `consensus/`
 - `final_panel.txt` - Top-N proteins for deployment
-- `consensus_ranking.csv` - All proteins with RRA scores, p-values, FDR-adjusted q-values
+- `final_panel.csv` - Panel with consensus scores and uncertainty metrics
+- `consensus_ranking.csv` - All proteins with RRA scores and uncertainty
 - `uncertainty_summary.csv` - Per-protein uncertainty metrics (rank_std, rank_cv, n_models_present, agreement_strength)
-- `metadata.json` - Run parameters and statistics
+- `per_model_rankings.csv` - Per-model OOF importance rankings
+- `correlation_clusters.csv` - Cluster assignments
+- `consensus_metadata.json` - Run parameters and statistics
+- `essentiality/within_panel_essentiality.csv` - Post-hoc drop-column results
+
+**Note:** Uses geometric mean rank aggregation, not the formal Kolde RRA with
+beta-model p-values. See ADR-004 for rationale.
 
 **References:**
 - Kolde et al. (2012). Robust rank aggregation for gene list integration. Bioinformatics 28(4):573-580.
-- Benjamini & Hochberg (1995). Controlling the false discovery rate. JRSS-B 57(1):289-300.
 
 ---
 
@@ -303,11 +304,11 @@ ced train --fixed-panel panel.csv --split-seed 10
 | Stage | Component | Input | Output | Use Case |
 |-------|-----------|-------|--------|----------|
 | **1. Model Gate** | Permutation test | Trained models | p-value per model | Filter models with real signal |
-| **2A. Primary** | OOF grouped importance | Held-out folds | Rank per model | Generalization-focused ranking |
-| **2B. Secondary** | Drop-column essentiality | Candidate panel | Rank per model | Necessity under modeling recipe |
-| **2C. Tertiary** | RFE rank | Shortlist | Elimination order | Tie-breaker, panel sizing |
-| **2D. Filter** | Stability frequency | CV folds | Selection fraction | Filter noisy features, resolve ties |
-| **3. Consensus** | Multi-list RRA | 4 ranks × N models | Final panel | Cross-model robust biomarkers |
+| **2A. Primary** | OOF grouped importance | Held-out folds | Rank per model | Generalization-focused ranking (consensus input) |
+| **2B. Post-hoc** | Drop-column essentiality | Final panel | delta-AUROC/PR-AUC/Brier per cluster | Interpretation, not ranking input |
+| **2C. Sizing** | RFE rank | Shortlist | Elimination order | Panel size optimization (independent) |
+| **2D. Filter** | Stability frequency | CV folds | Selection fraction | Hard filter for consensus entry |
+| **3. Consensus** | Geometric mean RRA | OOF ranks × N models | Final panel | Cross-model robust biomarkers |
 
 ---
 
@@ -324,13 +325,27 @@ feature_selection:
   stability_thresh: 0.75
   stability_min_features: 20
 
-  # RFE (Stage 2 Input 3 and Stage 3 sequential filtering)
+  # RFE (Stage 2 Input 3: independent panel sizing)
   rfe_start_size: 100  # Start RFE from top-K by OOF importance
   rfe_step: 0.1
 
   # Consensus (Stage 3)
-  consensus_top_k: 40  # Final panel size
-  consensus_fdr_alpha: 0.05  # FDR threshold for RRA q-values
+  consensus_top_k: 40  # Target panel size (after clustering)
+```
+
+**File:** `configs/consensus_panel.yaml`
+
+```yaml
+# Consensus panel (Stage 3)
+stability_threshold: 0.95    # Hard filter: min selection fraction
+corr_threshold: 0.75         # Clustering threshold
+target_size: 25              # Final panel size
+rra_method: geometric_mean   # Aggregation method
+
+essentiality:
+  enabled: true              # Post-hoc drop-column on final panel
+  include_brier: true        # Report delta-Brier
+  include_pr_auc: true       # Report delta-PR-AUC
 ```
 
 **File:** `configs/permutation_test.yaml`
