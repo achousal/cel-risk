@@ -2,7 +2,7 @@
 
 **Purpose**: Comprehensive E2E test suite for the complete `ced run-pipeline` workflow and all CLI commands.
 
-**Status**: Production-ready with 162 tests, 87.5% pass rate on representative subset (2026-02-09).
+**Status**: Production-ready with 194 tests across 30 files (2026-02-09).
 
 ---
 
@@ -10,234 +10,252 @@
 
 ```bash
 # Navigate to analysis directory
-cd /Users/andreschousal/Projects/Elahi_Lab/CeliacRisks/analysis
+cd analysis/
 
 # Fast tests only (recommended for development) - ~2 minutes
-python -m pytest tests/e2e/ -v -m "not slow" --tb=short
+pytest tests/e2e/ -v -m "not slow" --tb=short
 
-# Run all tests - ~30 minutes
-python -m pytest tests/e2e/ -v --tb=short
+# All tests - ~5-10 minutes
+pytest tests/e2e/ -v --tb=short
 
-# Run specific test file
-python -m pytest tests/e2e/test_full_pipeline_all_stages.py -v
+# Specific test file
+pytest tests/e2e/test_full_pipeline_all_stages.py -v
 
-# Run with coverage
-python -m pytest tests/e2e/ -v --cov=ced_ml --cov-report=term-missing
+# With coverage
+pytest tests/e2e/ -v --cov=ced_ml --cov-report=term-missing
 
 # Run tests matching pattern
-python -m pytest tests/e2e/ -v -k "calibration"
+pytest tests/e2e/ -v -k "calibration"
+
+# Single test with detailed output
+pytest tests/e2e/test_cli_smoke.py::TestCliSmoke::test_train_smoke -vv -s
 ```
 
 ---
 
-## Test Organization
+## Test Suite Overview
 
-### Test Files (27 total)
+### Quick Stats
 
-| Category | Files | Tests | Purpose |
-|----------|-------|-------|---------|
-| **Full Pipeline** | `test_full_pipeline_all_stages.py` | 4 | Complete 8-stage workflow |
-| **Config System** | `test_config_system_e2e.py` | 11 | Config loading, validation, inheritance |
-| **CLI Smoke** | `test_cli_smoke.py` | 17 | CLI commands and error handling |
-| **Calibration** | `test_e2e_calibration_workflows.py` | 10 | Calibration strategies |
-| **Fixed Panel** | `test_e2e_fixed_panel_workflows.py` | 9 | Panel extraction and validation |
-| **Multi-Model** | `test_e2e_multi_model_workflows.py` | 10 | Cross-model coordination |
-| **Output Structure** | `test_e2e_output_structure.py` | 20+ | Directory and file validation |
-| **Temporal** | `test_e2e_temporal_workflows.py` | 10+ | Temporal validation |
-| **Holdout** | `test_holdout_workflow_complete.py` | 10+ | Holdout evaluation |
-| **Run-ID** | `test_run_id_*.py` | 10+ | Run-ID auto-detection |
-| **Pipeline Stages** | `test_pipeline_*.py` | 40+ | Individual stage tests |
-| **Basic** | `test_basic_workflow.py` | 12 | Basic workflows |
+- **Total Tests**: 194 E2E tests
+- **Test Files**: 30
+- **Coverage**: Full pipeline, CLI commands, config system, calibration, feature selection
+- **Runtime**: ~2 min (fast), ~5-10 min (full)
+- **Framework**: pytest with Click CliRunner
+- **Fixtures**: Deterministic small datasets (10-200 samples, 5-15 proteins)
 
-**Total**: 162 tests across 27 files
+### Test Categories
+
+| Category | Files | Tests | Speed | Purpose |
+|----------|-------|-------|-------|---------|
+| **Full Pipeline** | test_full_pipeline_all_stages.py | 4 | Slow | Complete 8-stage workflow |
+| **CLI Smoke** | test_cli_smoke.py | 13 | Fast | All CLI commands |
+| **Config System** | test_config_system_e2e.py | 11 | Fast | Config loading, validation |
+| **Training+Eval** | test_training_evaluation_workflow.py | 8 | Mixed | Train → aggregate → panel → eval |
+| **Feature Selection** | test_feature_selection_workflow.py | 11 | Mixed | Model gate → evidence → consensus |
+| **Calibration** | test_e2e_calibration_workflows.py | 10 | Slow | OOF-posthoc, per-fold strategies |
+| **Fixed Panel** | test_e2e_fixed_panel_workflows.py | 9 | Fast | Panel extraction, validation |
+| **Multi-Model** | test_e2e_multi_model_workflows.py | 10 | Mixed | Cross-model coordination |
+| **Output Structure** | test_e2e_output_structure.py | 20+ | Fast | Directory/file validation |
+| **Temporal** | test_e2e_temporal_workflows.py | 10+ | Slow | Temporal validation |
+| **Holdout** | test_holdout_workflow_*.py | 10+ | Mixed | Holdout evaluation |
+| **Run-ID** | test_run_id_*.py | 10+ | Fast | Run-ID auto-detection |
+| **Pipeline Stages** | test_pipeline_*.py | 40+ | Mixed | Individual stage tests |
+| **Basic** | test_basic_workflow.py | 12 | Fast | Basic workflows |
 
 ---
 
-## Test Categories
+## Test Details
 
-### 1. Full Pipeline Integration (test_full_pipeline_all_stages.py)
+### 1. Full Pipeline Tests
+
+**File**: `test_full_pipeline_all_stages.py`
+
+**Purpose**: Test complete end-to-end pipeline with all 8 stages.
 
 **What's tested**:
-- Complete 8-stage pipeline: splits → train → aggregate → ensemble → panel → consensus → permutation
-- Cross-stage artifact compatibility
-- Stage auto-disable logic (e.g., fixed_panel bypasses panel optimization)
-- Error handling (insufficient data)
+- Complete workflow: data → splits → train → aggregate → ensemble → panel → consensus → permutation
+- Cross-stage artifact compatibility (OOF predictions, importance rankings)
+- Stage auto-disable logic (fixed_panel bypasses panel optimization)
+- Error handling (insufficient data, missing files)
 
 **Example**:
 ```bash
-# Run full pipeline with ensemble
-ced run-pipeline \
-  --infile data.parquet \
-  --models LR_EN,RF \
-  --split-seeds 0,1
+pytest tests/e2e/test_full_pipeline_all_stages.py -v
 ```
-
-**Tests verify**:
-- Base models trained and aggregated
-- Ensemble meta-learner trained
-- Panel optimization completed
-- Consensus panel generated
-- All outputs have correct structure
-
-**Status**: 4/4 PASSED
 
 ---
 
-### 2. Config System (test_config_system_e2e.py)
+### 2. CLI Smoke Tests
+
+**File**: `test_cli_smoke.py`
+
+**Purpose**: Fast smoke tests for all major CLI commands to catch integration failures.
+
+**Commands tested**:
+- save-splits, train, aggregate-splits
+- optimize-panel, consensus-panel, permutation-test
+- config validate, config diff
+
+**Features**:
+- Fast execution (~60-90s total)
+- Minimal fixtures (180 samples, 10 proteins)
+- Graceful failure handling
+- Error path testing
+
+**Example**:
+```bash
+pytest tests/e2e/test_cli_smoke.py -v
+```
+
+---
+
+### 3. Training + Evaluation Workflow
+
+**File**: `test_training_evaluation_workflow.py`
+
+**Purpose**: Test training → aggregation → panel optimization → holdout evaluation workflow.
+
+**What's tested**:
+- Model training with multiple models (LR_EN, RF)
+- Shared run_id coordination across models and splits
+- Results aggregation across splits
+- Panel optimization (with graceful skip when unavailable)
+- Holdout evaluation (with graceful skip when missing)
+- Deterministic behavior with fixed seeds
+
+**Example**:
+```bash
+pytest tests/e2e/test_training_evaluation_workflow.py -v
+```
+
+**Test classes**:
+- `TestTrainingWorkflow` - Model training (2 tests)
+- `TestAggregationWorkflow` - Results aggregation (1 test)
+- `TestPanelOptimizationWorkflow` - Panel optimization (1 test)
+- `TestHoldoutEvaluationWorkflow` - Holdout evaluation (1 test)
+- `TestCompleteWorkflow` - Full pipeline (2 tests)
+- `TestDeterministicBehavior` - Reproducibility (1 test)
+
+---
+
+### 4. Feature Selection Workflow
+
+**File**: `test_feature_selection_workflow.py`
+
+**Purpose**: Test three-stage feature selection: Model Gate → Per-Model Evidence → RRA Consensus.
+
+**What's tested**:
+
+**Stage 1: Model Gate (Permutation Testing)**
+- Permutation test p-value computation
+- Multi-model significance validation
+
+**Stage 2: Per-Model Evidence**
+- OOF importance file generation
+- Stability selection consistency
+
+**Stage 3: RRA Consensus**
+- Consensus panel generation
+- Geometric mean rank aggregation correctness
+- OOF importance integration
+
+**Full Workflow Integration**
+- All three stages together
+- Cross-stage artifact flow
+
+**Error Handling**
+- Insufficient models, missing run_id, zero permutations
+
+**Example**:
+```bash
+pytest tests/e2e/test_feature_selection_workflow.py -v
+
+# Fast tests only (error handling)
+pytest tests/e2e/test_feature_selection_workflow.py -v -m "not slow"
+
+# Specific stage
+pytest tests/e2e/test_feature_selection_workflow.py::TestStage1ModelGate -v
+```
+
+**Test classes**:
+- `TestStage1ModelGate` - Permutation testing (2 tests)
+- `TestStage2PerModelEvidence` - OOF importance, stability (2 tests)
+- `TestStage3RRAConsensus` - Consensus panel (3 tests)
+- `TestFullWorkflow` - All stages (1 test)
+- `TestErrorHandling` - Edge cases (3 tests)
+
+---
+
+### 5. Config System Tests
+
+**File**: `test_config_system_e2e.py`
+
+**Purpose**: Test YAML config loading, inheritance, and validation.
 
 **What's tested**:
 - YAML config loading
-- CLI override precedence
-- Config inheritance (`_base`)
-- Path resolution (relative to config file)
-- Validation error messages
-
-**Example**:
-```yaml
-# config.yaml
-_base: base_config.yaml
-cv:
-  folds: 5
-```
-
-```bash
-# CLI override
-ced train --config config.yaml --override cv.folds=3
-
-# Expected: cv.folds=3 in run_metadata.json
-```
-
-**Status**: 11/11 PASSED
+- Config hierarchy (YAML → env vars → CLI flags)
+- Validation and error messages
+- Config diff functionality
 
 ---
 
-### 3. CLI Smoke Tests (test_cli_smoke.py)
+### 6. Calibration Workflows
+
+**File**: `test_e2e_calibration_workflows.py`
+
+**Purpose**: Test calibration strategies (OOF-posthoc, per-fold).
 
 **What's tested**:
-- All CLI commands execute without error
-- Error handling for common failures
-- Full workflows (single model, multi-model)
-
-**Commands tested**:
-- `ced save-splits`
-- `ced train`
-- `ced train-ensemble` (fails - known bug)
-- `ced aggregate-splits`
-- `ced optimize-panel`
-- `ced consensus-panel`
-- `ced permutation-test` (fails - needs integration)
-- `ced eval-holdout` (fails - needs implementation)
-- `ced config validate`
-- `ced config diff`
-
-**Status**: 13/17 PASSED (4 known failures)
+- OOF-posthoc calibration on held-out predictions
+- Per-fold calibration strategies
+- Calibration artifact generation
 
 ---
 
-### 4. Calibration Workflows (test_e2e_calibration_workflows.py)
+### 7. Other Test Suites
 
-**What's tested**:
-- OOF-posthoc calibration (primary strategy, ADR-008)
-- Per-fold calibration (alternative)
-- Calibration plots (reliability diagrams)
-- Metrics (ECE, Brier score)
+**Fixed Panel**: Panel extraction and validation
+**Multi-Model**: Cross-model coordination and consensus
+**Output Structure**: Directory and file structure validation
+**Temporal**: Temporal validation workflows
+**Holdout**: Holdout evaluation workflows
+**Run-ID**: Run-ID auto-detection and propagation
 
-**Strategies**:
-```yaml
-# OOF-posthoc (recommended)
-calibration:
-  enabled: true
-  method: isotonic
-  strategy: oof_posthoc
-
-# Per-fold (alternative)
-calibration:
-  enabled: true
-  method: isotonic
-  strategy: per_fold
-```
-
-**Status**: 10/10 PASSED
+For a complete test inventory, see [E2E_TEST_INVENTORY.md](../E2E_TEST_INVENTORY.md).
 
 ---
 
-### 5. Fixed Panel Workflows (test_e2e_fixed_panel_workflows.py)
+## Fixtures and Test Data
 
-**What's tested**:
-- Panel extraction from importance rankings
-- Training with pre-defined panel
-- Discovery-validation workflow
+### Key Fixtures (from conftest.py)
 
-**Workflow**:
-```bash
-# 1. Discovery: Train with feature selection
-ced train --model LR_EN --split-seed 0
+**Datasets**:
+- `tiny_dataset`: 180 samples (90 controls, 45 incident, 45 prevalent), 10 proteins
+- `small_dataset`: 500 samples, 50 proteins
+- `minimal_dataset`: 50 samples, 5 proteins
 
-# 2. Extract panel
-ced optimize-panel --run-id <RUN_ID>
+**Features**:
+- All datasets use deterministic seeds (42)
+- First 5 proteins have structured signal for validation
+- Demographics: age, BMI, sex, genetic_ethnic_grouping
+- Missing ethnicity: 17% (matches real data)
 
-# 3. Validation: Train with fixed panel
-ced train --model LR_EN --split-seed 1 --config fixed_panel_config.yaml
-```
+**Splits**:
+- 50/25/25 train/val/test ratio (matches production)
+- Stratified by CeD status
+- Prevalent cases in train only (matches ADR-002)
 
-**Status**: 9/9 PASSED
+### Creating New Fixtures
 
----
+For new tests, prefer reusing existing fixtures. If creating new fixtures:
 
-### 6. Multi-Model Coordination (test_e2e_multi_model_workflows.py)
-
-**What's tested**:
-- Multiple models sharing run_id
-- Independent model aggregation
-- Consensus panel (RRA)
-- Ensemble auto-detection
-
-**Workflow**:
-```bash
-# Train multiple models
-ced train --model LR_EN,RF,XGBoost --split-seed 0,1
-
-# Generate consensus panel
-ced consensus-panel --run-id <RUN_ID>
-```
-
-**Status**: 10/10 PASSED
-
----
-
-## Test Fixtures
-
-All fixtures in `conftest.py`.
-
-### Data Fixtures
-
-| Fixture | Samples | Proteins | Use Case |
-|---------|---------|----------|----------|
-| `tiny_proteomics_data` | 20 | 5 | Error handling |
-| `small_proteomics_data` | 180 | 10 | Fast integration |
-| `minimal_proteomics_data` | 200 | 15 | Standard e2e |
-| `temporal_proteomics_data` | 200 | 15 | Temporal validation |
-
-**Key features**:
-- Deterministic (seed=42)
-- Balanced demographics
-- Signal in first 3-5 proteins
-- Realistic incident/prevalent distinction
-
-### Config Fixtures
-
-| Fixture | CV | Optuna | Features | Use Case |
-|---------|-----|--------|----------|----------|
-| `ultra_fast_training_config` | 2-fold | No | screen_top_n=6 | Full pipeline |
-| `fast_training_config` | 2-fold | No | screen_top_n=8 | Integration |
-| `minimal_training_config` | 2-fold | No | screen_top_n=10 | Standard |
-| `fixed_panel_training_config` | 2-fold | No | Fixed panel | Fixed panel |
-
-**Speed optimization**:
-- 2-fold CV (minimum for stratification)
-- No Optuna (manual grids)
-- Small feature grids
-- Small estimators (30 trees)
+1. Use small datasets (50-200 samples max)
+2. Set deterministic seeds
+3. Include structured signal in first N features
+4. Follow existing naming conventions
+5. Add to conftest.py
 
 ---
 
@@ -246,181 +264,157 @@ All fixtures in `conftest.py`.
 ### Development Workflow
 
 ```bash
-# 1. Fast iteration (< 2 min)
-pytest tests/e2e/ -m "not slow" -v
+# Fast feedback loop (skip slow tests)
+pytest tests/e2e/ -v -m "not slow"
 
-# 2. Specific test
-pytest tests/e2e/test_full_pipeline_all_stages.py::TestFullPipelineAllStages::test_full_pipeline_with_ensemble -vv -s
+# Run single test for debugging
+pytest tests/e2e/test_cli_smoke.py::TestCliSmoke::test_train_smoke -vv -s
 
-# 3. Tests matching pattern
-pytest tests/e2e/ -k "calibration" -v
-
-# 4. Full suite with coverage (< 30 min)
-pytest tests/e2e/ -v --cov=ced_ml --cov-report=html
-open htmlcov/index.html
+# Run tests matching pattern
+pytest tests/e2e/ -v -k "training"
 ```
 
-### Pre-Commit Checklist
+### CI/CD
 
 ```bash
-# Fast tests
-pytest tests/e2e/ -m "not slow" -v
+# Full test suite (all E2E tests)
+pytest tests/e2e/ -v --tb=short
 
-# Full suite (if touching core modules)
-pytest tests/e2e/ -v
+# With coverage
+pytest tests/e2e/ -v --cov=ced_ml --cov-report=xml --cov-report=term
+```
 
-# Check for skipped tests
-pytest tests/e2e/ -v | grep SKIPPED
+### Test Markers
+
+- `@pytest.mark.slow`: Tests that train models (10-60s each). Skip with `-m "not slow"`.
+- No marker: Fast tests (validation, CLI parsing, file checks).
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**1. Tests fail with "XGBoost not installed"**
+- Expected on systems without XGBoost
+- These tests are skipped automatically
+
+**2. Tests fail with "OpenMP runtime not found" (macOS)**
+- Solution: `brew install libomp`
+- Or skip XGBoost tests
+
+**3. Tests fail with "Insufficient data for splits"**
+- Dataset too small for current test configuration
+- Use larger fixture or reduce CV folds
+
+**4. Ensemble tests fail**
+- Known issue: stacking meta-learner bug
+- Skip with `-k "not ensemble"`
+
+**5. Permutation tests timeout**
+- Reduce n_perms for development (use n_perms=10)
+- Full runs use n_perms=200 (HPC recommended)
+
+### Debugging Failed Tests
+
+```bash
+# Verbose output with stack traces
+pytest tests/e2e/test_name.py -vv -s --tb=long
+
+# Drop into debugger on failure
+pytest tests/e2e/test_name.py -v --pdb
+
+# Show print statements
+pytest tests/e2e/test_name.py -v -s
 ```
 
 ---
 
-## Test Patterns
+## Writing New Tests
 
-### CLI Testing
+### Test Structure Template
 
 ```python
+import pytest
 from click.testing import CliRunner
 from ced_ml.cli.main import cli
 
-def test_cli_command(minimal_proteomics_data, tmp_path):
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["train", "--model", "LR_EN", "--infile", str(minimal_proteomics_data)],
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
+class TestNewFeature:
+    """Test description."""
+
+    def test_basic_functionality(self, tmp_path, tiny_dataset):
+        """Test basic success path."""
+        runner = CliRunner()
+
+        # Arrange
+        infile = tmp_path / "data.parquet"
+        tiny_dataset.to_parquet(infile)
+
+        # Act
+        result = runner.invoke(cli, [
+            "command",
+            "--infile", str(infile),
+            "--outdir", str(tmp_path / "output")
+        ])
+
+        # Assert
+        assert result.exit_code == 0
+        assert (tmp_path / "output" / "expected_file.csv").exists()
+
+    @pytest.mark.slow
+    def test_slow_integration(self, tmp_path, small_dataset):
+        """Test that requires training models."""
+        # ...
 ```
 
-### Output Validation
+### Best Practices
 
-```python
-def test_output_structure(tmp_path):
-    # Run training
-    # ...
-
-    # Find run directory
-    run_dirs = [d for d in results_dir.iterdir() if d.name.startswith("run_")]
-    assert len(run_dirs) == 1
-    run_dir = run_dirs[0]
-
-    # Validate structure
-    assert (run_dir / "LR_EN" / "splits" / "split_seed0" / "model.pkl").exists()
-```
-
-### Schema Validation
-
-```python
-def test_predictions_schema(tmp_path):
-    # Run training, load predictions
-    preds = pd.read_csv(preds_path)
-
-    # Validate
-    assert set(preds.columns) >= {"SAMPLE_ID", "y_true", "y_pred_proba", "y_pred"}
-    assert preds["y_pred_proba"].between(0, 1).all()
-```
-
----
-
-## Known Issues
-
-### Failing Tests (4/32 in representative subset)
-
-1. **test_train_ensemble_smoke** (FAILED)
-   - Issue: Stacking meta-learner OOF aggregation bug
-   - Workaround: Use `--no-ensemble`
-   - Priority: High
-
-2. **test_permutation_test_smoke** (FAILED)
-   - Issue: Needs integration validation
-   - Workaround: Skip permutation testing
-   - Priority: Low
-
-3. **test_eval_holdout_smoke** (FAILED)
-   - Issue: Implementation gap
-   - Workaround: Use test set evaluation
-   - Priority: Medium
-
-4. **test_full_workflow_two_models_ensemble** (FAILED)
-   - Issue: Same as test_train_ensemble_smoke
-   - Workaround: Test multi-model without ensemble
-   - Priority: High
-
----
-
-## Coverage Metrics
-
-**Overall**: 50% (up from 11% baseline)
-
-**High Coverage** (>= 80%):
-- `plotting/calibration.py`: 92%
-- `plotting/calibration_reliability.py`: 93%
-- `utils/metadata.py`: 93%
-- `plotting/roc_pr.py`: 89%
-- `plotting/style.py`: 96%
-
-**Needs Improvement** (< 40%):
-- `cli/optimize_panel.py`: 4%
-- `cli/consensus_panel.py`: 5%
-- `cli/permutation_test.py`: 5%
-- `cli/eval_holdout.py`: 0%
-
----
-
-## Documentation
-
-- **E2E_TEST_SUMMARY.md** - Executive summary of test coverage
-- **E2E_RUNNER_GUIDE.md** - Detailed execution guide and troubleshooting
-- **E2E_TESTING_GUIDE.md** - Development patterns and best practices
-- **E2E_TEST_INVENTORY.md** - Complete test file listing
-- **E2E_TEST_STATUS.md** - Latest test run results and analysis
-- **README.md** (this file) - Quick reference
+1. **Use appropriate fixtures**: tiny_dataset for fast tests, small_dataset for slow tests
+2. **Mark slow tests**: Use `@pytest.mark.slow` for tests that train models
+3. **Use tmp_path**: All file I/O should use pytest's tmp_path fixture
+4. **Test one thing**: Each test should have a clear, focused purpose
+5. **Deterministic**: Use fixed seeds, stable fixtures
+6. **Fast by default**: Prefer fast tests; only use slow when necessary
+7. **Graceful skips**: Use `pytest.skip()` for optional paths instead of failures
+8. **Clear names**: Test names should describe what they test
 
 ---
 
 ## Maintenance
 
-### Adding Tests
+### Adding New Tests
 
-**When to add**:
-- New CLI command → Add smoke test + integration test
-- New output format → Add schema validation
-- Bug fix → Add regression test
+1. Identify test category (CLI, workflow, validation)
+2. Choose appropriate test file or create new one
+3. Use existing fixtures when possible
+4. Follow naming conventions
+5. Add to test inventory (E2E_TEST_INVENTORY.md)
+6. Update this README if new category
 
-**Template**:
-```python
-@pytest.mark.slow  # If requires model training
-def test_new_feature(minimal_proteomics_data, fast_training_config, tmp_path):
-    """Test new feature."""
-    runner = CliRunner()
-    result = runner.invoke(cli, [...])
-    assert result.exit_code == 0
-```
+### Test Review Checklist
 
-### Before Commit
-
-```bash
-pytest tests/e2e/ -m "not slow" -v  # Fast tests
-pytest tests/e2e/ -v                 # Full suite
-```
+- [ ] Uses appropriate fixture (tiny/small/minimal)
+- [ ] Marked as `@pytest.mark.slow` if trains models
+- [ ] Uses tmp_path for all file I/O
+- [ ] Deterministic (fixed seeds)
+- [ ] Clear, focused purpose
+- [ ] Fast (<5s) or justified as slow
+- [ ] Good test name (describes what it tests)
+- [ ] Added to inventory if new file
 
 ---
 
-## CI/CD Integration
+## Test Inventory
 
-```yaml
-# GitHub Actions example
-- name: Fast E2E tests
-  run: pytest tests/e2e/ -m "not slow" --tb=short
-  timeout-minutes: 10
+For a complete detailed inventory of all E2E tests with line counts, test classes, and purposes, see:
 
-- name: Slow E2E tests
-  run: pytest tests/e2e/ -m slow --tb=short
-  timeout-minutes: 30
-```
+[E2E_TEST_INVENTORY.md](../E2E_TEST_INVENTORY.md)
 
 ---
 
-**Maintainer**: Andres Chousal (Chowell Lab)
-**Last Updated**: 2026-02-09
+## Additional Resources
+
+- **Project docs**: `CeliacRisks/CLAUDE.md` - Project overview and workflows
+- **CLI reference**: `analysis/docs/reference/CLI_REFERENCE.md` - Complete CLI documentation
+- **Architecture**: `analysis/docs/ARCHITECTURE.md` - System architecture
+- **ADRs**: `analysis/docs/adr/` - Architecture decision records
