@@ -493,6 +493,7 @@ def extract_importance_from_model(
     feature_names: np.ndarray | list[str] | None = None,
     X_val: pd.DataFrame | None = None,
     y_val: np.ndarray | None = None,
+    X_train: pd.DataFrame | None = None,
     grouped: bool = False,
     corr_threshold: float = 0.85,
     n_repeats: int = 5,
@@ -519,6 +520,8 @@ def extract_importance_from_model(
                       feature names are extracted from pipeline steps.
         X_val: Validation feature matrix (required for grouped mode with trees).
         y_val: Validation binary labels (required for grouped mode with trees).
+        X_train: Training feature matrix (used for clustering in grouped mode to avoid leakage).
+                 If None, falls back to X_val (with warning).
         grouped: Enable cluster-aware importance mode (default False).
         corr_threshold: Correlation threshold for feature clustering (default 0.85).
         n_repeats: Number of permutation repeats for grouped tree importance (default 5).
@@ -580,22 +583,25 @@ def extract_importance_from_model(
     if grouped:
         logger.info(f"Computing grouped importance (corr_threshold={corr_threshold})")
 
-        # Build feature clusters
-        if X_val is not None:
-            logger.warning(
-                "Grouped importance is clustering features using validation data. "
-                "This may introduce information from the validation set into feature grouping. "
-                "For stricter data hygiene, consider clustering on training data instead."
-            )
+        # Build feature clusters on training data to avoid leakage
+        X_for_clustering = X_train if X_train is not None else X_val
+
+        if X_for_clustering is not None:
+            if X_train is None:
+                logger.warning(
+                    "X_train not provided for clustering, falling back to X_val. "
+                    "This may introduce information leakage from validation set into feature grouping. "
+                    "For stricter data hygiene, pass X_train for clustering."
+                )
             clusters = cluster_features_by_correlation(
-                X=X_val,
+                X=X_for_clustering,
                 feature_names=list(feature_names),
                 corr_threshold=corr_threshold,
                 corr_method="spearman",
             )
         else:
-            # For linear models without X_val, use singleton clusters
-            logger.warning("No X_val provided for clustering; using singleton clusters")
+            # No data available for clustering; use singleton clusters
+            logger.warning("No X_train or X_val provided for clustering; using singleton clusters")
             clusters = [[f] for f in feature_names]
 
         # Compute grouped importance based on model type

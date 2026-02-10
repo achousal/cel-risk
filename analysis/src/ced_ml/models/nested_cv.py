@@ -304,12 +304,16 @@ def oof_predictions_with_nested_cv(
                 X_val_fold = X.iloc[test_idx][protein_cols] if oof_grouped else None
                 y_val_fold = y[test_idx] if oof_grouped else None
 
+                # Prepare training data for clustering (avoid leakage)
+                X_train_fold = X.iloc[train_idx][protein_cols] if oof_grouped else None
+
                 fold_importance = extract_importance_from_model(
                     fitted_model,
                     model_name,
                     feature_names=None,  # extracted from Pipeline selection steps
                     X_val=X_val_fold,
                     y_val=y_val_fold,
+                    X_train=X_train_fold,
                     grouped=oof_grouped,
                     corr_threshold=oof_corr_threshold,
                 )
