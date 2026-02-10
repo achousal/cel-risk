@@ -39,6 +39,9 @@ def get_legend_reference_sizes(actual_sizes: np.ndarray) -> list:
     """
     Compute appropriate legend reference sizes based on actual bin sizes.
 
+    Uses adaptive rounding based on scale to ensure visual separation in legend.
+    For large numbers (>1000), uses logarithmic-like scaling.
+
     Args:
         actual_sizes: Array of actual bin sizes from the data
 
@@ -55,24 +58,47 @@ def get_legend_reference_sizes(actual_sizes: np.ndarray) -> list:
     if max_size - min_size < 50:
         return [min_size, max_size]
 
-    # Generate 3-4 evenly spaced reference points
-    # Round to nice numbers (multiples of 10, 50, or 100)
+    # Adaptive rounding based on scale
     def round_to_nice(x):
         if x < 50:
+            # Round to multiples of 10
             return int(np.round(x / 10) * 10)
         elif x < 200:
+            # Round to multiples of 25
             return int(np.round(x / 25) * 25)
-        else:
+        elif x < 1000:
+            # Round to multiples of 50
             return int(np.round(x / 50) * 50)
+        elif x < 5000:
+            # Round to multiples of 250
+            return int(np.round(x / 250) * 250)
+        else:
+            # Round to multiples of 500 or 1000 for very large numbers
+            if x < 10000:
+                return int(np.round(x / 500) * 500)
+            else:
+                return int(np.round(x / 1000) * 1000)
 
-    # Create quartile-based reference points
-    q25 = round_to_nice(np.percentile(actual_sizes, 25))
-    q50 = round_to_nice(np.percentile(actual_sizes, 50))
-    q75 = round_to_nice(np.percentile(actual_sizes, 75))
-    q_max = round_to_nice(max_size)
+    # For large ranges, use log-spaced percentiles for better visual separation
+    if max_size > 1000:
+        # Log-space percentiles (10th, 30th, 60th, 90th)
+        # This gives better separation when sizes span orders of magnitude
+        percentiles = [10, 30, 60, 90]
+        reference_points = [round_to_nice(np.percentile(actual_sizes, p)) for p in percentiles]
+        # Add max if it's significantly larger than 90th percentile
+        p90 = reference_points[-1]
+        if max_size > p90 * 1.3:
+            reference_points.append(round_to_nice(max_size))
+    else:
+        # Standard quartile-based reference points for moderate ranges
+        q25 = round_to_nice(np.percentile(actual_sizes, 25))
+        q50 = round_to_nice(np.percentile(actual_sizes, 50))
+        q75 = round_to_nice(np.percentile(actual_sizes, 75))
+        q_max = round_to_nice(max_size)
+        reference_points = [q25, q50, q75, q_max]
 
     # Filter duplicates and sort
-    sizes = sorted({q25, q50, q75, q_max})
+    sizes = sorted(set(reference_points))
 
     # Ensure we have at least 2 reference points
     if len(sizes) < 2:

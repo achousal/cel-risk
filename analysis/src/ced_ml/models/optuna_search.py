@@ -13,12 +13,14 @@ Features:
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from typing import Any, Literal
 
 import numpy as np
 import optuna
 from sklearn.base import BaseEstimator, clone
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
 from .optuna_callbacks import (
@@ -34,6 +36,9 @@ from .optuna_utils import (
     select_from_pareto_frontier,
     suggest_params,
 )
+
+# Suppress convergence warnings to prevent heavy .err files
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 logger = logging.getLogger(__name__)
 

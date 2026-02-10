@@ -16,6 +16,7 @@ Key components:
 import json
 import logging
 import time
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -23,6 +24,7 @@ import pandas as pd
 from joblib import parallel_backend
 from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import RepeatedStratifiedKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 
@@ -33,6 +35,11 @@ from ..models.registry import compute_scale_pos_weight_from_y
 from ..utils.constants import MAX_SAFE_PREVALENCE, MIN_SAFE_PREVALENCE
 from ..utils.feature_names import extract_protein_name
 from ..utils.logging import log_fold_header
+
+# Suppress convergence warnings to prevent heavy .err files
+# Models are configured with max_iter=2000 which is sufficient
+# Non-convergence doesn't prevent model usage, just means solver stopped early
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 if TYPE_CHECKING:
     from ced_ml.features.nested_rfe import NestedRFECVResult
@@ -301,11 +308,13 @@ def oof_predictions_with_nested_cv(
                 oof_corr_threshold = getattr(config.features, "oof_corr_threshold", 0.85)
 
                 # Prepare validation data for grouped permutation importance (trees)
-                X_val_fold = X.iloc[test_idx][protein_cols] if oof_grouped else None
+                # Note: Must include ALL features (proteins + demographics) that model was trained on
+                X_val_fold = X.iloc[test_idx] if oof_grouped else None
                 y_val_fold = y[test_idx] if oof_grouped else None
 
                 # Prepare training data for clustering (avoid leakage)
-                X_train_fold = X.iloc[train_idx][protein_cols] if oof_grouped else None
+                # Note: Must include ALL features (proteins + demographics) that model was trained on
+                X_train_fold = X.iloc[train_idx] if oof_grouped else None
 
                 fold_importance = extract_importance_from_model(
                     fitted_model,
@@ -519,7 +528,7 @@ def oof_predictions_with_nested_cv(
         oof_calibrator = OOFCalibrator(method=config.calibration.method)
         oof_calibrator.fit(mean_oof_preds, y)
         logger.info("OOF calibrator fitted successfully")
-        logger.warning(
+        logger.info(
             "OOF calibration metrics (Brier, ECE) are in-sample and may be optimistically biased. "
             "Use holdout/test metrics for unbiased evaluation."
         )

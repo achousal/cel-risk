@@ -28,6 +28,5 @@ eval_control_per_case: 5  # 5 controls in VAL/TEST
 # temporal_cutoff: null  # Date threshold for temporal split
 
 # Output control
-# outdir: splits  # Directory for split files (relative to analysis/)
 save_indices_only: false  # Save only indices (not full data)
-overwrite: true  # Regenerate splits even if they exist
+overwrite: false  # Regenerate splits even if they exist

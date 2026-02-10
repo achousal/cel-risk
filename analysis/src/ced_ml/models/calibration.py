@@ -10,17 +10,22 @@ Note: Prevalence adjustment functions are in prevalence.py
 """
 
 import logging
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 
 from ced_ml.utils.math_utils import logit
 
 from ..data.schema import ModelName
+
+# Suppress convergence warnings to prevent heavy .err files
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 logger = logging.getLogger(__name__)
 

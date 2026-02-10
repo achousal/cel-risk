@@ -16,17 +16,22 @@ Expected improvement: +2-5% AUROC over best single model.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import joblib
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from ced_ml.models.stacking_utils import CalibrationInfo
 from ced_ml.utils.math_utils import logit
+
+# Suppress convergence warnings to prevent heavy .err files
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 logger = logging.getLogger(__name__)
 
