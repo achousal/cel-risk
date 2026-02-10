@@ -2,7 +2,7 @@
 
 **Purpose**: Comprehensive listing of all E2E test files, classes, and coverage status.
 
-**Status**: 8 test files, 45 test classes, 1,271 total tests (2026-01-28).
+**Status**: 9 test files, 50 test classes, 1,282 total tests (2026-02-09).
 
 ---
 
@@ -18,7 +18,8 @@
 | `test_e2e_run_id_workflows.py` | 1,267 | 7 | ~22 | Fast | Run-ID auto-detection |
 | `test_e2e_multi_model_workflows.py` | 987 | 6 | ~20 | Fast | Cross-model workflows |
 | `test_e2e_output_structure.py` | 1,171 | 5 | ~25 | Fast | Output validation |
-| **Total** | **8,070** | **45** | **~186** | - | - |
+| `test_feature_selection_workflow.py` | 1,050 | 5 | ~11 | Slow | Three-stage feature selection |
+| **Total** | **9,120** | **50** | **~197** | - | - |
 
 ---
 
@@ -179,6 +180,26 @@
 - Ensemble outputs: Complete
 - Panel optimization: Complete
 - Consensus panel: Complete
+
+### test_feature_selection_workflow.py (Three-Stage Feature Selection)
+
+**File Size**: 1,050 lines | **Speed**: Slow
+
+| Class | Tests | Purpose | Speed |
+|-------|-------|---------|-------|
+| `TestStage1ModelGate` | 2 | Permutation testing (model gate) | Slow |
+| `TestStage2PerModelEvidence` | 2 | OOF importance and stability | Slow |
+| `TestStage3RRAConsensus` | 3 | Geometric mean rank aggregation | Slow |
+| `TestFullThreeStageWorkflow` | 1 | Complete workflow integration | Slow |
+| `TestFeatureSelectionErrorHandling` | 3 | Error handling and edge cases | Fast |
+
+**Coverage**:
+- Permutation test: Complete
+- OOF importance: Complete
+- Stability selection: Complete
+- RRA consensus: Complete
+- Cross-model panel: Complete
+- Error handling: Complete
 
 ---
 
