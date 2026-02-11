@@ -26,11 +26,6 @@ class AggregateConfig(BaseModel):
     summary_stats: list[str] = Field(default_factory=lambda: ["mean", "std", "median", "ci95"])
     group_by: list[str] = Field(default_factory=lambda: ["scenario", "model"])
 
-    # Consensus panels
-    min_stability: float = Field(default=0.7, ge=0.0, le=1.0)
-    corr_method: Literal["pearson", "spearman"] = "pearson"
-    corr_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
-
     # Output configuration (loaded from output_config.yaml)
     output: OutputConfig = Field(default_factory=OutputConfig)
 

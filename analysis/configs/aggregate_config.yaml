@@ -21,11 +21,3 @@ summary_stats:
 group_by:
   - scenario
   - model
-
-# Consensus panels
-min_stability: 0.75  # Minimum frequency across splits
-corr_method: pearson  # Options: pearson, spearman
-corr_threshold: 0.80
-
-# Note: Output controls (save_pooled_preds, save_plots, plot_format, etc.)
-# are configured in output_config.yaml under the 'aggregation:' and 'plots:' sections
