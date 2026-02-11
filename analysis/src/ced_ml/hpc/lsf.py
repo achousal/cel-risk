@@ -155,14 +155,12 @@ def build_job_script(
         Complete bash script string for bsub submission.
 
     Note:
-        Job output is redirected to /dev/null because ced commands create
-        their own log files in logs/run_{ID}/training/, etc.
-        Stderr is captured to {job_name}.%J.err but removed on success
-        via an EXIT trap (warnings-only content is not actionable;
-        real errors cause non-zero exit and preserve the .err file).
+        Both stdout and stderr are redirected to /dev/null because ced
+        commands create their own structured log files in
+        logs/run_{ID}/training/, etc.  Stderr from LSF jobs typically
+        contains only library warnings (e.g. convergence) that are
+        already captured in the ced logs when relevant.
     """
-    log_err = log_dir / f"{job_name}.%J.err"
-
     dep_line = ""
     if dependency:
         dep_line = f'#BSUB -w "{dependency}"'
@@ -175,27 +173,13 @@ def build_job_script(
 #BSUB -W {walltime}
 #BSUB -R "span[hosts=1] rusage[mem={mem_per_core}]"
 #BSUB -oo /dev/null
-#BSUB -eo {log_err}
+#BSUB -eo /dev/null
 {dep_line}
 
 set -euo pipefail
 
 export PYTHONUNBUFFERED=1
 export FORCE_COLOR=1
-
-# Preserve .err log on successful exit for audit trail (rename to .err.completed).
-# Using a trap ensures cleanup runs even when set -e causes an early exit.
-cleanup_err() {{
-    local rc=$?
-    if [ $rc -eq 0 ] && [ -n "${{LSB_JOBID:-}}" ]; then
-        ERR_LOG="{log_dir}/{job_name}.${{LSB_JOBID}}.err"
-        if [ -f "$ERR_LOG" ]; then
-            mv "$ERR_LOG" "${{ERR_LOG}}.completed"
-        fi
-    fi
-    exit $rc
-}}
-trap cleanup_err EXIT
 
 {env_activation}
 
@@ -583,10 +567,11 @@ def submit_hpc_pipeline(
                 pipeline_logger.error(f"  {model} seed {seed}: Submission failed")
 
     # Submit post-processing job (aggregation + ensemble) with dependency on ALL training jobs
-    # Use job names instead of IDs so dependencies survive LSF job purging
+    # Use wildcard pattern to avoid LSF dependency expression length limits (120 jobs exceeds limits)
     pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
     post_job_name = f"CeD_{run_id}_post"
-    dependency_expr = " && ".join(f"done({name})" for name in training_job_names)
+    # Wildcard matches all training jobs: CeD_{run_id}_{model}_s{seed}
+    dependency_expr = f"done(CeD_{run_id}_*_s*)"
 
     post_command = _build_postprocessing_command(
         config_file=config_file.resolve(),
@@ -682,9 +667,8 @@ def submit_hpc_pipeline(
                 # Depend on all permutation jobs for this model AND post-processing.
                 # Post-processing produces pooled_val_metrics.csv which provides the
                 # observed AUROC needed for computing empirical p-values.
-                agg_deps = [f"done({name})" for name in model_perm_jobs]
-                agg_deps.append(f"done({post_job_name})")
-                agg_dependency = " && ".join(agg_deps)
+                # Use wildcard to avoid dependency expression length limits
+                agg_dependency = f"done(CeD_{run_id}_perm_{model}_s*) && done({post_job_name})"
 
                 agg_command = _build_permutation_aggregation_command(
                     run_id=run_id,
@@ -767,8 +751,8 @@ def submit_hpc_pipeline(
         # Phase 2: Per-model aggregation jobs (M, depend on all seed jobs for that model)
         for model in models:
             agg_job_name = f"CeD_{run_id}_panel_{model}_agg"
-            model_seed_names = panel_seed_names_by_model[model]
-            agg_dependency = " && ".join(f"done({name})" for name in model_seed_names)
+            # Use wildcard to avoid dependency expression length limits (30 seeds)
+            agg_dependency = f"done(CeD_{run_id}_panel_{model}_s*)"
 
             agg_command = _build_panel_optimization_command(
                 run_id=run_id,
@@ -802,11 +786,12 @@ def submit_hpc_pipeline(
         # - post-processing (aggregation)
         # - panel optimization jobs (if enabled)
         # - permutation aggregation jobs (if enabled, for significance filtering)
+        # Use wildcards for robustness and consistency
         consensus_deps = [f"done({post_job_name})"]
         if enable_optimize_panel and panel_agg_names:
-            consensus_deps.extend(f"done({name})" for name in panel_agg_names)
+            consensus_deps.append(f"done(CeD_{run_id}_panel_*_agg)")
         if enable_permutation_test and permutation_agg_names:
-            consensus_deps.extend(f"done({name})" for name in permutation_agg_names)
+            consensus_deps.append(f"done(CeD_{run_id}_perm_*_agg)")
         consensus_dependency = " && ".join(consensus_deps)
 
         consensus_command = _build_consensus_panel_command(run_id=run_id)

@@ -135,10 +135,10 @@ def test_build_job_script_with_dependency():
 
 
 def test_build_job_script_log_paths():
-    """Test that log paths are correctly configured.
+    """Test that both stdout and stderr are discarded by LSF.
 
-    Note: Only stderr (.err) is captured by LSF. Stdout is discarded because
-    ced commands create their own log files in logs/run_{ID}/training/, etc.
+    ced commands create their own structured log files in
+    logs/run_{ID}/training/, etc., so LSF-level output is unnecessary.
     """
     log_dir = Path("/test/logs")
     script = build_job_script(
@@ -153,47 +153,10 @@ def test_build_job_script_log_paths():
         log_dir=log_dir,
     )
 
-    assert f"#BSUB -eo {log_dir}/logging_test.%J.err" in script
     assert "#BSUB -oo /dev/null" in script
-    # No more .live.log files - ced commands create their own logs
+    assert "#BSUB -eo /dev/null" in script
+    # No .err files, .live.log files, or cleanup traps
+    assert ".err" not in script.split("#BSUB -eo /dev/null")[1]
     assert ".live.log" not in script
     assert "tee" not in script
-    # Verify trap-based cleanup preserves .err on success (renames to .err.completed)
-    assert "trap cleanup_err EXIT" in script
-    assert "mv" in script
-    assert ".err.completed" in script
-
-
-def test_build_job_script_set_u_safe():
-    """Test that job script is safe with set -u (unbound variable checking).
-
-    Regression test for LSB_JOBID usage in cleanup section - must be properly
-    quoted to avoid "unbound variable" errors when set -u is enabled.
-    """
-    script = build_job_script(
-        job_name="test_job",
-        command="echo 'test'",
-        project="test_proj",
-        queue="test_queue",
-        cores=1,
-        mem_per_core=1000,
-        walltime="1:00",
-        env_activation="source /path/to/venv/bin/activate",
-        log_dir=Path("/tmp/logs"),
-    )
-
-    # Verify set -u is enabled
-    assert "set -euo pipefail" in script
-
-    # Verify LSB_JOBID is properly quoted with ${...} syntax in cleanup section
-    # This prevents "unbound variable" errors when LSB_JOBID is not set
-    assert '[ -n "${LSB_JOBID:-}"' in script
-    assert "${LSB_JOBID}.err" in script
-
-    # Ensure no raw $LSB_JOBID or $LSF_JOBID that could trigger set -u errors
-    lines = script.split("\n")
-    for i, line in enumerate(lines, 1):
-        # After "set -euo pipefail", all variable references must use ${...}
-        if i > 10 and ("LSB_JOBID" in line or "LSF_JOBID" in line):
-            # Must use ${VAR:-} or ${VAR} syntax, not $VAR
-            assert "${" in line, f"Line {i} has unquoted LSB_JOBID: {line}"
+    assert "cleanup_err" not in script

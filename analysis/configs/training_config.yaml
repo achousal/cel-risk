@@ -20,7 +20,7 @@ cv:
 # Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
 optuna:
   enabled: true  # Set to true to use Optuna instead of RandomizedSearchCV
-  n_trials: 200
+  n_trials: 20
     # Multi-objective optimization (optional)
   multi_objective: true  # Set to true to optimize multiple metrics
   objectives: ["roc_auc", "neg_brier_score"]  # Metrics to optimize (requires multi_objective=true and 2+ objectives)
