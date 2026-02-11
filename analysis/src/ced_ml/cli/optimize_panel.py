@@ -337,7 +337,7 @@ def run_drop_column_validation_for_panels(
 
     # Load data once
     df = read_proteomics_file(infile)
-    y_all = (df[TARGET_COL] == get_positive_label()).astype(int).values
+    y_all = (df[TARGET_COL] == get_positive_label(scenario)).astype(int).values
 
     essentiality_dir = results_path / "optimize_panel" / "essentiality"
     essentiality_dir.mkdir(parents=True, exist_ok=True)

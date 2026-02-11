@@ -57,6 +57,7 @@ from ced_ml.features.drop_column import (
     aggregate_drop_column_results,
     compute_drop_column_importance,
 )
+from ced_ml.models.calibration import OOFCalibratedModel
 
 logger = logging.getLogger(__name__)
 
@@ -584,6 +585,11 @@ def run_consensus_panel(
                 if original_pipeline is None:
                     logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
                     continue
+
+                # Unwrap OOFCalibratedModel to get the fittable base model
+                if isinstance(original_pipeline, OOFCalibratedModel):
+                    original_pipeline = original_pipeline.base_model
+                    logger.debug(f"  Seed {seed}: unwrapped OOFCalibratedModel for refitting")
 
                 # Clone preserves tuned hyperparameters but produces an
                 # unfitted estimator that can be trained on the panel subset.
