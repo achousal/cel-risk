@@ -554,9 +554,11 @@ class TestHoldoutEvaluationWorkflow:
         run_dir = _find_run_dir(results_dir)
         model_dir = run_dir / "LR_EN" / "splits" / "split_seed0"
 
-        # Find model artifact (pipeline.pkl or model.pkl)
-        model_artifacts = list(model_dir.rglob("*pipeline*.pkl")) + list(
-            model_dir.rglob("*model*.pkl")
+        # Find model artifact (final_model.joblib or pipeline.pkl or model.pkl)
+        model_artifacts = (
+            list(model_dir.rglob("*final_model*.joblib"))
+            + list(model_dir.rglob("*pipeline*.pkl"))
+            + list(model_dir.rglob("*model*.pkl"))
         )
 
         if not model_artifacts:

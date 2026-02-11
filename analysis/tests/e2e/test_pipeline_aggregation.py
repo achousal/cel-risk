@@ -97,8 +97,6 @@ class TestE2EAggregationWorkflow:
                 "aggregate-splits",
                 "--results-dir",
                 str(model_results_dir),
-                "--n-boot",
-                "100",
             ],
             catch_exceptions=False,
         )

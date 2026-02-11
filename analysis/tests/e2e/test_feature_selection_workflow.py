@@ -316,6 +316,7 @@ class TestStage1ModelGate:
             ],
         )
 
+        shared_run_id = "test_multi_model_perm"
         for model in ["LR_EN", "RF"]:
             result_train = runner.invoke(
                 cli,
@@ -333,6 +334,8 @@ class TestStage1ModelGate:
                     model,
                     "--split-seed",
                     "42",
+                    "--run-id",
+                    shared_run_id,
                 ],
                 catch_exceptions=False,
             )
@@ -340,8 +343,7 @@ class TestStage1ModelGate:
             if result_train.exit_code != 0:
                 pytest.skip(f"Training {model} failed")
 
-        run_dirs = list(results_dir.glob("run_*"))
-        run_id = run_dirs[0].name.replace("run_", "")
+        run_dir = results_dir / f"run_{shared_run_id}"
 
         for model in ["LR_EN", "RF"]:
             result_perm = runner.invoke(
@@ -349,7 +351,7 @@ class TestStage1ModelGate:
                 [
                     "permutation-test",
                     "--run-id",
-                    run_id,
+                    shared_run_id,
                     "--model",
                     model,
                     "--split-seed-start",
@@ -367,7 +369,7 @@ class TestStage1ModelGate:
                 pytest.skip(f"Permutation test for {model} failed")
 
         for model in ["LR_EN", "RF"]:
-            significance_dir = run_dirs[0] / model / "significance"
+            significance_dir = run_dir / model / "significance"
             assert significance_dir.exists()
             assert (significance_dir / "permutation_test_results_seed42.csv").exists()
 
@@ -589,6 +591,7 @@ class TestStage3RRAConsensus:
             ],
         )
 
+        shared_run_id = "test_consensus_basic"
         for model in ["LR_EN", "RF"]:
             for seed in [42, 43]:
                 result_train = runner.invoke(
@@ -607,6 +610,8 @@ class TestStage3RRAConsensus:
                         model,
                         "--split-seed",
                         str(seed),
+                        "--run-id",
+                        shared_run_id,
                     ],
                     catch_exceptions=False,
                 )
@@ -614,8 +619,8 @@ class TestStage3RRAConsensus:
                 if result_train.exit_code != 0:
                     pytest.skip(f"Training {model} seed {seed} failed")
 
-        run_dirs = list(results_dir.glob("run_*"))
-        run_id = run_dirs[0].name.replace("run_", "")
+        run_dir = results_dir / f"run_{shared_run_id}"
+        run_id = shared_run_id
 
         for model in ["LR_EN", "RF"]:
             runner.invoke(
@@ -637,8 +642,6 @@ class TestStage3RRAConsensus:
                 "consensus-panel",
                 "--run-id",
                 run_id,
-                "--models",
-                "LR_EN,RF",
                 "--stability-threshold",
                 "0.5",
                 "--target-size",
@@ -653,12 +656,12 @@ class TestStage3RRAConsensus:
 
         assert result_consensus.exit_code == 0
 
-        consensus_dir = run_dirs[0] / "consensus"
+        consensus_dir = run_dir / "consensus"
         assert consensus_dir.exists()
 
         final_panel_csv = consensus_dir / "final_panel.csv"
         consensus_ranking_csv = consensus_dir / "consensus_ranking.csv"
-        metadata_json = consensus_dir / "metadata.json"
+        metadata_json = consensus_dir / "consensus_metadata.json"
 
         assert final_panel_csv.exists()
         assert consensus_ranking_csv.exists()
@@ -714,6 +717,7 @@ class TestStage3RRAConsensus:
             ],
         )
 
+        shared_run_id = "test_rra_correctness"
         for model in ["LR_EN", "RF"]:
             for seed in [42, 43]:
                 runner.invoke(
@@ -732,12 +736,14 @@ class TestStage3RRAConsensus:
                         model,
                         "--split-seed",
                         str(seed),
+                        "--run-id",
+                        shared_run_id,
                     ],
                     catch_exceptions=False,
                 )
 
-        run_dirs = list(results_dir.glob("run_*"))
-        run_id = run_dirs[0].name.replace("run_", "")
+        run_dir = results_dir / f"run_{shared_run_id}"
+        run_id = shared_run_id
 
         for model in ["LR_EN", "RF"]:
             runner.invoke(
@@ -758,8 +764,6 @@ class TestStage3RRAConsensus:
                 "consensus-panel",
                 "--run-id",
                 run_id,
-                "--models",
-                "LR_EN,RF",
                 "--stability-threshold",
                 "0.5",
             ],
@@ -770,7 +774,7 @@ class TestStage3RRAConsensus:
         if result_consensus.exit_code != 0:
             pytest.skip("Consensus panel failed")
 
-        consensus_dir = run_dirs[0] / "consensus"
+        consensus_dir = run_dir / "consensus"
         consensus_ranking_csv = consensus_dir / "consensus_ranking.csv"
 
         df_ranking = pd.read_csv(consensus_ranking_csv)
@@ -819,6 +823,7 @@ class TestStage3RRAConsensus:
             ],
         )
 
+        shared_run_id = "test_oof_importance_consensus"
         for model in ["LR_EN", "RF"]:
             for seed in [42, 43]:
                 runner.invoke(
@@ -837,12 +842,14 @@ class TestStage3RRAConsensus:
                         model,
                         "--split-seed",
                         str(seed),
+                        "--run-id",
+                        shared_run_id,
                     ],
                     catch_exceptions=False,
                 )
 
-        run_dirs = list(results_dir.glob("run_*"))
-        run_id = run_dirs[0].name.replace("run_", "")
+        run_dir = results_dir / f"run_{shared_run_id}"
+        run_id = shared_run_id
 
         for model in ["LR_EN", "RF"]:
             runner.invoke(
@@ -863,8 +870,6 @@ class TestStage3RRAConsensus:
                 "consensus-panel",
                 "--run-id",
                 run_id,
-                "--models",
-                "LR_EN,RF",
                 "--stability-threshold",
                 "0.5",
             ],
@@ -875,7 +880,7 @@ class TestStage3RRAConsensus:
         if result_consensus.exit_code != 0:
             pytest.skip("Consensus panel failed")
 
-        consensus_dir = run_dirs[0] / "consensus"
+        consensus_dir = run_dir / "consensus"
         per_model_csv = consensus_dir / "per_model_rankings.csv"
 
         if per_model_csv.exists():
@@ -945,6 +950,7 @@ class TestFullThreeStageWorkflow:
 
         models = ["LR_EN", "RF"]
         seeds = [42, 43]
+        shared_run_id = "test_full_workflow"
 
         for model in models:
             for seed in seeds:
@@ -964,6 +970,8 @@ class TestFullThreeStageWorkflow:
                         model,
                         "--split-seed",
                         str(seed),
+                        "--run-id",
+                        shared_run_id,
                     ],
                     catch_exceptions=False,
                 )
@@ -971,8 +979,8 @@ class TestFullThreeStageWorkflow:
                 if result.exit_code != 0:
                     pytest.skip(f"Training {model} seed {seed} failed")
 
-        run_dirs = list(results_dir.glob("run_*"))
-        run_id = run_dirs[0].name.replace("run_", "")
+        run_dir = results_dir / f"run_{shared_run_id}"
+        run_id = shared_run_id
 
         significant_models = []
         for model in models:
@@ -996,7 +1004,7 @@ class TestFullThreeStageWorkflow:
             )
 
             if result.exit_code == 0:
-                significance_dir = run_dirs[0] / model / "significance"
+                significance_dir = run_dir / model / "significance"
                 results_csv = significance_dir / "permutation_test_results_seed42.csv"
                 if results_csv.exists():
                     df = pd.read_csv(results_csv)
@@ -1027,8 +1035,6 @@ class TestFullThreeStageWorkflow:
                 "consensus-panel",
                 "--run-id",
                 run_id,
-                "--models",
-                ",".join(significant_models),
                 "--stability-threshold",
                 "0.5",
                 "--target-size",
@@ -1043,11 +1049,11 @@ class TestFullThreeStageWorkflow:
 
         assert result_consensus.exit_code == 0
 
-        consensus_dir = run_dirs[0] / "consensus"
+        consensus_dir = run_dir / "consensus"
         assert (consensus_dir / "final_panel.csv").exists()
         assert (consensus_dir / "consensus_ranking.csv").exists()
         assert (consensus_dir / "per_model_rankings.csv").exists()
-        assert (consensus_dir / "metadata.json").exists()
+        assert (consensus_dir / "consensus_metadata.json").exists()
 
         df_panel = pd.read_csv(consensus_dir / "final_panel.csv")
         assert len(df_panel) <= 10
@@ -1062,24 +1068,6 @@ class TestFullThreeStageWorkflow:
 class TestFeatureSelectionErrorHandling:
     """Test error handling and edge cases in feature selection workflow."""
 
-    def test_consensus_panel_insufficient_models(self, tmp_path):
-        """Test: Error when fewer than 2 models provided."""
-        runner = CliRunner()
-        result = runner.invoke(
-            cli,
-            [
-                "consensus-panel",
-                "--run-id",
-                "test_run_12345",
-                "--models",
-                "LR_EN",
-            ],
-        )
-
-        assert result.exit_code != 0
-        error_text = result.output.lower()
-        assert "at least 2 models" in error_text or "error" in error_text
-
     def test_consensus_panel_nonexistent_run(self, tmp_path):
         """Test: Error when run_id not found."""
         runner = CliRunner()
@@ -1089,8 +1077,6 @@ class TestFeatureSelectionErrorHandling:
                 "consensus-panel",
                 "--run-id",
                 "nonexistent_run_99999",
-                "--models",
-                "LR_EN,RF",
             ],
         )
 

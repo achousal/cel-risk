@@ -70,6 +70,8 @@ class TestCliSmoke:
                 "IncidentOnly",
                 "--n-splits",
                 "1",
+                "--seed-start",
+                "42",
             ],
         )
 
@@ -497,6 +499,8 @@ class TestCliSmokeIntegration:
                 "IncidentOnly",
                 "--n-splits",
                 "1",
+                "--seed-start",
+                "42",
             ],
         )
         assert result1.exit_code == 0, f"save-splits failed: {result1.output}"

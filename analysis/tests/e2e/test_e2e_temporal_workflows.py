@@ -507,11 +507,13 @@ class TestTemporalValidationMetrics:
 
         metrics_df = pd.read_csv(test_metrics_files[0])
 
-        # Check AUROC is valid
-        if "AUROC" in metrics_df.columns:
+        # Check AUROC is valid (column is lowercase "auroc" per schema)
+        if "auroc" in metrics_df.columns:
+            auroc = metrics_df["auroc"].iloc[0]
+        elif "AUROC" in metrics_df.columns:
             auroc = metrics_df["AUROC"].iloc[0]
         elif "metric" in metrics_df.columns and "value" in metrics_df.columns:
-            auroc_rows = metrics_df[metrics_df["metric"] == "AUROC"]
+            auroc_rows = metrics_df[metrics_df["metric"].str.lower() == "auroc"]
             if len(auroc_rows) > 0:
                 auroc = auroc_rows["value"].iloc[0]
             else:
