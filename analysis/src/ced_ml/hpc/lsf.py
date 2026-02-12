@@ -481,6 +481,39 @@ def _build_job_id_dependency(job_ids: list[str]) -> str:
     return " && ".join(f"done({jid})" for jid in job_ids)
 
 
+def _build_training_dependency_expression(*, run_id: str, models: list[str]) -> str:
+    """Build wildcard dependency expression for all training jobs.
+
+    Uses one clause per base model so we only match training jobs:
+    ``done(CeD_<run_id>_<model>_s*)``.
+    """
+    validate_identifier(run_id, "run_id")
+    if not models:
+        raise ValueError("models must not be empty")
+
+    deps: list[str] = []
+    for model in models:
+        validate_identifier(model, "model")
+        deps.append(f"done(CeD_{run_id}_{model}_s*)")
+    return " && ".join(deps)
+
+
+def _merge_dependency_with_fallback(
+    primary: str | None,
+    fallback: str | None,
+) -> str | None:
+    """Combine primary and fallback dependency expressions with OR.
+
+    This keeps numeric-ID dependencies (fast path) while preserving a
+    wildcard fallback when a scheduler can no longer resolve older IDs.
+    """
+    if primary and fallback:
+        if primary == fallback:
+            return primary
+        return f"({primary}) || ({fallback})"
+    return primary or fallback
+
+
 def submit_hpc_pipeline(
     *,
     config_file: Path,
@@ -598,11 +631,13 @@ def submit_hpc_pipeline(
                 pipeline_logger.error(f"  {model} seed {seed}: Submission failed")
 
     # Submit post-processing job (aggregation + ensemble) with dependency on all
-    # training jobs.  Uses numeric job IDs so dependencies survive LSF job-table
-    # purging (name-based wildcards cause TERM_ORPHAN_SYSTEM).
+    # training jobs. Use IDs as the primary condition with model-scoped wildcard
+    # fallback for clusters that may evict old job IDs from active tables.
     pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
     post_job_name = f"CeD_{run_id}_post"
-    dependency_expr = _build_job_id_dependency(training_job_ids) if training_job_ids else None
+    post_dep_ids = _build_job_id_dependency(training_job_ids) if training_job_ids else None
+    post_dep_names = _build_training_dependency_expression(run_id=run_id, models=models)
+    dependency_expr = _merge_dependency_with_fallback(post_dep_ids, post_dep_names)
 
     post_command = _build_postprocessing_command(
         config_file=config_file.resolve(),
@@ -624,9 +659,7 @@ def submit_hpc_pipeline(
 
     post_job_id = submit_job(post_script, dry_run=dry_run)
     if post_job_id:
-        pipeline_logger.info(
-            f"  Post-processing: Job {post_job_id} (depends on training job names)"
-        )
+        pipeline_logger.info(f"  Post-processing: Job {post_job_id}")
     elif dry_run:
         pipeline_logger.info(f"  [DRY RUN] Post-processing: {post_job_name}")
 
@@ -658,9 +691,9 @@ def submit_hpc_pipeline(
                 # available and all training outputs exist.  Permutation tests
                 # train from scratch with permuted labels -- they do not need
                 # a training job for this specific seed.
-                perm_dependency = (
-                    f"done({post_job_id})" if post_job_id else f"done({post_job_name})"
-                )
+                perm_dep_ids = f"done({post_job_id})" if post_job_id else None
+                perm_dep_names = f"done({post_job_name})"
+                perm_dependency = _merge_dependency_with_fallback(perm_dep_ids, perm_dep_names)
 
                 perm_command = _build_permutation_test_full_command(
                     run_id=run_id,
@@ -701,10 +734,12 @@ def submit_hpc_pipeline(
                 # Depend on all permutation jobs for this model AND post-processing.
                 # Post-processing produces pooled_val_metrics.csv which provides the
                 # observed AUROC needed for computing empirical p-values.
-                agg_dep_ids = list(model_perm_ids)
+                agg_dep_ids_list = list(model_perm_ids)
                 if post_job_id:
-                    agg_dep_ids.append(post_job_id)
-                agg_dependency = _build_job_id_dependency(agg_dep_ids)
+                    agg_dep_ids_list.append(post_job_id)
+                agg_dep_ids = _build_job_id_dependency(agg_dep_ids_list)
+                agg_dep_names = f"done(CeD_{run_id}_perm_{model}_s*) && " f"done({post_job_name})"
+                agg_dependency = _merge_dependency_with_fallback(agg_dep_ids, agg_dep_names)
 
                 agg_command = _build_permutation_aggregation_command(
                     run_id=run_id,
@@ -753,13 +788,19 @@ def submit_hpc_pipeline(
             for seed in split_seeds:
                 seed_job_name = f"CeD_{run_id}_panel_{model}_s{seed}"
                 # Base dependency: post-processing must complete
-                seed_dep_ids: list[str] = []
+                seed_dep_ids_list: list[str] = []
                 if post_job_id:
-                    seed_dep_ids.append(post_job_id)
+                    seed_dep_ids_list.append(post_job_id)
                 # If permutation testing enabled, also depend on that model's perm aggregation
                 if enable_permutation_test and model in perm_agg_ids_by_model:
-                    seed_dep_ids.append(perm_agg_ids_by_model[model])
-                seed_dependency = _build_job_id_dependency(seed_dep_ids) if seed_dep_ids else None
+                    seed_dep_ids_list.append(perm_agg_ids_by_model[model])
+                seed_dep_ids = (
+                    _build_job_id_dependency(seed_dep_ids_list) if seed_dep_ids_list else None
+                )
+                seed_dep_names = f"done({post_job_name})"
+                if enable_permutation_test:
+                    seed_dep_names += f" && done(CeD_{run_id}_perm_{model}_agg)"
+                seed_dependency = _merge_dependency_with_fallback(seed_dep_ids, seed_dep_names)
 
                 seed_command = _build_panel_optimization_command(
                     run_id=run_id,
@@ -790,7 +831,9 @@ def submit_hpc_pipeline(
         for model in models:
             agg_job_name = f"CeD_{run_id}_panel_{model}_agg"
             model_seed_ids = panel_seed_ids_by_model[model]
-            agg_dependency = _build_job_id_dependency(model_seed_ids) if model_seed_ids else None
+            agg_dep_ids = _build_job_id_dependency(model_seed_ids) if model_seed_ids else None
+            agg_dep_names = f"done(CeD_{run_id}_panel_{model}_s*)"
+            agg_dependency = _merge_dependency_with_fallback(agg_dep_ids, agg_dep_names)
 
             agg_command = _build_panel_optimization_command(
                 run_id=run_id,
@@ -825,15 +868,25 @@ def submit_hpc_pipeline(
         # - post-processing (aggregation)
         # - panel aggregation jobs (if enabled)
         # - permutation aggregation jobs (if enabled, for significance filtering)
-        consensus_dep_ids: list[str] = []
+        consensus_dep_ids_list: list[str] = []
         if post_job_id:
-            consensus_dep_ids.append(post_job_id)
+            consensus_dep_ids_list.append(post_job_id)
         if enable_optimize_panel:
-            consensus_dep_ids.extend(panel_agg_ids)
+            consensus_dep_ids_list.extend(panel_agg_ids)
         if enable_permutation_test:
-            consensus_dep_ids.extend(perm_agg_ids_by_model.values())
-        consensus_dependency = (
-            _build_job_id_dependency(consensus_dep_ids) if consensus_dep_ids else None
+            consensus_dep_ids_list.extend(perm_agg_ids_by_model.values())
+        consensus_dep_ids = (
+            _build_job_id_dependency(consensus_dep_ids_list) if consensus_dep_ids_list else None
+        )
+        consensus_dep_names_list = [f"done({post_job_name})"]
+        if enable_optimize_panel:
+            consensus_dep_names_list.append(f"done(CeD_{run_id}_panel_*_agg)")
+        if enable_permutation_test:
+            consensus_dep_names_list.append(f"done(CeD_{run_id}_perm_*_agg)")
+        consensus_dep_names = " && ".join(consensus_dep_names_list)
+        consensus_dependency = _merge_dependency_with_fallback(
+            consensus_dep_ids,
+            consensus_dep_names,
         )
 
         consensus_command = _build_consensus_panel_command(run_id=run_id)

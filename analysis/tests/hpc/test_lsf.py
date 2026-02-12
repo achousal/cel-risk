@@ -166,8 +166,8 @@ def test_build_job_script_log_paths():
     assert "cleanup_err" not in script
 
 
-def test_submit_hpc_pipeline_post_dependency_uses_job_ids(monkeypatch, tmp_path):
-    """Post-processing should depend on numeric job IDs, not name wildcards."""
+def test_submit_hpc_pipeline_post_dependency_uses_ids_with_name_fallback(monkeypatch, tmp_path):
+    """Post-processing should use ID dependency with model-scoped wildcard fallback."""
     submitted_scripts: list[str] = []
 
     def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
@@ -209,8 +209,10 @@ def test_submit_hpc_pipeline_post_dependency_uses_job_ids(monkeypatch, tmp_path)
     # Training jobs: 2 models x 2 seeds = 4 jobs (IDs "1".."4").
     # Post-processing is the 5th submission (ID "5").
     post_script = submitted_scripts[4]
-    # Must use numeric IDs, not name-based wildcards
-    assert '#BSUB -w "done(1) && done(2) && done(3) && done(4)"' in post_script
-    # No wildcard patterns anywhere
-    assert "_s*" not in post_script
-    assert "_*_" not in post_script
+    # Primary dependency: numeric IDs
+    assert "done(1) && done(2) && done(3) && done(4)" in post_script
+    # Fallback dependency: model-scoped training wildcards
+    assert "done(CeD_20260211_095722_LR_EN_s*)" in post_script
+    assert "done(CeD_20260211_095722_RF_s*)" in post_script
+    # Combined expression uses OR fallback
+    assert "||" in post_script

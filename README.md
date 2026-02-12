@@ -141,7 +141,7 @@ All commands use YAML configs in `analysis/configs/`:
 |----------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Project overview |
 | [ARCHITECTURE.md](analysis/docs/ARCHITECTURE.md) | Technical architecture + code pointers |
-| [ADRs](analysis/docs/adr/) | 15 architectural decisions (split strategy, calibration, ensembles, etc.) |
+| [ADRs](analysis/docs/adr/) | Architectural decisions (split strategy, calibration, ensembles, etc.) |
 | [ARTIFACTS.md](analysis/docs/reference/ARTIFACTS.md) | Output structure |
 
 ---
