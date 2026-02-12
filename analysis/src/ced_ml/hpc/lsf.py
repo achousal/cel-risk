@@ -279,26 +279,43 @@ def _build_postprocessing_command(
     Panel optimization and consensus are handled by separate parallel jobs.
 
     Returns a multi-line bash script fragment that runs each step sequentially.
+    Aggregation steps are fatal (set -e); ensemble training failures are
+    non-fatal so that one seed's failure does not abort subsequent seeds
+    or the ENSEMBLE aggregation.
     """
     lines = [
         f'echo "Post-processing (aggregation + ensemble) for run {run_id}"',
         "",
     ]
 
-    # Aggregate base models
+    # Aggregate base models (fatal -- these must succeed)
     for model in models:
         lines.append(f'echo "Aggregating {model}..."')
         lines.append(f"ced aggregate-splits --run-id {run_id} --model {model}")
         lines.append("")
 
-    # Train ensemble per seed
+    # Train ensemble per seed (non-fatal: continue on failure so remaining
+    # seeds and ENSEMBLE aggregation can still proceed)
     if enable_ensemble:
+        lines.append("ENSEMBLE_FAILURES=0")
         for seed in split_seeds:
             lines.append(f'echo "Training ensemble seed {seed}..."')
-            lines.append(f"ced train-ensemble --run-id {run_id} --split-seed {seed}")
+            lines.append(
+                f"ced train-ensemble --run-id {run_id} --split-seed {seed}"
+                f" || {{ echo 'WARNING: ensemble seed {seed} failed'; ENSEMBLE_FAILURES=$((ENSEMBLE_FAILURES+1)); }}"
+            )
         lines.append("")
         lines.append('echo "Aggregating ENSEMBLE..."')
-        lines.append(f"ced aggregate-splits --run-id {run_id} --model ENSEMBLE")
+        lines.append(
+            f"ced aggregate-splits --run-id {run_id} --model ENSEMBLE"
+            f' || echo "WARNING: ENSEMBLE aggregation failed (expected if all ensemble seeds failed)"'
+        )
+        lines.append("")
+        lines.append(
+            'if [ "$ENSEMBLE_FAILURES" -gt 0 ]; then'
+            f' echo "WARNING: $ENSEMBLE_FAILURES/{len(split_seeds)} ensemble seeds failed";'
+            " fi"
+        )
         lines.append("")
 
     lines.append(f'echo "Aggregation and ensemble training complete for run {run_id}"')

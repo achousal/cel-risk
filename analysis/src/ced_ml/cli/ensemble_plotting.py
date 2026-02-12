@@ -304,6 +304,7 @@ def generate_ensemble_specific_plots(
     meta_penalty: str,
     meta_c: float,
     plot_format: str = "png",
+    run_id: str | None = None,
 ) -> None:
     """Generate ensemble-specific plots (meta-learner weights, model comparison).
 
@@ -316,6 +317,7 @@ def generate_ensemble_specific_plots(
         meta_penalty: Meta-learner penalty type
         meta_c: Meta-learner regularization strength
         plot_format: Image format (default: png)
+        run_id: Optional run_id to scope path resolution to a specific run
     """
     from ced_ml.plotting.ensemble import plot_meta_learner_weights, plot_model_comparison
 
@@ -333,7 +335,9 @@ def generate_ensemble_specific_plots(
             meta_lines=meta_lines,
         )
 
-    base_metrics = collect_base_model_test_metrics(results_path, available_models, split_seed)
+    base_metrics = collect_base_model_test_metrics(
+        results_path, available_models, split_seed, run_id
+    )
     if "test_metrics" in results:
         base_metrics["ENSEMBLE"] = results["test_metrics"]
     if len(base_metrics) >= 2:

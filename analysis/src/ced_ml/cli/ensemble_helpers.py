@@ -99,6 +99,7 @@ def collect_base_model_test_metrics(
     results_path: Path,
     base_models: list[str],
     split_seed: int,
+    run_id: str | None = None,
 ) -> dict[str, dict[str, float]]:
     """Load test metrics from base model split directories for comparison.
 
@@ -117,7 +118,7 @@ def collect_base_model_test_metrics(
 
     for model in base_models:
         try:
-            model_dir = _find_model_split_dir(results_path, model, split_seed)
+            model_dir = _find_model_split_dir(results_path, model, split_seed, run_id)
 
             metrics_path = model_dir / "core" / "metrics.json"
             if metrics_path.exists():
@@ -155,6 +156,7 @@ def validate_base_models(
     results_path: Path,
     base_models: list[str],
     split_seed: int,
+    run_id: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check which base models have OOF predictions available.
 
@@ -162,6 +164,7 @@ def validate_base_models(
         results_path: Root results directory
         base_models: List of base model names to validate
         split_seed: Split seed for path resolution
+        run_id: Optional run_id to scope path resolution to a specific run
 
     Returns:
         Tuple of (available_models, missing_models)
@@ -174,7 +177,7 @@ def validate_base_models(
 
     for model in base_models:
         try:
-            model_dir = _find_model_split_dir(results_path, model, split_seed)
+            model_dir = _find_model_split_dir(results_path, model, split_seed, run_id)
             oof_path = model_dir / "preds" / f"train_oof__{model}.csv"
             if oof_path.exists():
                 available_models.append(model)

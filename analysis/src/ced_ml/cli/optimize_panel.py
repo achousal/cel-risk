@@ -360,7 +360,7 @@ def run_drop_column_validation_for_panels(
         X_all = df[feature_cols]
 
         if len(panel_proteins) > 1:
-            corr_matrix = compute_correlation_matrix(df[panel_proteins], method=corr_method)
+            corr_matrix = compute_correlation_matrix(df, panel_proteins, method=corr_method)
             G = build_correlation_graph(corr_matrix, corr_threshold)
             clusters = find_connected_components(G)
             logger.info(

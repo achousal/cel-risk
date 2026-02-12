@@ -172,6 +172,7 @@ def train_meta_learner(
     meta_penalty: str,
     meta_c: float,
     random_state: int,
+    run_id: str | None = None,
 ) -> tuple[StackingEnsemble, dict[str, Any], np.ndarray, np.ndarray, np.ndarray | None]:
     """Train the stacking ensemble meta-learner.
 
@@ -182,12 +183,15 @@ def train_meta_learner(
         meta_penalty: Meta-learner penalty type
         meta_c: Meta-learner regularization strength
         random_state: Random state for reproducibility
+        run_id: Optional run_id to scope path resolution to a specific run
 
     Returns:
         Tuple of (ensemble, oof_dict, y_train, train_idx, cat_train)
     """
     log_section(logger, "Loading Calibration Info")
-    calibration_info = load_calibration_info_for_models(results_path, available_models, split_seed)
+    calibration_info = load_calibration_info_for_models(
+        results_path, available_models, split_seed, run_id
+    )
 
     for model_name, calib_info in calibration_info.items():
         strategy = calib_info.strategy
@@ -200,7 +204,7 @@ def train_meta_learner(
 
     log_section(logger, "Collecting OOF Predictions")
     oof_dict, y_train, train_idx, cat_train = collect_oof_predictions(
-        results_path, available_models, split_seed
+        results_path, available_models, split_seed, run_id
     )
 
     logger.info(f"Training samples: {len(y_train)}")
@@ -233,6 +237,7 @@ def generate_predictions(
     available_models: list[str],
     split_seed: int,
     calibration_info: dict[str, Any],
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate ensemble predictions on validation and test sets.
 
@@ -242,6 +247,7 @@ def generate_predictions(
         available_models: List of base model names
         split_seed: Split seed
         calibration_info: Calibration info for base models
+        run_id: Optional run_id to scope path resolution to a specific run
 
     Returns:
         Dict with predictions and metrics for val/test sets
@@ -256,6 +262,7 @@ def generate_predictions(
             available_models,
             split_seed,
             "val",
+            run_id=run_id,
             calibration_info=calibration_info,
         )
         val_proba = ensemble.predict_proba_from_base_preds(val_preds_dict)[:, 1]
@@ -285,6 +292,7 @@ def generate_predictions(
             available_models,
             split_seed,
             "test",
+            run_id=run_id,
             calibration_info=calibration_info,
         )
         test_proba = ensemble.predict_proba_from_base_preds(test_preds_dict)[:, 1]
@@ -321,6 +329,7 @@ def generate_all_plots(
     split_seed: int,
     meta_penalty: str,
     meta_c: float,
+    run_id: str | None = None,
 ) -> None:
     """Generate all ensemble plots.
 
@@ -334,6 +343,7 @@ def generate_all_plots(
         split_seed: Split seed
         meta_penalty: Meta-learner penalty type
         meta_c: Meta-learner regularization strength
+        run_id: Optional run_id to scope path resolution to a specific run
     """
     log_section(logger, "Generating Ensemble Plots")
 
@@ -377,6 +387,7 @@ def generate_all_plots(
             meta_penalty,
             meta_c,
             plot_format,
+            run_id=run_id,
         )
     except Exception as e:
         logger.warning(f"Plot generation failed (non-fatal): {e}")
@@ -457,7 +468,9 @@ def run_train_ensemble(
 
     logger.info(f"Meta-learner: LogisticRegression(penalty={meta_penalty}, C={meta_c})")
 
-    available_models, missing_models = validate_base_models(results_path, base_models, split_seed)
+    available_models, missing_models = validate_base_models(
+        results_path, base_models, split_seed, run_id
+    )
     logger.info(f"Using {len(available_models)} base models: {available_models}")
 
     random_state = config.cv.random_state if config else 42
@@ -469,6 +482,7 @@ def run_train_ensemble(
         meta_penalty,
         meta_c,
         random_state,
+        run_id=run_id,
     )
 
     coef = ensemble.get_meta_model_coef()
@@ -488,7 +502,12 @@ def run_train_ensemble(
     }
 
     predictions = generate_predictions(
-        ensemble, results_path, available_models, split_seed, calibration_info
+        ensemble,
+        results_path,
+        available_models,
+        split_seed,
+        calibration_info,
+        run_id=run_id,
     )
     results.update(predictions)
 
@@ -530,6 +549,7 @@ def run_train_ensemble(
         split_seed,
         meta_penalty,
         meta_c,
+        run_id=run_id,
     )
 
     log_section(logger, "Ensemble Training Complete")
