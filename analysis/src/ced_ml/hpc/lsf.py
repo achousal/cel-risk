@@ -452,6 +452,24 @@ ced permutation-test \\
     return cmd
 
 
+def _build_training_dependency_expression(*, run_id: str, models: list[str]) -> str:
+    """Build post-processing dependency expression for all training jobs.
+
+    Uses one dependency clause per model (``done(CeD_<run>_<model>_s*)``), which
+    keeps expressions compact and avoids matching similarly named downstream jobs
+    (e.g., ``perm_*_s*`` or ``panel_*_s*``).
+    """
+    validate_identifier(run_id, "run_id")
+    if not models:
+        raise ValueError("models must not be empty")
+
+    deps: list[str] = []
+    for model in models:
+        validate_identifier(model, "model")
+        deps.append(f"done(CeD_{run_id}_{model}_s*)")
+    return " && ".join(deps)
+
+
 def submit_hpc_pipeline(
     *,
     config_file: Path,
@@ -566,12 +584,11 @@ def submit_hpc_pipeline(
             else:
                 pipeline_logger.error(f"  {model} seed {seed}: Submission failed")
 
-    # Submit post-processing job (aggregation + ensemble) with dependency on ALL training jobs
-    # Use wildcard pattern to avoid LSF dependency expression length limits (120 jobs exceeds limits)
+    # Submit post-processing job (aggregation + ensemble) with dependency on all
+    # training jobs only (one wildcard clause per model).
     pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
     post_job_name = f"CeD_{run_id}_post"
-    # Wildcard matches all training jobs: CeD_{run_id}_{model}_s{seed}
-    dependency_expr = f"done(CeD_{run_id}_*_s*)"
+    dependency_expr = _build_training_dependency_expression(run_id=run_id, models=models)
 
     post_command = _build_postprocessing_command(
         config_file=config_file.resolve(),

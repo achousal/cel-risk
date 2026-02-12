@@ -1,13 +1,17 @@
 """Tests for HPC LSF job submission utilities."""
 
+import logging
 from pathlib import Path
 
+from ced_ml.config.schema import HPCConfig
 from ced_ml.hpc.lsf import (
+    EnvironmentInfo,
     _build_consensus_panel_command,
     _build_panel_optimization_command,
     _build_postprocessing_command,
     _build_training_command,
     build_job_script,
+    submit_hpc_pipeline,
 )
 
 
@@ -160,3 +164,51 @@ def test_build_job_script_log_paths():
     assert ".live.log" not in script
     assert "tee" not in script
     assert "cleanup_err" not in script
+
+
+def test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs(monkeypatch, tmp_path):
+    """Post-processing should depend on training jobs, not generic *_s* jobs."""
+    submitted_scripts: list[str] = []
+
+    def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
+        submitted_scripts.append(script)
+        return str(len(submitted_scripts))
+
+    monkeypatch.setattr(
+        "ced_ml.hpc.lsf.detect_environment",
+        lambda _: EnvironmentInfo(env_type="venv", activation_cmd="source venv/bin/activate"),
+    )
+    monkeypatch.setattr("ced_ml.hpc.lsf.submit_job", fake_submit_job)
+
+    hpc_config = HPCConfig(
+        project="acc_test",
+        queue="short",
+        cores=2,
+        mem_per_core=2000,
+        walltime="01:00",
+    )
+    logger = logging.getLogger("test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs")
+
+    submit_hpc_pipeline(
+        config_file=tmp_path / "training_config.yaml",
+        infile=tmp_path / "input.parquet",
+        split_dir=tmp_path / "splits",
+        outdir=tmp_path / "results",
+        models=["LR_EN", "RF"],
+        split_seeds=[0, 1],
+        run_id="20260211_095722",
+        enable_ensemble=False,
+        enable_consensus=False,
+        enable_optimize_panel=False,
+        hpc_config=hpc_config,
+        logs_dir=tmp_path / "logs",
+        dry_run=False,
+        pipeline_logger=logger,
+    )
+
+    # Training jobs are submitted first: 2 models x 2 seeds = 4 jobs.
+    post_script = submitted_scripts[4]
+    assert (
+        '#BSUB -w "done(CeD_20260211_095722_LR_EN_s*) && ' 'done(CeD_20260211_095722_RF_s*)"'
+    ) in post_script
+    assert "CeD_20260211_095722_*_s*" not in post_script
