@@ -452,22 +452,16 @@ ced permutation-test \\
     return cmd
 
 
-def _build_training_dependency_expression(*, run_id: str, models: list[str]) -> str:
-    """Build post-processing dependency expression for all training jobs.
+def _build_job_id_dependency(job_ids: list[str]) -> str:
+    """Build a ``done(id1) && done(id2) && ...`` dependency expression.
 
-    Uses one dependency clause per model (``done(CeD_<run>_<model>_s*)``), which
-    keeps expressions compact and avoids matching similarly named downstream jobs
-    (e.g., ``perm_*_s*`` or ``panel_*_s*``).
+    Uses numeric LSF job IDs instead of name-based wildcards so that
+    dependencies remain valid even after matched jobs leave the active
+    job table (which causes TERM_ORPHAN_SYSTEM with wildcard patterns).
     """
-    validate_identifier(run_id, "run_id")
-    if not models:
-        raise ValueError("models must not be empty")
-
-    deps: list[str] = []
-    for model in models:
-        validate_identifier(model, "model")
-        deps.append(f"done(CeD_{run_id}_{model}_s*)")
-    return " && ".join(deps)
+    if not job_ids:
+        raise ValueError("job_ids must not be empty")
+    return " && ".join(f"done({jid})" for jid in job_ids)
 
 
 def submit_hpc_pipeline(
@@ -554,6 +548,7 @@ def submit_hpc_pipeline(
         f"({len(models)} models \u00d7 {len(split_seeds)} splits)..."
     )
     training_job_names = []
+    training_job_ids: list[str] = []
 
     for model in models:
         for seed in split_seeds:
@@ -578,6 +573,7 @@ def submit_hpc_pipeline(
 
             job_id = submit_job(script, dry_run=dry_run)
             if job_id:
+                training_job_ids.append(job_id)
                 pipeline_logger.info(f"  {model} seed {seed}: Job {job_id}")
             elif dry_run:
                 pipeline_logger.info(f"  [DRY RUN] {model} seed {seed}: {job_name}")
@@ -585,10 +581,11 @@ def submit_hpc_pipeline(
                 pipeline_logger.error(f"  {model} seed {seed}: Submission failed")
 
     # Submit post-processing job (aggregation + ensemble) with dependency on all
-    # training jobs only (one wildcard clause per model).
+    # training jobs.  Uses numeric job IDs so dependencies survive LSF job-table
+    # purging (name-based wildcards cause TERM_ORPHAN_SYSTEM).
     pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
     post_job_name = f"CeD_{run_id}_post"
-    dependency_expr = _build_training_dependency_expression(run_id=run_id, models=models)
+    dependency_expr = _build_job_id_dependency(training_job_ids) if training_job_ids else None
 
     post_command = _build_postprocessing_command(
         config_file=config_file.resolve(),
@@ -621,6 +618,7 @@ def submit_hpc_pipeline(
     # Permutation aggregation produces aggregated_significance.csv needed by panel optimization
     permutation_job_names = []
     permutation_agg_names: list[str] = []
+    perm_agg_ids_by_model: dict[str, str] = {}
     if enable_permutation_test:
         # Use dedicated permutation seeds if provided, else fall back to training seeds
         perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
@@ -631,20 +629,21 @@ def submit_hpc_pipeline(
             f"seeds={perm_seeds[0]}..{perm_seeds[-1]})..."
         )
 
-        # Track permutation job names by model for aggregation dependencies
-        perm_names_by_model: dict[str, list[str]] = {m: [] for m in models}
+        # Track permutation job IDs by model for aggregation dependencies
+        perm_ids_by_model: dict[str, list[str]] = {m: [] for m in models}
 
         for model in models:
             for seed in perm_seeds:
                 perm_job_name = f"CeD_{run_id}_perm_{model}_s{seed}"
                 permutation_job_names.append(perm_job_name)
-                perm_names_by_model[model].append(perm_job_name)
 
                 # Depend on post-processing (aggregation) so observed AUROC is
                 # available and all training outputs exist.  Permutation tests
                 # train from scratch with permuted labels -- they do not need
                 # a training job for this specific seed.
-                perm_dependency = f"done({post_job_name})"
+                perm_dependency = (
+                    f"done({post_job_id})" if post_job_id else f"done({post_job_name})"
+                )
 
                 perm_command = _build_permutation_test_full_command(
                     run_id=run_id,
@@ -663,6 +662,7 @@ def submit_hpc_pipeline(
 
                 perm_job_id = submit_job(perm_script, dry_run=dry_run)
                 if perm_job_id:
+                    perm_ids_by_model[model].append(perm_job_id)
                     pipeline_logger.info(f"  Permutation test ({model} s{seed}): Job {perm_job_id}")
                 elif dry_run:
                     pipeline_logger.info(
@@ -674,18 +674,20 @@ def submit_hpc_pipeline(
                     )
 
         # Submit permutation aggregation jobs (one per model, depends on all
-        # perm jobs for that model)
+        # perm jobs for that model + post-processing)
         pipeline_logger.info(f"Submitting {len(models)} permutation aggregation jobs...")
         for model in models:
             agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
-            model_perm_jobs = perm_names_by_model[model]
+            model_perm_ids = perm_ids_by_model[model]
 
-            if model_perm_jobs:
+            if model_perm_ids:
                 # Depend on all permutation jobs for this model AND post-processing.
                 # Post-processing produces pooled_val_metrics.csv which provides the
                 # observed AUROC needed for computing empirical p-values.
-                # Use wildcard to avoid dependency expression length limits
-                agg_dependency = f"done(CeD_{run_id}_perm_{model}_s*) && done({post_job_name})"
+                agg_dep_ids = list(model_perm_ids)
+                if post_job_id:
+                    agg_dep_ids.append(post_job_id)
+                agg_dependency = _build_job_id_dependency(agg_dep_ids)
 
                 agg_command = _build_permutation_aggregation_command(
                     run_id=run_id,
@@ -702,6 +704,7 @@ def submit_hpc_pipeline(
                 agg_job_id = submit_job(agg_script, dry_run=dry_run)
                 if agg_job_id:
                     pipeline_logger.info(f"  Permutation aggregation ({model}): Job {agg_job_id}")
+                    perm_agg_ids_by_model[model] = agg_job_id
                 elif dry_run:
                     pipeline_logger.info(
                         f"  [DRY RUN] Permutation aggregation ({model}): " f"{agg_job_name}"
@@ -715,6 +718,7 @@ def submit_hpc_pipeline(
     # When permutation testing is enabled, panel optimization depends on permutation
     # aggregation completing first (significance gating requires aggregated_significance.csv)
     panel_job_ids = []
+    panel_agg_ids: list[str] = []
     panel_agg_names: list[str] = []  # populated inside enable_optimize_panel block
     if enable_optimize_panel:
         n_panel_seed_jobs = len(models) * len(split_seeds)
@@ -727,18 +731,18 @@ def submit_hpc_pipeline(
         # Phase 1: Per-seed RFE jobs (M x S, parallel, depend on post-processing)
         # When permutation testing is enabled, also depend on permutation aggregation
         # so that significance data is available for gating
-        panel_seed_names_by_model: dict[str, list[str]] = {m: [] for m in models}
+        panel_seed_ids_by_model: dict[str, list[str]] = {m: [] for m in models}
         for model in models:
             for seed in split_seeds:
                 seed_job_name = f"CeD_{run_id}_panel_{model}_s{seed}"
                 # Base dependency: post-processing must complete
-                seed_deps = [f"done({post_job_name})"]
+                seed_dep_ids: list[str] = []
+                if post_job_id:
+                    seed_dep_ids.append(post_job_id)
                 # If permutation testing enabled, also depend on that model's perm aggregation
-                if enable_permutation_test and permutation_agg_names:
-                    model_perm_agg = f"CeD_{run_id}_perm_{model}_agg"
-                    if model_perm_agg in permutation_agg_names:
-                        seed_deps.append(f"done({model_perm_agg})")
-                seed_dependency = " && ".join(seed_deps)
+                if enable_permutation_test and model in perm_agg_ids_by_model:
+                    seed_dep_ids.append(perm_agg_ids_by_model[model])
+                seed_dependency = _build_job_id_dependency(seed_dep_ids) if seed_dep_ids else None
 
                 seed_command = _build_panel_optimization_command(
                     run_id=run_id,
@@ -756,8 +760,8 @@ def submit_hpc_pipeline(
                 seed_job_id = submit_job(seed_script, dry_run=dry_run)
                 if seed_job_id:
                     pipeline_logger.info(f"  Panel seed ({model} s{seed}): Job {seed_job_id}")
+                    panel_seed_ids_by_model[model].append(seed_job_id)
                 panel_job_ids.append(seed_job_name)
-                panel_seed_names_by_model[model].append(seed_job_name)
                 if not seed_job_id and not dry_run:
                     pipeline_logger.error(f"  Panel seed ({model} s{seed}): Submission failed")
                 elif dry_run:
@@ -768,8 +772,8 @@ def submit_hpc_pipeline(
         # Phase 2: Per-model aggregation jobs (M, depend on all seed jobs for that model)
         for model in models:
             agg_job_name = f"CeD_{run_id}_panel_{model}_agg"
-            # Use wildcard to avoid dependency expression length limits (30 seeds)
-            agg_dependency = f"done(CeD_{run_id}_panel_{model}_s*)"
+            model_seed_ids = panel_seed_ids_by_model[model]
+            agg_dependency = _build_job_id_dependency(model_seed_ids) if model_seed_ids else None
 
             agg_command = _build_panel_optimization_command(
                 run_id=run_id,
@@ -786,6 +790,7 @@ def submit_hpc_pipeline(
             agg_job_id = submit_job(agg_script, dry_run=dry_run)
             if agg_job_id:
                 pipeline_logger.info(f"  Panel aggregation ({model}): Job {agg_job_id}")
+                panel_agg_ids.append(agg_job_id)
             panel_job_ids.append(agg_job_name)
             panel_agg_names.append(agg_job_name)
             if not agg_job_id and not dry_run:
@@ -793,7 +798,7 @@ def submit_hpc_pipeline(
             elif dry_run:
                 pipeline_logger.info(f"  [DRY RUN] Panel aggregation ({model}): {agg_job_name}")
 
-    # Submit consensus panel job (depends on post + panel opt + permutation)
+    # Submit consensus panel job (depends on post + panel agg + perm agg)
     consensus_job_id = None
     if enable_consensus:
         pipeline_logger.info("Submitting consensus panel job...")
@@ -801,15 +806,18 @@ def submit_hpc_pipeline(
 
         # Consensus depends on:
         # - post-processing (aggregation)
-        # - panel optimization jobs (if enabled)
+        # - panel aggregation jobs (if enabled)
         # - permutation aggregation jobs (if enabled, for significance filtering)
-        # Use wildcards for robustness and consistency
-        consensus_deps = [f"done({post_job_name})"]
-        if enable_optimize_panel and panel_agg_names:
-            consensus_deps.append(f"done(CeD_{run_id}_panel_*_agg)")
-        if enable_permutation_test and permutation_agg_names:
-            consensus_deps.append(f"done(CeD_{run_id}_perm_*_agg)")
-        consensus_dependency = " && ".join(consensus_deps)
+        consensus_dep_ids: list[str] = []
+        if post_job_id:
+            consensus_dep_ids.append(post_job_id)
+        if enable_optimize_panel:
+            consensus_dep_ids.extend(panel_agg_ids)
+        if enable_permutation_test:
+            consensus_dep_ids.extend(perm_agg_ids_by_model.values())
+        consensus_dependency = (
+            _build_job_id_dependency(consensus_dep_ids) if consensus_dep_ids else None
+        )
 
         consensus_command = _build_consensus_panel_command(run_id=run_id)
 

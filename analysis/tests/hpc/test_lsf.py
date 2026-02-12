@@ -166,8 +166,8 @@ def test_build_job_script_log_paths():
     assert "cleanup_err" not in script
 
 
-def test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs(monkeypatch, tmp_path):
-    """Post-processing should depend on training jobs, not generic *_s* jobs."""
+def test_submit_hpc_pipeline_post_dependency_uses_job_ids(monkeypatch, tmp_path):
+    """Post-processing should depend on numeric job IDs, not name wildcards."""
     submitted_scripts: list[str] = []
 
     def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
@@ -187,7 +187,7 @@ def test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs(monkeypatch
         mem_per_core=2000,
         walltime="01:00",
     )
-    logger = logging.getLogger("test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs")
+    logger = logging.getLogger("test_post_dep_job_ids")
 
     submit_hpc_pipeline(
         config_file=tmp_path / "training_config.yaml",
@@ -206,9 +206,11 @@ def test_submit_hpc_pipeline_post_dependency_scopes_to_training_jobs(monkeypatch
         pipeline_logger=logger,
     )
 
-    # Training jobs are submitted first: 2 models x 2 seeds = 4 jobs.
+    # Training jobs: 2 models x 2 seeds = 4 jobs (IDs "1".."4").
+    # Post-processing is the 5th submission (ID "5").
     post_script = submitted_scripts[4]
-    assert (
-        '#BSUB -w "done(CeD_20260211_095722_LR_EN_s*) && ' 'done(CeD_20260211_095722_RF_s*)"'
-    ) in post_script
-    assert "CeD_20260211_095722_*_s*" not in post_script
+    # Must use numeric IDs, not name-based wildcards
+    assert '#BSUB -w "done(1) && done(2) && done(3) && done(4)"' in post_script
+    # No wildcard patterns anywhere
+    assert "_s*" not in post_script
+    assert "_*_" not in post_script
