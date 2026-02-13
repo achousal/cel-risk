@@ -287,6 +287,15 @@ def test_submit_and_track_uses_manifest_and_wrapper():
     assert '"$WRAPPER_SCRIPT"' in bash
 
 
+def test_submit_and_track_avoids_literal_embedded_bsub_directives():
+    """Embedded child script directives must not be literal #BSUB lines in orchestrator source."""
+    bash = _build_orchestrator_bash_functions()
+
+    assert 'local bsub_directive="#BSUB"' in bash
+    assert '#BSUB -R "rusage[mem=$mem_per_core] span[hosts=1]"' not in bash
+    assert '${bsub_directive} -R "rusage[mem=$mem_per_core] span[hosts=1]"' in bash
+
+
 def test_submit_and_track_writes_to_id_file():
     """submit_and_track should append parsed IDs to caller-provided file."""
     bash = _build_orchestrator_bash_functions()
@@ -314,6 +323,7 @@ def test_orchestrator_script_training_only(tmp_path):
     assert "PERM_KEYS=(" not in script
     assert "PANEL_SEED_KEYS=(" not in script
     assert 'barrier_wait "consensus"' not in script
+    assert script.count("#BSUB -R ") == 1
 
 
 def test_orchestrator_script_full(tmp_path):

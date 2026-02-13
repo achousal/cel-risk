@@ -613,16 +613,17 @@ submit_and_track() {
     IFS=$'\t' read -r job_name queue cores mem_per_core walltime command_b64 sentinel <<< "$job_tsv"
 
     local job_script
+    local bsub_directive="#BSUB"
     job_script=$(cat <<EOF
 #!/bin/bash
-#BSUB -P $PROJECT
-#BSUB -q $queue
-#BSUB -J $job_name
-#BSUB -n $cores
-#BSUB -W $walltime
-#BSUB -R "rusage[mem=$mem_per_core] span[hosts=1]"
-#BSUB -oo /dev/null
-#BSUB -eo /dev/null
+${bsub_directive} -P $PROJECT
+${bsub_directive} -q $queue
+${bsub_directive} -J $job_name
+${bsub_directive} -n $cores
+${bsub_directive} -W $walltime
+${bsub_directive} -R "rusage[mem=$mem_per_core] span[hosts=1]"
+${bsub_directive} -oo /dev/null
+${bsub_directive} -eo /dev/null
 
 set -euo pipefail
 export CED_JOB_COMMAND_B64="$command_b64"
