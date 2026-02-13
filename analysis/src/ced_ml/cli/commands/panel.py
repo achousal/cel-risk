@@ -324,15 +324,16 @@ def optimize_panel(ctx, config, **kwargs):
                     "The metadata file may be corrupt. Please specify --infile and --split-dir manually."
                 ) from e
             first_model_name = next(iter(model_dirs))
-            model_meta = metadata.get("models", {}).get(first_model_name, {})
             if not infile:
-                infile = model_meta.get("infile") or metadata.get("infile")
+                infile = metadata.get("infile")
             if not split_dir:
-                split_dir = (
-                    model_meta.get("split_dir")
-                    or metadata.get("split_dir")
-                    or metadata.get("splits_dir")
-                )
+                split_dir = metadata.get("split_dir") or metadata.get("splits_dir")
+            if not infile or not split_dir:
+                model_meta = metadata.get("models", {}).get(first_model_name, {})
+                if not infile:
+                    infile = model_meta.get("infile")
+                if not split_dir:
+                    split_dir = model_meta.get("split_dir")
 
         if not infile or not split_dir:
             raise click.ClickException(
@@ -564,14 +565,14 @@ def optimize_panel(ctx, config, **kwargs):
             # Use metadata values, but allow CLI overrides
             # Shared metadata format: top-level or under models/{model_name}
             first_model_name = next(iter(model_dirs))
-            model_meta = metadata.get("models", {}).get(first_model_name, {})
-            infile = kwargs.get("infile") or model_meta.get("infile") or metadata.get("infile")
+            infile = kwargs.get("infile") or metadata.get("infile")
             split_dir = (
-                kwargs.get("split_dir")
-                or model_meta.get("split_dir")
-                or metadata.get("split_dir")
-                or metadata.get("splits_dir")
+                kwargs.get("split_dir") or metadata.get("split_dir") or metadata.get("splits_dir")
             )
+            if not infile or not split_dir:
+                model_meta = metadata.get("models", {}).get(first_model_name, {})
+                infile = infile or model_meta.get("infile")
+                split_dir = split_dir or model_meta.get("split_dir")
 
             if not infile or not split_dir:
                 raise click.ClickException(

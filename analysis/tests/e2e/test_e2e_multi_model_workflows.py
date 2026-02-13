@@ -301,11 +301,11 @@ class TestSharedRunIdCoordination:
         # Each metadata file contains its own model's entry
         assert "models" in lr_metadata
         assert "LR_EN" in lr_metadata["models"]
-        assert lr_metadata["models"]["LR_EN"]["split_seed"] == 42
+        assert "scenario" in lr_metadata["models"]["LR_EN"]
 
         assert "models" in rf_metadata
         assert "RF" in rf_metadata["models"]
-        assert rf_metadata["models"]["RF"]["split_seed"] == 42
+        assert "scenario" in rf_metadata["models"]["RF"]
 
 
 class TestCrossModelAggregation:
@@ -1077,9 +1077,11 @@ class TestMultiModelMetadataConsistency:
         assert "models" in rf_metadata and "RF" in rf_metadata["models"]
 
         # Check consistency across models
-        lr_seed = lr_metadata["models"]["LR_EN"]["split_seed"]
-        rf_seed = rf_metadata["models"]["RF"]["split_seed"]
-        assert lr_seed == rf_seed, f"Inconsistent split_seeds: LR_EN={lr_seed}, RF={rf_seed}"
+        lr_scenario = lr_metadata["models"]["LR_EN"].get("scenario")
+        rf_scenario = rf_metadata["models"]["RF"].get("scenario")
+        assert (
+            lr_scenario == rf_scenario
+        ), f"Inconsistent scenarios: LR_EN={lr_scenario}, RF={rf_scenario}"
 
 
 # ==================== How to Run ====================

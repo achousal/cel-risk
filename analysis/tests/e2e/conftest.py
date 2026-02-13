@@ -444,7 +444,7 @@ def extract_run_id_from_dir(results_dir: Path) -> str:
     return run_dirs[0].name.replace("run_", "")
 
 
-def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed: int):
+def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed: int | None = None):
     """Verify run_metadata.json has correct structure and content."""
     metadata_path = run_dir / "run_metadata.json"
     assert metadata_path.exists(), f"Missing run_metadata.json in {run_dir}"
@@ -462,10 +462,7 @@ def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed:
     assert "scenario" in model_entry
     assert "infile" in model_entry
     assert "split_dir" in model_entry
-    assert "split_seed" in model_entry
-    assert "timestamp" in model_entry
-
-    assert model_entry["split_seed"] == expected_split_seed
+    # run_metadata.json is run/model-level only; seed-specific details live in run_settings.json
 
 
 @pytest.fixture

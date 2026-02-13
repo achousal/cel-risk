@@ -449,16 +449,15 @@ def auto_detect_data_paths(
         with open(metadata_file) as f:
             metadata = json.load(f)
 
-        # Shared metadata format: look in first model's entry
-        models_meta = metadata.get("models", {})
-        if models_meta:
-            first_model_meta = next(iter(models_meta.values()))
-            infile = first_model_meta.get("infile")
-            split_dir = first_model_meta.get("split_dir")
-        else:
-            # Fallback to flat format
-            infile = metadata.get("infile")
-            split_dir = metadata.get("split_dir")
+        # Prefer run-level fields, then fallback to model-level fields for back-compat.
+        infile = metadata.get("infile")
+        split_dir = metadata.get("split_dir") or metadata.get("splits_dir")
+        if not infile or not split_dir:
+            models_meta = metadata.get("models", {})
+            if models_meta:
+                first_model_meta = next(iter(models_meta.values()))
+                infile = infile or first_model_meta.get("infile")
+                split_dir = split_dir or first_model_meta.get("split_dir")
 
         logger.debug(f"Metadata infile: {infile}, split_dir: {split_dir}")
 

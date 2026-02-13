@@ -29,7 +29,6 @@ def test_run_id_detection_after_training(tmp_path):
         "models": {
             "LR_EN": {
                 "scenario": "IncidentPlusPrevalent",
-                "split_seed": 0,
             }
         },
     }
@@ -109,7 +108,6 @@ def test_run_pipeline_metadata_structure():
         "models": {
             "LR_EN": {
                 "scenario": "IncidentPlusPrevalent",
-                "split_seed": 0,
             }
         },
     }

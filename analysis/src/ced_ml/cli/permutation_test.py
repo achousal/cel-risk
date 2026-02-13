@@ -327,11 +327,12 @@ def run_permutation_test_cli(
         with open(metadata_file) as f:
             metadata = json.load(f)
 
-        model_meta = metadata.get("models", {}).get(model_name, {})
-        infile = model_meta.get("infile") or metadata.get("infile")
-        split_dir = (
-            model_meta.get("split_dir") or metadata.get("split_dir") or metadata.get("splits_dir")
-        )
+        infile = metadata.get("infile")
+        split_dir = metadata.get("split_dir") or metadata.get("splits_dir")
+        if not infile or not split_dir:
+            model_meta = metadata.get("models", {}).get(model_name, {})
+            infile = infile or model_meta.get("infile")
+            split_dir = split_dir or model_meta.get("split_dir")
 
         if not infile or not split_dir:
             raise ValueError(

@@ -522,6 +522,11 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
     assert (scripts_dir / f"CeD_{run_id}_orchestrator.sh").exists()
     assert len(list(scripts_dir.glob("*.sh"))) == 2
     assert (scripts_dir / "jobs_manifest.json").exists()
+    run_metadata_path = tmp_path / "results" / f"run_{run_id}" / "run_metadata.json"
+    assert run_metadata_path.exists()
+    run_metadata = json.loads(run_metadata_path.read_text())
+    assert run_metadata["run_id"] == run_id
+    assert "LR_EN" in run_metadata["models"]
 
     assert len(submitted) == 1
     assert submitted[0][1] is True
@@ -576,6 +581,12 @@ def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
         assert "sentinel" not in entry
         decoded = base64.b64decode(entry["command_b64"]).decode("utf-8")
         assert decoded.startswith("ced ") or decoded.startswith("echo ")
+
+    run_metadata_path = tmp_path / "results" / f"run_{run_id}" / "run_metadata.json"
+    assert run_metadata_path.exists()
+    run_metadata = json.loads(run_metadata_path.read_text())
+    assert "LR_EN" in run_metadata["models"]
+    assert "RF" in run_metadata["models"]
 
     # With manifest+wrapper approach, script files remain bounded.
     assert len(list(scripts_dir.glob("*.sh"))) == 2

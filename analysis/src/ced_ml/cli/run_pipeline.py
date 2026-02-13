@@ -25,6 +25,7 @@ from ced_ml.config.loader import load_permutation_config, load_training_config
 from ced_ml.data.schema import ModelName
 from ced_ml.utils.logging import setup_command_logger, setup_logger
 from ced_ml.utils.paths import get_analysis_dir, get_project_root
+from ced_ml.utils.run_manifest import build_model_manifest_entry, ensure_run_manifest
 
 
 def _ensure_splits_exist(
@@ -831,6 +832,26 @@ def run_pipeline(
         logger=logger,
     )
     step_timings.append(("Splits", time.monotonic() - t0))
+
+    # Initialize run-level metadata manifest once before training jobs.
+    run_manifest_path, manifest_changed = ensure_run_manifest(
+        run_level_dir=outdir / f"run_{run_id}",
+        run_id=run_id,
+        infile=infile,
+        split_dir=split_dir,
+        model_entries={
+            model_name: build_model_manifest_entry(
+                scenario=training_config.scenario,
+                infile=infile,
+                split_dir=split_dir,
+            )
+            for model_name in models
+        },
+    )
+    if manifest_changed:
+        logger.info(f"Initialized run metadata manifest: {run_manifest_path}")
+    else:
+        logger.debug(f"Run metadata manifest already initialized: {run_manifest_path}")
 
     # Step 2: Train base models
     logger.info("\n" + "=" * 70)

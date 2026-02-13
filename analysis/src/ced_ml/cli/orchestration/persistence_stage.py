@@ -40,6 +40,7 @@ from ced_ml.models.registry import build_models
 from ced_ml.plotting.learning_curve import save_learning_curve_csv
 from ced_ml.utils.logging import log_section
 from ced_ml.utils.metadata import build_plot_metadata
+from ced_ml.utils.run_manifest import build_model_manifest_entry, ensure_run_manifest
 
 if TYPE_CHECKING:
     from ced_ml.cli.orchestration.context import TrainingContext
@@ -482,71 +483,25 @@ def _save_run_metadata(ctx: TrainingContext) -> None:
 
 
 def _save_shared_run_metadata(ctx: TrainingContext) -> None:
-    """Save shared run metadata (HPC-safe read-merge-write)."""
+    """Save shared run manifest metadata without overwriting existing entries."""
     config = ctx.config
     run_level_dir = ctx.get_run_level_dir()
-
-    # Infer seed_start and n_splits from available split files
-    seed_start = None
-    n_splits = None
-    if config.split_dir:
-        split_dir_path = Path(config.split_dir)
-        if split_dir_path.exists():
-            meta_pattern = f"split_meta_{ctx.scenario}_seed*.json"
-            meta_files = list(split_dir_path.glob(meta_pattern))
-            if not meta_files:
-                meta_files = list(split_dir_path.glob("split_meta_seed*.json"))
-
-            if meta_files:
-                seeds = []
-                for meta_file in meta_files:
-                    seed_match = meta_file.stem.split("seed")[-1]
-                    try:
-                        seeds.append(int(seed_match))
-                    except ValueError:
-                        continue
-
-                if seeds:
-                    seed_start = min(seeds)
-                    n_splits = len(seeds)
-                    logger.info(
-                        f"Inferred split config: seed_start={seed_start}, n_splits={n_splits}"
-                    )
-
-    # Read-merge-write for HPC safety
-    run_metadata_path = run_level_dir / "run_metadata.json"
-    run_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-
-    existing_metadata: dict = {}
-    if run_metadata_path.exists():
-        try:
-            with open(run_metadata_path) as f:
-                existing_metadata = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            existing_metadata = {}
-
-    model_entry = {
-        "scenario": ctx.scenario,
-        "infile": str(config.infile),
-        "split_dir": str(config.split_dir),
-        "split_seed": ctx.seed,
-        "seed_start": seed_start,
-        "n_splits": n_splits,
-        "timestamp": datetime.now().isoformat(),
-    }
-
-    existing_metadata.setdefault("run_id", ctx.run_id)
-    existing_metadata.setdefault("infile", str(config.infile))
-    existing_metadata.setdefault("split_dir", str(config.split_dir))
-    existing_metadata.setdefault("models", {})
-    existing_metadata["models"][config.model] = model_entry
-
-    # Atomic write
-    tmp_path = run_metadata_path.with_suffix(".tmp")
-    with open(tmp_path, "w") as f:
-        json.dump(existing_metadata, f, indent=2)
-    tmp_path.rename(run_metadata_path)
-    logger.info(f"Run metadata saved: {run_metadata_path}")
+    model_entry = build_model_manifest_entry(
+        scenario=ctx.scenario,
+        infile=config.infile,
+        split_dir=config.split_dir,
+    )
+    run_metadata_path, changed = ensure_run_manifest(
+        run_level_dir=run_level_dir,
+        run_id=ctx.run_id,
+        infile=config.infile,
+        split_dir=config.split_dir,
+        model_entries={config.model: model_entry},
+    )
+    if changed:
+        logger.info(f"Run metadata updated: {run_metadata_path}")
+    else:
+        logger.debug(f"Run metadata unchanged: {run_metadata_path}")
 
 
 def _save_predictions(ctx: TrainingContext) -> None:

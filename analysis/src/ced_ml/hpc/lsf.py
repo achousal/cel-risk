@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from ced_ml.config.schema import HPCConfig
+from ced_ml.utils.run_manifest import build_model_manifest_entry, ensure_run_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,21 @@ def load_hpc_config(config_path: Path) -> HPCConfig:
         raise ValueError(f"Invalid HPC configuration in {config_path}: {e}") from e
 
     return hpc_config
+
+
+def _load_training_scenario(config_file: Path | None) -> str | None:
+    """Best-effort scenario extraction from training config."""
+    if config_file is None or not config_file.exists():
+        return None
+
+    try:
+        with open(config_file) as f:
+            config = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+
+    scenario = config.get("scenario")
+    return str(scenario) if scenario else None
 
 
 def build_job_script(
@@ -937,6 +953,27 @@ def _submit_orchestrator_pipeline(
     run_logs_dir.mkdir(parents=True, exist_ok=True)
     sentinel_dir.mkdir(parents=True, exist_ok=True)
     scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialize shared run manifest before any per-seed training jobs start.
+    scenario = _load_training_scenario(config_file)
+    run_metadata_path, metadata_changed = ensure_run_manifest(
+        run_level_dir=outdir / f"run_{run_id}",
+        run_id=run_id,
+        infile=infile,
+        split_dir=split_dir,
+        model_entries={
+            model: build_model_manifest_entry(
+                scenario=scenario,
+                infile=infile,
+                split_dir=split_dir,
+            )
+            for model in models
+        },
+    )
+    if metadata_changed:
+        pipeline_logger.info(f"Initialized run metadata manifest: {run_metadata_path}")
+    else:
+        pipeline_logger.debug(f"Run metadata manifest already initialized: {run_metadata_path}")
 
     default_resources = hpc_config.get_resources("default")
     bsub_params = {

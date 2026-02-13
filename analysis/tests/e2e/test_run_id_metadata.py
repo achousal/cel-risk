@@ -21,7 +21,7 @@ SHARED_RUN_ID = "20260128_E2ETEST"
 commands (aggregate, optimize-panel, etc.) can locate outputs reliably."""
 
 
-def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed: int):
+def verify_run_metadata(run_dir: Path, expected_model: str):
     """Verify run_metadata.json has correct structure and content."""
     metadata_path = run_dir / "run_metadata.json"
     assert metadata_path.exists(), f"Missing run_metadata.json in {run_dir}"
@@ -41,11 +41,7 @@ def verify_run_metadata(run_dir: Path, expected_model: str, expected_split_seed:
     assert "scenario" in model_entry
     assert "infile" in model_entry
     assert "split_dir" in model_entry
-    assert "split_seed" in model_entry
-    assert "timestamp" in model_entry
-
-    # Validate content
-    assert model_entry["split_seed"] == expected_split_seed
+    # run_metadata.json is run/model-level only; seed-specific details live in run_settings.json
 
 
 class TestRunIdMetadataCreation:
@@ -117,15 +113,13 @@ class TestRunIdMetadataCreation:
         assert run_dir.exists()
 
         # Verify metadata (stored at run level, not split level)
-        verify_run_metadata(run_dir, "LR_EN", 42)
+        verify_run_metadata(run_dir, "LR_EN")
 
     def test_run_metadata_persists_across_splits(
         self, small_proteomics_data, fast_training_config, tmp_path
     ):
         """
-        Test: Same run_id used for multiple split seeds creates separate metadata.
-
-        Each split_seed should have its own split_seed directory with separate metadata.
+        Test: Same run_id used for multiple split seeds keeps one shared run manifest.
         """
         splits_dir = tmp_path / "splits"
         results_dir = tmp_path / "results"
