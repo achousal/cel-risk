@@ -63,9 +63,9 @@ def _scripts_dir(logs_dir: Path, run_id: str) -> Path:
     return logs_dir / f"run_{run_id}" / "scripts"
 
 
-def _sentinel_done_path(sentinel_dir: Path, job_name: str) -> Path:
-    """Get the per-job sentinel done file path."""
-    return sentinel_dir / f"{job_name}.done"
+def _sentinel_log_path(sentinel_dir: Path) -> Path:
+    """Get the consolidated sentinel completion log path."""
+    return sentinel_dir / "completed.log"
 
 
 def _write_job_script(scripts_dir: Path, job_name: str, script: str) -> Path:
@@ -519,11 +519,13 @@ def _encode_command_b64(command: str) -> str:
 def _build_wrapper_script(env_activation: str) -> str:
     """Build a generic wrapper that decodes and executes command payloads.
 
-    Sentinel write uses per-job touch files instead of appending to a shared
-    log, eliminating NFS concurrent-append races.  The sentinel is written in
-    an EXIT trap so that ``set -e`` cannot skip it -- the orchestrator always
-    sees completion (success or failure) and ``check_upstream_failures``
-    handles EXIT/TERM detection separately via bjobs/bhist.
+    Sentinel write appends the job name to a single ``completed.log`` file
+    in the sentinel directory.  The write is a short single-line echo
+    (well under PIPE_BUF) so it is effectively atomic on POSIX/NFS.
+    The sentinel is written in an EXIT trap so that ``set -e`` cannot skip
+    it -- the orchestrator always sees completion (success or failure) and
+    ``check_upstream_failures`` handles EXIT/TERM detection separately via
+    bjobs/bhist.
     """
     return f"""#!/bin/bash
 set -euo pipefail
@@ -546,9 +548,9 @@ if [ -z "${{CED_SENTINEL_DIR:-}}" ]; then
     exit 1
 fi
 
-# Write per-job sentinel on exit so set -e cannot skip it.
+# Append job name to consolidated sentinel log on exit so set -e cannot skip it.
 _ced_rc=0
-trap 'touch "$CED_SENTINEL_DIR/${{CED_JOB_NAME}}.done"' EXIT
+trap 'echo "${{CED_JOB_NAME}}" >> "$CED_SENTINEL_DIR/completed.log"' EXIT
 
 COMMAND=$(python - "$CED_JOB_COMMAND_B64" <<'PY'
 import base64
@@ -720,7 +722,7 @@ barrier_wait() {
         local missing=0
         local name
         for name in "${job_names[@]}"; do
-            [ -f "$SENTINEL_DIR/${name}.done" ] || missing=$((missing + 1))
+            grep -qx "${name}" "$SENTINEL_DIR/completed.log" 2>/dev/null || missing=$((missing + 1))
         done
 
         if [ "$missing" -eq 0 ]; then
@@ -733,7 +735,7 @@ barrier_wait() {
             echo "[$(date '+%F %T')] TIMEOUT: $label after ${timeout}s ($((total - missing))/$total done)"
             echo "[$(date '+%F %T')] Missing jobs:"
             for name in "${job_names[@]}"; do
-                [ -f "$SENTINEL_DIR/${name}.done" ] || echo "  $name"
+                grep -qx "${name}" "$SENTINEL_DIR/completed.log" 2>/dev/null || echo "  $name"
             done
             printf '{"stage":"%s","status":"timeout","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
             exit 1
@@ -823,6 +825,7 @@ def _build_orchestrator_script(
         "UPSTREAM_IDS=()",
         'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR"',
         'touch "$STATE_FILE"',
+        'touch "$SENTINEL_DIR/completed.log"',
         f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",
         "echo \"[$(date '+%F %T')] Training IDs submitted: ${#TRAINING_IDS[@]} (expected: $EXPECTED_TRAINING)\"",
         "",
@@ -891,7 +894,7 @@ def _build_orchestrator_script(
 
     lines.extend(
         [
-            f'touch "$SENTINEL_DIR/{orchestrator_job_name}.done"',
+            f'echo "{orchestrator_job_name}" >> "$SENTINEL_DIR/completed.log"',
             'printf \'{"stage":"orchestrator","status":"done","ts":"%s"}\\n\' "$(date -u \'+%FT%TZ\')" >> "$STATE_FILE"',
             f"echo \"[$(date '+%F %T')] Orchestrator complete for run {run_id}\"",
             "",

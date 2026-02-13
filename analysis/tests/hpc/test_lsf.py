@@ -17,7 +17,7 @@ from ced_ml.hpc.lsf import (
     _build_wrapper_script,
     _scripts_dir,
     _sentinel_dir,
-    _sentinel_done_path,
+    _sentinel_log_path,
     build_job_script,
     submit_hpc_pipeline,
 )
@@ -227,38 +227,36 @@ def test_sentinel_helpers():
 
     sent_dir = _sentinel_dir(logs_dir, run_id)
     scripts_dir = _scripts_dir(logs_dir, run_id)
-    done_path = _sentinel_done_path(sent_dir, "CeD_test_job")
+    log_path = _sentinel_log_path(sent_dir)
 
     assert sent_dir == Path("/tmp/logs/run_20260212_151826/sentinels")
     assert scripts_dir == Path("/tmp/logs/run_20260212_151826/scripts")
-    assert done_path == Path("/tmp/logs/run_20260212_151826/sentinels/CeD_test_job.done")
+    assert log_path == Path("/tmp/logs/run_20260212_151826/sentinels/completed.log")
 
 
-def test_sentinel_done_path():
-    """Per-job sentinel done path should be scoped to sentinel dir with .done suffix."""
+def test_sentinel_log_path():
+    """Sentinel log path should return consolidated completed.log in sentinel dir."""
     sentinel_dir = Path("/tmp/logs/run_1/sentinels")
-    job_name = "CeD_1_LR_EN_s0"
 
-    done_path = _sentinel_done_path(sentinel_dir, job_name)
+    log_path = _sentinel_log_path(sentinel_dir)
 
-    assert done_path == sentinel_dir / f"{job_name}.done"
-    assert done_path.suffix == ".done"
+    assert log_path == sentinel_dir / "completed.log"
+    assert log_path.name == "completed.log"
 
 
 def test_wrapper_script_decodes_base64_and_marks_sentinel():
-    """Wrapper script should decode command payload and write per-job sentinel file."""
+    """Wrapper script should decode command payload and append to consolidated log."""
     script = _build_wrapper_script('source "/venv/bin/activate"')
 
     assert "CED_JOB_COMMAND_B64" in script
     assert "CED_JOB_NAME" in script
     assert "CED_SENTINEL_DIR" in script
     assert "base64.b64decode" in script
-    # Per-job sentinel via EXIT trap
-    assert 'touch "$CED_SENTINEL_DIR/${CED_JOB_NAME}.done"' in script
+    # Consolidated sentinel via EXIT trap
+    assert '>> "$CED_SENTINEL_DIR/completed.log"' in script
     assert "trap" in script
-    # Old shared-file append must be gone
-    assert "CED_SENTINEL_FILE" not in script
-    assert ">> " not in script
+    # Old per-job touch must be gone
+    assert ".done" not in script
 
 
 def test_barrier_bash_uses_bjobs_and_bhist():
@@ -276,13 +274,13 @@ def test_barrier_bash_no_grep_p():
     assert "grep -P" not in bash
 
 
-def test_barrier_wait_uses_per_job_sentinel_files():
-    """barrier_wait should check completion via per-job .done files."""
+def test_barrier_wait_uses_consolidated_log():
+    """barrier_wait should check completion via grep in consolidated log."""
     bash = _build_orchestrator_bash_functions()
 
-    assert '[ -f "$SENTINEL_DIR/${name}.done" ]' in bash
-    # Old shared-file grep must be gone
-    assert "grep -qx" not in bash
+    assert 'grep -qx "${name}" "$SENTINEL_DIR/completed.log"' in bash
+    # Old per-job file check must be gone
+    assert ".done" not in bash
 
 
 def test_submit_and_track_uses_sed_for_id():
@@ -347,9 +345,9 @@ def test_orchestrator_script_training_only(tmp_path):
     assert 'barrier_wait "consensus"' not in script
     assert script.count("#BSUB -R ") == 1
     assert "SENTINEL_DIR=" in script
-    # Per-job sentinel files -- no shared completed.log
-    assert "completed.log" not in script
-    assert "SENTINEL_FILE" not in script
+    # Consolidated log initialized and used for orchestrator completion
+    assert 'touch "$SENTINEL_DIR/completed.log"' in script
+    assert '>> "$SENTINEL_DIR/completed.log"' in script
 
 
 def test_orchestrator_script_full(tmp_path):

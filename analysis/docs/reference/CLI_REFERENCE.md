@@ -36,7 +36,7 @@ logs/run_{RUN_ID}/submission.log
 This log captures orchestrator submission details, training job IDs, and barrier progress metadata.
 
 HPC runs now use a sentinel-based orchestrator job (instead of long LSF `-w done(...)` chains):
-- Stage sentinels: `logs/run_{RUN_ID}/sentinels/`
+- Completion log: `logs/run_{RUN_ID}/sentinels/completed.log`
 - Wrapper + orchestrator scripts: `logs/run_{RUN_ID}/scripts/`
 - Job manifest: `logs/run_{RUN_ID}/scripts/jobs_manifest.json`
 - Orchestrator runtime log: `logs/run_{RUN_ID}/orchestrator.log`
@@ -48,7 +48,7 @@ Per-stage waits are tuned under `hpc.orchestrator` in `configs/pipeline_hpc.yaml
 
 Troubleshooting:
 ```bash
-ls logs/run_<RUN_ID>/sentinels/
+cat logs/run_<RUN_ID>/sentinels/completed.log
 cat logs/run_<RUN_ID>/orchestrator.log
 ```
 
