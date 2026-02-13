@@ -12,6 +12,15 @@ from ced_ml.cli.options import config_option, run_id_option, run_id_required_opt
 from ced_ml.cli.utils.validation import validate_mutually_exclusive
 
 
+def _resolve_cli_or_config(cli_value, config_value, default):
+    """Resolve option precedence while preserving explicit False/0 CLI values."""
+    if cli_value is not None:
+        return cli_value
+    if config_value is not None:
+        return config_value
+    return default
+
+
 @click.command("optimize-panel")
 @config_option
 @click.option(
@@ -224,6 +233,7 @@ def optimize_panel(ctx, config, **kwargs):
 
     # Load full config for nested sections
     config_params = load_config_file(Path(config_path) if config_path else None)
+    significance_cfg = config_params.get("significance", {})
 
     # Merge config with CLI args (CLI takes precedence)
     param_keys = [
@@ -614,10 +624,16 @@ def optimize_panel(ctx, config, **kwargs):
                 corr_threshold=kwargs.get("corr_threshold") or 0.80,
                 corr_method=kwargs.get("corr_method") or "spearman",
                 rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
-                require_significance=kwargs.get("require_significance")
-                or config_params.get("significance", {}).get("require_significance", False),
-                significance_alpha=kwargs.get("significance_alpha")
-                or config_params.get("significance", {}).get("alpha", 0.05),
+                require_significance=_resolve_cli_or_config(
+                    kwargs.get("require_significance"),
+                    significance_cfg.get("require_significance"),
+                    False,
+                ),
+                significance_alpha=_resolve_cli_or_config(
+                    kwargs.get("significance_alpha"),
+                    significance_cfg.get("alpha"),
+                    0.05,
+                ),
             )
 
         click.echo(f"\n{'=' * 70}")
@@ -651,10 +667,16 @@ def optimize_panel(ctx, config, **kwargs):
             corr_threshold=kwargs.get("corr_threshold") or 0.80,
             corr_method=kwargs.get("corr_method") or "spearman",
             rfe_tune_spaces=config_params.get("rfe_tune_spaces"),
-            require_significance=kwargs.get("require_significance")
-            or config_params.get("significance", {}).get("require_significance", False),
-            significance_alpha=kwargs.get("significance_alpha")
-            or config_params.get("significance", {}).get("alpha", 0.05),
+            require_significance=_resolve_cli_or_config(
+                kwargs.get("require_significance"),
+                significance_cfg.get("require_significance"),
+                False,
+            ),
+            significance_alpha=_resolve_cli_or_config(
+                kwargs.get("significance_alpha"),
+                significance_cfg.get("alpha"),
+                0.05,
+            ),
         )
 
 
@@ -797,6 +819,7 @@ def consensus_panel(ctx, config, **kwargs):
 
     # Load full config for nested sections
     config_params = load_config_file(Path(config_path) if config_path else None)
+    significance_cfg = config_params.get("significance", {})
 
     # Merge config with CLI args (CLI takes precedence)
     param_keys = [
@@ -832,12 +855,21 @@ def consensus_panel(ctx, config, **kwargs):
         rra_method=kwargs.get("rra_method") or "geometric_mean",
         outdir=kwargs.get("outdir"),
         log_level=ctx.obj.get("log_level"),
-        require_significance=kwargs.get("require_significance")
-        or config_params.get("significance", {}).get("require_significance", False),
-        significance_alpha=kwargs.get("significance_alpha")
-        or config_params.get("significance", {}).get("alpha", 0.05),
-        min_significant_models=kwargs.get("min_significant_models")
-        or config_params.get("significance", {}).get("min_significant_models", 2),
+        require_significance=_resolve_cli_or_config(
+            kwargs.get("require_significance"),
+            significance_cfg.get("require_significance"),
+            False,
+        ),
+        significance_alpha=_resolve_cli_or_config(
+            kwargs.get("significance_alpha"),
+            significance_cfg.get("alpha"),
+            0.05,
+        ),
+        min_significant_models=_resolve_cli_or_config(
+            kwargs.get("min_significant_models"),
+            significance_cfg.get("min_significant_models"),
+            2,
+        ),
         run_essentiality=(
             kwargs.get("run_essentiality")
             if kwargs.get("run_essentiality") is not None

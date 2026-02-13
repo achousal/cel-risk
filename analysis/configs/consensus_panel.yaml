@@ -31,7 +31,7 @@ rra_method: geometric_mean
 significance:
   require_significance: true    # Only include significant models
   alpha: 0.05                   # Significance threshold
-  min_significant_models: 3     # Minimum models required for consensus
+  min_significant_models: 2     # Minimum models required for consensus
 
 # Within-Panel Essentiality Validation (post-hoc interpretation)
 # After the consensus panel is built, optionally refit a model on ONLY the panel

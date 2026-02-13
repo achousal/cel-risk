@@ -341,6 +341,14 @@ def run_consensus_panel(
 
     logger.info(f"Found {len(model_dirs)} models: {list(model_dirs.keys())}")
 
+    if require_significance and min_significant_models > len(model_dirs):
+        raise ValueError(
+            f"Consensus requires at least {min_significant_models} significant model(s), "
+            f"but only {len(model_dirs)} model(s) were discovered: {list(model_dirs.keys())}. "
+            "Lower significance.min_significant_models in consensus_panel.yaml "
+            "(or pass --min-significant-models), or train additional base models."
+        )
+
     # Significance filtering
     if require_significance:
         run_path = results_dir / f"run_{run_id}"

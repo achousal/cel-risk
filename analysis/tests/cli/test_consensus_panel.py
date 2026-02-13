@@ -6,6 +6,7 @@ import pytest
 from ced_ml.cli.consensus_panel import (
     discover_models_with_aggregated_results,
     load_model_stability,
+    run_consensus_panel,
 )
 
 
@@ -185,3 +186,31 @@ class TestLoadModelStability:
         """Missing stability file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="Feature stability"):
             load_model_stability(tmp_path)
+
+
+def test_consensus_fails_fast_when_min_significant_models_is_impossible(tmp_path, monkeypatch):
+    """Raises a clear error before heavy work when config is unsatisfiable."""
+    run_id = "20260213_103043"
+    results_root = tmp_path / "results"
+    run_root = results_root / f"run_{run_id}"
+
+    model_dirs = {
+        "LR_EN": run_root / "LR_EN" / "aggregated",
+        "LinSVM_cal": run_root / "LinSVM_cal" / "aggregated",
+    }
+    for path in model_dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("CED_RESULTS_DIR", str(results_root))
+    monkeypatch.setattr(
+        "ced_ml.cli.consensus_panel.discover_models_with_aggregated_results",
+        lambda **_: model_dirs,
+    )
+
+    with pytest.raises(ValueError, match="at least 3 significant model\\(s\\)"):
+        run_consensus_panel(
+            run_id=run_id,
+            require_significance=True,
+            min_significant_models=3,
+            run_essentiality=False,
+        )
