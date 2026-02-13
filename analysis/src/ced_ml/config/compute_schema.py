@@ -42,16 +42,34 @@ class HPCResourceConfig(BaseModel):
 class OrchestratorConfig(BaseModel):
     """Resources and timeouts for the barrier-orchestrator job."""
 
-    poll_interval: int = Field(default=60, ge=10, le=600)
-    training_timeout: int = Field(default=14400, ge=3600)
-    post_timeout: int = Field(default=7200, ge=1800)
-    perm_timeout: int = Field(default=14400, ge=1800)
-    panel_timeout: int = Field(default=7200, ge=1800)
-    consensus_timeout: int = Field(default=3600, ge=900)
+    poll_interval: int = Field(
+        default=60, ge=10, le=600, description="Seconds between sentinel checks"
+    )
+    training_timeout: float = Field(
+        default=4.0, ge=0.5, description="Hours to wait for training jobs"
+    )
+    post_timeout: float = Field(
+        default=2.0, ge=0.25, description="Hours to wait for post-processing"
+    )
+    perm_timeout: float = Field(
+        default=4.0, ge=0.25, description="Hours to wait for permutation jobs"
+    )
+    panel_timeout: float = Field(
+        default=2.0, ge=0.25, description="Hours to wait for panel optimization"
+    )
+    consensus_timeout: float = Field(
+        default=1.0, ge=0.25, description="Hours to wait for consensus"
+    )
     max_concurrent_submissions: int = Field(default=20, ge=1, le=100)
     cores: int = Field(default=1, ge=1, le=4)
     mem_per_core: int = Field(default=2000, ge=512, le=8000)
     walltime: str = Field(default="48:00")
+
+    def timeout_seconds(self, stage: str) -> int:
+        """Convert a stage timeout from hours to seconds for barrier_wait."""
+        field = f"{stage}_timeout"
+        hours = getattr(self, field)
+        return int(hours * 3600)
 
     @model_validator(mode="after")
     def validate_walltime_format(self) -> "OrchestratorConfig":

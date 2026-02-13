@@ -63,15 +63,14 @@ def _scripts_dir(logs_dir: Path, run_id: str) -> Path:
     return logs_dir / f"run_{run_id}" / "scripts"
 
 
-def _sentinel_path(sentinel_dir: Path, job_name: str) -> Path:
-    """Get sentinel file path for a job name."""
-    validate_identifier(job_name, "job_name")
-    return sentinel_dir / f"{job_name}.done"
+def _sentinel_file(sentinel_dir: Path) -> Path:
+    """Get the single sentinel log file for a run."""
+    return sentinel_dir / "completed.log"
 
 
-def _append_sentinel_touch(script: str, sentinel_path: Path) -> str:
-    """Append a sentinel touch command to a job script."""
-    return script.rstrip() + f'\n\ntouch "{sentinel_path}"\n'
+def _append_sentinel_mark(script: str, sentinel_file: Path, job_name: str) -> str:
+    """Append a sentinel mark command (echo job name to shared log) to a job script."""
+    return script.rstrip() + f'\n\necho "{job_name}" >> "{sentinel_file}"\n'
 
 
 def _write_job_script(scripts_dir: Path, job_name: str, script: str) -> Path:
@@ -536,8 +535,12 @@ if [ -z "${{CED_JOB_COMMAND_B64:-}}" ]; then
     echo "[$(date '+%F %T')] FATAL: CED_JOB_COMMAND_B64 not set"
     exit 1
 fi
-if [ -z "${{CED_SENTINEL_PATH:-}}" ]; then
-    echo "[$(date '+%F %T')] FATAL: CED_SENTINEL_PATH not set"
+if [ -z "${{CED_JOB_NAME:-}}" ]; then
+    echo "[$(date '+%F %T')] FATAL: CED_JOB_NAME not set"
+    exit 1
+fi
+if [ -z "${{CED_SENTINEL_FILE:-}}" ]; then
+    echo "[$(date '+%F %T')] FATAL: CED_SENTINEL_FILE not set"
     exit 1
 fi
 
@@ -549,21 +552,23 @@ PY
 )
 
 eval "$COMMAND"
-touch "$CED_SENTINEL_PATH"
+echo "$CED_JOB_NAME" >> "$CED_SENTINEL_FILE"
 """
 
 
 def _build_wrapped_command(
     *,
     command_b64: str,
-    sentinel_path: Path,
+    job_name: str,
+    sentinel_file: Path,
     wrapper_script_path: Path,
 ) -> str:
     """Build a per-job command payload that runs through the shared wrapper."""
     return "\n".join(
         [
             f'export CED_JOB_COMMAND_B64="{command_b64}"',
-            f'export CED_SENTINEL_PATH="{sentinel_path.resolve()}"',
+            f'export CED_JOB_NAME="{job_name}"',
+            f'export CED_SENTINEL_FILE="{sentinel_file.resolve()}"',
             f'"{wrapper_script_path.resolve()}"',
         ]
     )
@@ -592,9 +597,8 @@ fields = [
     str(job["mem_per_core"]),
     str(job["walltime"]),
     job["command_b64"],
-    job["sentinel"],
 ]
-print("\t".join(fields), end="")
+print("\\t".join(fields), end="")
 PY
 }
 
@@ -609,8 +613,8 @@ submit_and_track() {
         exit 1
     fi
 
-    local job_name queue cores mem_per_core walltime command_b64 sentinel
-    IFS=$'\t' read -r job_name queue cores mem_per_core walltime command_b64 sentinel <<< "$job_tsv"
+    local job_name queue cores mem_per_core walltime command_b64
+    IFS=$'\\t' read -r job_name queue cores mem_per_core walltime command_b64 <<< "$job_tsv"
 
     local job_script
     local bsub_directive="#BSUB"
@@ -627,7 +631,8 @@ ${bsub_directive} -eo /dev/null
 
 set -euo pipefail
 export CED_JOB_COMMAND_B64="$command_b64"
-export CED_SENTINEL_PATH="$sentinel"
+export CED_JOB_NAME="$job_name"
+export CED_SENTINEL_FILE="$SENTINEL_FILE"
 "$WRAPPER_SCRIPT"
 EOF
 )
@@ -690,14 +695,14 @@ barrier_wait() {
     local label="$1"; shift
     local timeout="$1"; shift
     local poll="$1"; shift
-    local -a sentinels=("$@")
-    local total=${#sentinels[@]}
+    local -a job_names=("$@")
+    local total=${#job_names[@]}
     local elapsed=0
 
-    echo "[$(date '+%F %T')] Waiting for $label ($total sentinels, timeout=${timeout}s)..."
+    echo "[$(date '+%F %T')] Waiting for $label ($total jobs, timeout=${timeout}s)..."
 
     if [ "$total" -eq 0 ]; then
-        printf '{"stage":"%s","status":"done","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+        printf '{"stage":"%s","status":"done","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
         return 0
     fi
 
@@ -707,24 +712,24 @@ barrier_wait() {
         fi
 
         local missing=0
-        local sentinel
-        for sentinel in "${sentinels[@]}"; do
-            [ ! -f "$sentinel" ] && missing=$((missing + 1))
+        local name
+        for name in "${job_names[@]}"; do
+            grep -qx "$name" "$SENTINEL_FILE" 2>/dev/null || missing=$((missing + 1))
         done
 
         if [ "$missing" -eq 0 ]; then
             echo "[$(date '+%F %T')] $label complete ($total/$total)."
-            printf '{"stage":"%s","status":"done","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+            printf '{"stage":"%s","status":"done","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
             return 0
         fi
 
         if [ "$elapsed" -ge "$timeout" ]; then
             echo "[$(date '+%F %T')] TIMEOUT: $label after ${timeout}s ($((total - missing))/$total done)"
-            echo "[$(date '+%F %T')] Missing sentinels:"
-            for sentinel in "${sentinels[@]}"; do
-                [ ! -f "$sentinel" ] && echo "  $sentinel"
+            echo "[$(date '+%F %T')] Missing jobs:"
+            for name in "${job_names[@]}"; do
+                grep -qx "$name" "$SENTINEL_FILE" 2>/dev/null || echo "  $name"
             done
-            printf '{"stage":"%s","status":"timeout","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+            printf '{"stage":"%s","status":"timeout","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
             exit 1
         fi
 
@@ -753,36 +758,31 @@ def _build_orchestrator_script(
     run_id: str,
     hpc_config: HPCConfig,
     sentinel_dir: Path,
+    sentinel_file: Path,
     scripts_dir: Path,
     orchestrator_log: Path,
-    orchestrator_sentinel: Path,
+    orchestrator_job_name: str,
     manifest_path: Path,
     wrapper_script_path: Path,
     training_job_ids: list[str],
-    training_sentinels: list[Path],
+    training_job_names: list[str],
     post_key: str,
-    post_sentinel: Path,
+    post_job_name: str,
     perm_keys: list[str],
-    perm_sentinels: list[Path],
+    perm_job_names: list[str],
     perm_agg_keys: list[str],
-    perm_agg_sentinels: list[Path],
+    perm_agg_job_names: list[str],
     panel_seed_keys: list[str],
-    panel_seed_sentinels: list[Path],
+    panel_seed_job_names: list[str],
     panel_agg_keys: list[str],
-    panel_agg_sentinels: list[Path],
+    panel_agg_job_names: list[str],
     consensus_key: str | None,
-    consensus_sentinel: Path | None,
+    consensus_job_name: str | None,
     expected_training_jobs: int,
 ) -> str:
     """Build the barrier-orchestrator bash script."""
     validate_identifier(run_id, "run_id")
     orchestrator_cfg = hpc_config.orchestrator
-
-    training_sentinel_values = [str(p.resolve()) for p in training_sentinels]
-    perm_sentinel_values = [str(p.resolve()) for p in perm_sentinels]
-    perm_agg_sentinel_values = [str(p.resolve()) for p in perm_agg_sentinels]
-    panel_seed_sentinel_values = [str(p.resolve()) for p in panel_seed_sentinels]
-    panel_agg_sentinel_values = [str(p.resolve()) for p in panel_agg_sentinels]
 
     lines: list[str] = [
         "#!/bin/bash",
@@ -806,6 +806,7 @@ def _build_orchestrator_script(
         f'MANIFEST_PATH="{manifest_path.resolve()}"',
         f'WRAPPER_SCRIPT="{wrapper_script_path.resolve()}"',
         f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
+        f'SENTINEL_FILE="{sentinel_file.resolve()}"',
         f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
         'STATE_FILE="$SENTINEL_DIR/orchestrator_state.jsonl"',
         f"POLL_INTERVAL={orchestrator_cfg.poll_interval}",
@@ -813,22 +814,22 @@ def _build_orchestrator_script(
         f"EXPECTED_TRAINING={expected_training_jobs}",
         "",
         _bash_array_literal("TRAINING_IDS", training_job_ids),
-        _bash_array_literal("TRAINING_SENTINELS", training_sentinel_values),
+        _bash_array_literal("TRAINING_JOBS", training_job_names),
         "",
         "UPSTREAM_IDS=()",
         'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR"',
-        'touch "$STATE_FILE"',
+        'touch "$STATE_FILE" "$SENTINEL_FILE"',
         f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",
         "echo \"[$(date '+%F %T')] Training IDs submitted: ${#TRAINING_IDS[@]} (expected: $EXPECTED_TRAINING)\"",
         "",
         'UPSTREAM_IDS=("${TRAINING_IDS[@]}")',
-        f'barrier_wait "training" {orchestrator_cfg.training_timeout} "$POLL_INTERVAL" "${{TRAINING_SENTINELS[@]}}"',
+        f'barrier_wait "training" {orchestrator_cfg.timeout_seconds("training")} "$POLL_INTERVAL" "${{TRAINING_JOBS[@]}}"',
         "",
         'POST_IDS_FILE=$(mktemp "$SENTINEL_DIR/post_ids.XXXXXX")',
         f'submit_and_track "{post_key}" "post-processing" "$POST_IDS_FILE"',
         'mapfile -t UPSTREAM_IDS < "$POST_IDS_FILE"',
-        _bash_array_literal("POST_SENTINELS", [str(post_sentinel.resolve())]),
-        f'barrier_wait "post-processing" {orchestrator_cfg.post_timeout} "$POLL_INTERVAL" "${{POST_SENTINELS[@]}}"',
+        _bash_array_literal("POST_JOBS", [post_job_name]),
+        f'barrier_wait "post-processing" {orchestrator_cfg.timeout_seconds("post")} "$POLL_INTERVAL" "${{POST_JOBS[@]}}"',
         "",
     ]
 
@@ -836,18 +837,18 @@ def _build_orchestrator_script(
         lines.extend(
             [
                 _bash_array_literal("PERM_KEYS", perm_keys),
-                _bash_array_literal("PERM_SENTINELS", perm_sentinel_values),
+                _bash_array_literal("PERM_JOBS", perm_job_names),
                 'PERM_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PERM_IDS_FILE" "${PERM_KEYS[@]}"',
                 'mapfile -t UPSTREAM_IDS < "$PERM_IDS_FILE"',
-                f'barrier_wait "permutation-tests" {orchestrator_cfg.perm_timeout} "$POLL_INTERVAL" "${{PERM_SENTINELS[@]}}"',
+                f'barrier_wait "permutation-tests" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_JOBS[@]}}"',
                 "",
                 _bash_array_literal("PERM_AGG_KEYS", perm_agg_keys),
-                _bash_array_literal("PERM_AGG_SENTINELS", perm_agg_sentinel_values),
+                _bash_array_literal("PERM_AGG_JOBS", perm_agg_job_names),
                 'PERM_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_agg_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PERM_AGG_IDS_FILE" "${PERM_AGG_KEYS[@]}"',
                 'mapfile -t UPSTREAM_IDS < "$PERM_AGG_IDS_FILE"',
-                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.perm_timeout} "$POLL_INTERVAL" "${{PERM_AGG_SENTINELS[@]}}"',
+                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_AGG_JOBS[@]}}"',
                 "",
             ]
         )
@@ -856,37 +857,37 @@ def _build_orchestrator_script(
         lines.extend(
             [
                 _bash_array_literal("PANEL_SEED_KEYS", panel_seed_keys),
-                _bash_array_literal("PANEL_SEED_SENTINELS", panel_seed_sentinel_values),
+                _bash_array_literal("PANEL_SEED_JOBS", panel_seed_job_names),
                 'PANEL_SEED_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_seed_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PANEL_SEED_IDS_FILE" "${PANEL_SEED_KEYS[@]}"',
                 'mapfile -t UPSTREAM_IDS < "$PANEL_SEED_IDS_FILE"',
-                f'barrier_wait "panel-seed" {orchestrator_cfg.panel_timeout} "$POLL_INTERVAL" "${{PANEL_SEED_SENTINELS[@]}}"',
+                f'barrier_wait "panel-seed" {orchestrator_cfg.timeout_seconds("panel")} "$POLL_INTERVAL" "${{PANEL_SEED_JOBS[@]}}"',
                 "",
                 _bash_array_literal("PANEL_AGG_KEYS", panel_agg_keys),
-                _bash_array_literal("PANEL_AGG_SENTINELS", panel_agg_sentinel_values),
+                _bash_array_literal("PANEL_AGG_JOBS", panel_agg_job_names),
                 'PANEL_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_agg_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PANEL_AGG_IDS_FILE" "${PANEL_AGG_KEYS[@]}"',
                 'mapfile -t UPSTREAM_IDS < "$PANEL_AGG_IDS_FILE"',
-                f'barrier_wait "panel-aggregation" {orchestrator_cfg.panel_timeout} "$POLL_INTERVAL" "${{PANEL_AGG_SENTINELS[@]}}"',
+                f'barrier_wait "panel-aggregation" {orchestrator_cfg.timeout_seconds("panel")} "$POLL_INTERVAL" "${{PANEL_AGG_JOBS[@]}}"',
                 "",
             ]
         )
 
-    if consensus_key and consensus_sentinel:
+    if consensus_key and consensus_job_name:
         lines.extend(
             [
                 'CONSENSUS_IDS_FILE=$(mktemp "$SENTINEL_DIR/consensus_ids.XXXXXX")',
                 f'submit_and_track "{consensus_key}" "consensus" "$CONSENSUS_IDS_FILE"',
                 'mapfile -t UPSTREAM_IDS < "$CONSENSUS_IDS_FILE"',
-                _bash_array_literal("CONSENSUS_SENTINELS", [str(consensus_sentinel.resolve())]),
-                f'barrier_wait "consensus" {orchestrator_cfg.consensus_timeout} "$POLL_INTERVAL" "${{CONSENSUS_SENTINELS[@]}}"',
+                _bash_array_literal("CONSENSUS_JOBS", [consensus_job_name]),
+                f'barrier_wait "consensus" {orchestrator_cfg.timeout_seconds("consensus")} "$POLL_INTERVAL" "${{CONSENSUS_JOBS[@]}}"',
                 "",
             ]
         )
 
     lines.extend(
         [
-            f'touch "{orchestrator_sentinel.resolve()}"',
+            f'echo "{orchestrator_job_name}" >> "$SENTINEL_FILE"',
             'printf \'{"stage":"orchestrator","status":"done","ts":"%s"}\\n\' "$(date -u \'+%FT%TZ\')" >> "$STATE_FILE"',
             f"echo \"[$(date '+%F %T')] Orchestrator complete for run {run_id}\"",
             "",
@@ -925,6 +926,7 @@ def _submit_orchestrator_pipeline(
     run_root = logs_dir / f"run_{run_id}"
     run_logs_dir = run_root / "training"
     sentinel_dir = _sentinel_dir(logs_dir, run_id)
+    sentinel_file = _sentinel_file(sentinel_dir)
     scripts_dir = _scripts_dir(logs_dir, run_id)
     run_logs_dir.mkdir(parents=True, exist_ok=True)
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -949,7 +951,6 @@ def _submit_orchestrator_pipeline(
         *,
         job_name: str,
         command: str,
-        sentinel: Path,
     ) -> dict[str, str | int]:
         return {
             "job_name": job_name,
@@ -958,13 +959,11 @@ def _submit_orchestrator_pipeline(
             "mem_per_core": int(default_resources["mem_per_core"]),
             "walltime": str(default_resources["walltime"]),
             "command_b64": _encode_command_b64(command),
-            "sentinel": str(sentinel.resolve()),
         }
 
     # Stage 1: training (submitted immediately)
     training_job_names: list[str] = []
     training_job_ids: list[str] = []
-    training_sentinels: list[Path] = []
     expected_training_jobs = len(models) * len(split_seeds)
     pipeline_logger.info(
         f"Submitting {expected_training_jobs} training jobs "
@@ -984,12 +983,11 @@ def _submit_orchestrator_pipeline(
                 split_seed=seed,
                 run_id=run_id,
             )
-            sentinel = _sentinel_path(sentinel_dir, job_name)
-            training_sentinels.append(sentinel)
 
             wrapped_command = _build_wrapped_command(
                 command_b64=_encode_command_b64(training_command),
-                sentinel_path=sentinel,
+                job_name=job_name,
+                sentinel_file=sentinel_file,
                 wrapper_script_path=wrapper_script_path,
             )
             submission_script = build_job_script(
@@ -1027,20 +1025,16 @@ def _submit_orchestrator_pipeline(
         split_seeds=split_seeds,
         enable_ensemble=enable_ensemble,
     )
-    post_sentinel = _sentinel_path(sentinel_dir, post_job_name)
     post_key = "post"
     manifest_jobs[post_key] = _manifest_entry(
         job_name=post_job_name,
         command=post_command,
-        sentinel=post_sentinel,
     )
 
     permutation_job_names: list[str] = []
     permutation_agg_names: list[str] = []
     perm_keys: list[str] = []
-    perm_sentinels: list[Path] = []
     perm_agg_keys: list[str] = []
-    perm_agg_sentinels: list[Path] = []
     if enable_permutation_test:
         perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
         for model in models:
@@ -1054,35 +1048,27 @@ def _submit_orchestrator_pipeline(
                     n_jobs=permutation_n_jobs,
                 )
                 perm_key = f"perm_{model}_s{seed}"
-                perm_sentinel = _sentinel_path(sentinel_dir, perm_job_name)
                 manifest_jobs[perm_key] = _manifest_entry(
                     job_name=perm_job_name,
                     command=perm_command,
-                    sentinel=perm_sentinel,
                 )
                 permutation_job_names.append(perm_job_name)
                 perm_keys.append(perm_key)
-                perm_sentinels.append(perm_sentinel)
 
             perm_agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
             perm_agg_command = _build_permutation_aggregation_command(run_id=run_id, model=model)
             perm_agg_key = f"perm_{model}_agg"
-            perm_agg_sentinel = _sentinel_path(sentinel_dir, perm_agg_job_name)
             manifest_jobs[perm_agg_key] = _manifest_entry(
                 job_name=perm_agg_job_name,
                 command=perm_agg_command,
-                sentinel=perm_agg_sentinel,
             )
             permutation_agg_names.append(perm_agg_job_name)
             perm_agg_keys.append(perm_agg_key)
-            perm_agg_sentinels.append(perm_agg_sentinel)
 
     panel_job_names: list[str] = []
     panel_agg_names: list[str] = []
     panel_seed_keys: list[str] = []
-    panel_seed_sentinels: list[Path] = []
     panel_agg_keys: list[str] = []
-    panel_agg_sentinels: list[Path] = []
     if enable_optimize_panel:
         for model in models:
             for seed in split_seeds:
@@ -1093,81 +1079,72 @@ def _submit_orchestrator_pipeline(
                     split_seed=seed,
                 )
                 panel_seed_key = f"panel_{model}_s{seed}"
-                panel_seed_sentinel = _sentinel_path(sentinel_dir, panel_seed_job)
                 manifest_jobs[panel_seed_key] = _manifest_entry(
                     job_name=panel_seed_job,
                     command=panel_seed_cmd,
-                    sentinel=panel_seed_sentinel,
                 )
                 panel_job_names.append(panel_seed_job)
                 panel_seed_keys.append(panel_seed_key)
-                panel_seed_sentinels.append(panel_seed_sentinel)
 
             panel_agg_job = f"CeD_{run_id}_panel_{model}_agg"
             panel_agg_cmd = _build_panel_optimization_command(run_id=run_id, model=model)
             panel_agg_key = f"panel_{model}_agg"
-            panel_agg_sentinel = _sentinel_path(sentinel_dir, panel_agg_job)
             manifest_jobs[panel_agg_key] = _manifest_entry(
                 job_name=panel_agg_job,
                 command=panel_agg_cmd,
-                sentinel=panel_agg_sentinel,
             )
             panel_job_names.append(panel_agg_job)
             panel_agg_names.append(panel_agg_job)
             panel_agg_keys.append(panel_agg_key)
-            panel_agg_sentinels.append(panel_agg_sentinel)
 
     consensus_job_name = f"CeD_{run_id}_consensus"
     consensus_key: str | None = None
-    consensus_sentinel: Path | None = None
     if enable_consensus:
         consensus_cmd = _build_consensus_panel_command(run_id=run_id)
         consensus_key = "consensus"
-        consensus_sentinel = _sentinel_path(sentinel_dir, consensus_job_name)
         manifest_jobs[consensus_key] = _manifest_entry(
             job_name=consensus_job_name,
             command=consensus_cmd,
-            sentinel=consensus_sentinel,
         )
 
     manifest_path = scripts_dir / "jobs_manifest.json"
     manifest_path.write_text(json.dumps(manifest_jobs, indent=2, sort_keys=True), encoding="utf-8")
 
-    orchestrator_job_name = f"CeD_{run_id}_orchestrator"
+    orchestrator_orch_name = f"CeD_{run_id}_orchestrator"
     orchestrator_log = run_root / "orchestrator.log"
-    orchestrator_sentinel = _sentinel_path(sentinel_dir, orchestrator_job_name)
     orchestrator_script = _build_orchestrator_script(
         run_id=run_id,
         hpc_config=hpc_config,
         sentinel_dir=sentinel_dir,
+        sentinel_file=sentinel_file,
         scripts_dir=scripts_dir,
         orchestrator_log=orchestrator_log,
-        orchestrator_sentinel=orchestrator_sentinel,
+        orchestrator_job_name=orchestrator_orch_name,
         manifest_path=manifest_path,
         wrapper_script_path=wrapper_script_path,
         training_job_ids=training_job_ids,
-        training_sentinels=training_sentinels,
+        training_job_names=training_job_names,
         post_key=post_key,
-        post_sentinel=post_sentinel,
+        post_job_name=post_job_name,
         perm_keys=perm_keys,
-        perm_sentinels=perm_sentinels,
+        perm_job_names=permutation_job_names,
         perm_agg_keys=perm_agg_keys,
-        perm_agg_sentinels=perm_agg_sentinels,
+        perm_agg_job_names=permutation_agg_names,
         panel_seed_keys=panel_seed_keys,
-        panel_seed_sentinels=panel_seed_sentinels,
+        panel_seed_job_names=[n for n in panel_job_names if n not in panel_agg_names],
         panel_agg_keys=panel_agg_keys,
-        panel_agg_sentinels=panel_agg_sentinels,
+        panel_agg_job_names=panel_agg_names,
         consensus_key=consensus_key,
-        consensus_sentinel=consensus_sentinel,
+        consensus_job_name=consensus_job_name if enable_consensus else None,
         expected_training_jobs=expected_training_jobs,
     )
-    _write_job_script(scripts_dir, orchestrator_job_name, orchestrator_script)
+    _write_job_script(scripts_dir, orchestrator_orch_name, orchestrator_script)
 
     orchestrator_job_id = submit_job(orchestrator_script, dry_run=dry_run)
     if not dry_run and not orchestrator_job_id:
         raise RuntimeError("Orchestrator submission failed")
 
-    orchestrator_job_display = orchestrator_job_id or f"DRYRUN_{orchestrator_job_name}"
+    orchestrator_job_display = orchestrator_job_id or f"DRYRUN_{orchestrator_orch_name}"
     pipeline_logger.info("-- HPC Pipeline Summary --")
     pipeline_logger.info("Mode:             orchestrator")
     pipeline_logger.info(f"Run ID:           {run_id}")
@@ -1176,6 +1153,7 @@ def _submit_orchestrator_pipeline(
     )
     pipeline_logger.info(f"Orchestrator job: {orchestrator_job_display}")
     pipeline_logger.info(f"Sentinel dir:     {sentinel_dir}/")
+    pipeline_logger.info(f"Sentinel file:    {sentinel_file}")
     pipeline_logger.info(f"Scripts dir:      {scripts_dir}/")
     pipeline_logger.info(f"Orchestrator log: {orchestrator_log}")
     pipeline_logger.info(f"Manifest file:    {manifest_path}")
@@ -1192,6 +1170,7 @@ def _submit_orchestrator_pipeline(
         "orchestrator_job": orchestrator_job_display,
         "logs_dir": run_logs_dir,
         "sentinel_dir": sentinel_dir,
+        "sentinel_file": sentinel_file,
         "scripts_dir": scripts_dir,
         "orchestrator_log": orchestrator_log,
         "panel_aggregation_jobs": panel_agg_names,

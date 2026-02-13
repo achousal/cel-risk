@@ -8,7 +8,7 @@ from pathlib import Path
 from ced_ml.config.schema import HPCConfig
 from ced_ml.hpc.lsf import (
     EnvironmentInfo,
-    _append_sentinel_touch,
+    _append_sentinel_mark,
     _build_consensus_panel_command,
     _build_orchestrator_bash_functions,
     _build_orchestrator_script,
@@ -18,7 +18,7 @@ from ced_ml.hpc.lsf import (
     _build_wrapper_script,
     _scripts_dir,
     _sentinel_dir,
-    _sentinel_path,
+    _sentinel_file,
     build_job_script,
     submit_hpc_pipeline,
 )
@@ -42,17 +42,17 @@ def _orchestrator_script_for_test(
     *,
     hpc_config: HPCConfig | None = None,
     training_job_ids: list[str] | None = None,
-    training_sentinels: list[Path] | None = None,
+    training_job_names: list[str] | None = None,
     perm_keys: list[str] | None = None,
-    perm_sentinels: list[Path] | None = None,
+    perm_job_names: list[str] | None = None,
     perm_agg_keys: list[str] | None = None,
-    perm_agg_sentinels: list[Path] | None = None,
+    perm_agg_job_names: list[str] | None = None,
     panel_seed_keys: list[str] | None = None,
-    panel_seed_sentinels: list[Path] | None = None,
+    panel_seed_job_names: list[str] | None = None,
     panel_agg_keys: list[str] | None = None,
-    panel_agg_sentinels: list[Path] | None = None,
+    panel_agg_job_names: list[str] | None = None,
     consensus_key: str | None = None,
-    consensus_sentinel: Path | None = None,
+    consensus_job_name: str | None = None,
 ) -> str:
     """Build an orchestrator script with configurable stage inputs."""
     run_id = "20260212_151826"
@@ -65,35 +65,36 @@ def _orchestrator_script_for_test(
     if training_job_ids is None:
         training_job_ids = ["101", "102"]
 
-    if training_sentinels is None:
-        training_sentinels = [
-            sentinel_dir / "CeD_20260212_151826_LR_EN_s0.done",
-            sentinel_dir / "CeD_20260212_151826_RF_s0.done",
+    if training_job_names is None:
+        training_job_names = [
+            "CeD_20260212_151826_LR_EN_s0",
+            "CeD_20260212_151826_RF_s0",
         ]
 
     return _build_orchestrator_script(
         run_id=run_id,
         hpc_config=hpc_config,
         sentinel_dir=sentinel_dir,
+        sentinel_file=sentinel_dir / "completed.log",
         scripts_dir=scripts_dir,
         orchestrator_log=tmp_path / "orchestrator.log",
-        orchestrator_sentinel=sentinel_dir / "CeD_20260212_151826_orchestrator.done",
+        orchestrator_job_name=f"CeD_{run_id}_orchestrator",
         manifest_path=scripts_dir / "jobs_manifest.json",
         wrapper_script_path=scripts_dir / "CeD_20260212_151826_job_wrapper.sh",
         training_job_ids=training_job_ids,
-        training_sentinels=training_sentinels,
+        training_job_names=training_job_names,
         post_key="post",
-        post_sentinel=sentinel_dir / "CeD_20260212_151826_post.done",
+        post_job_name=f"CeD_{run_id}_post",
         perm_keys=perm_keys or [],
-        perm_sentinels=perm_sentinels or [],
+        perm_job_names=perm_job_names or [],
         perm_agg_keys=perm_agg_keys or [],
-        perm_agg_sentinels=perm_agg_sentinels or [],
+        perm_agg_job_names=perm_agg_job_names or [],
         panel_seed_keys=panel_seed_keys or [],
-        panel_seed_sentinels=panel_seed_sentinels or [],
+        panel_seed_job_names=panel_seed_job_names or [],
         panel_agg_keys=panel_agg_keys or [],
-        panel_agg_sentinels=panel_agg_sentinels or [],
+        panel_agg_job_names=panel_agg_job_names or [],
         consensus_key=consensus_key,
-        consensus_sentinel=consensus_sentinel,
+        consensus_job_name=consensus_job_name,
         expected_training_jobs=2,
     )
 
@@ -221,39 +222,42 @@ def test_build_job_script_with_dependency():
     assert "conda activate myenv" in script
 
 
-def test_sentinel_path_helpers():
+def test_sentinel_helpers():
     """Sentinel/script path helpers should construct run-scoped paths correctly."""
     logs_dir = Path("/tmp/logs")
     run_id = "20260212_151826"
 
     sent_dir = _sentinel_dir(logs_dir, run_id)
     scripts_dir = _scripts_dir(logs_dir, run_id)
-    sentinel = _sentinel_path(sent_dir, "CeD_20260212_151826_post")
+    sent_file = _sentinel_file(sent_dir)
 
     assert sent_dir == Path("/tmp/logs/run_20260212_151826/sentinels")
     assert scripts_dir == Path("/tmp/logs/run_20260212_151826/scripts")
-    assert sentinel == Path("/tmp/logs/run_20260212_151826/sentinels/CeD_20260212_151826_post.done")
+    assert sent_file == Path("/tmp/logs/run_20260212_151826/sentinels/completed.log")
 
 
-def test_append_sentinel_touch():
-    """Sentinel touch should be appended without removing existing commands."""
+def test_append_sentinel_mark():
+    """Sentinel mark should append echo command without removing existing commands."""
     script = "#!/bin/bash\nset -euo pipefail\nced train --run-id 1\n"
-    sentinel = Path("/tmp/logs/run_1/sentinels/CeD_1_LR_EN_s0.done")
+    sentinel_file = Path("/tmp/logs/run_1/sentinels/completed.log")
+    job_name = "CeD_1_LR_EN_s0"
 
-    updated = _append_sentinel_touch(script, sentinel)
+    updated = _append_sentinel_mark(script, sentinel_file, job_name)
 
     assert "ced train --run-id 1" in updated
-    assert f'touch "{sentinel}"' in updated
-    assert updated.strip().endswith(f'touch "{sentinel}"')
+    assert f'echo "{job_name}" >> "{sentinel_file}"' in updated
+    assert updated.strip().endswith(f'echo "{job_name}" >> "{sentinel_file}"')
 
 
-def test_wrapper_script_decodes_base64_and_touches_sentinel():
-    """Wrapper script should decode command payload and create sentinel."""
+def test_wrapper_script_decodes_base64_and_marks_sentinel():
+    """Wrapper script should decode command payload and mark sentinel."""
     script = _build_wrapper_script('source "/venv/bin/activate"')
 
     assert "CED_JOB_COMMAND_B64" in script
+    assert "CED_JOB_NAME" in script
+    assert "CED_SENTINEL_FILE" in script
     assert "base64.b64decode" in script
-    assert 'touch "$CED_SENTINEL_PATH"' in script
+    assert 'echo "$CED_JOB_NAME" >> "$CED_SENTINEL_FILE"' in script
 
 
 def test_barrier_bash_uses_bjobs_and_bhist():
@@ -271,6 +275,13 @@ def test_barrier_bash_no_grep_p():
     assert "grep -P" not in bash
 
 
+def test_barrier_wait_uses_grep():
+    """barrier_wait should check completion via grep on the sentinel file."""
+    bash = _build_orchestrator_bash_functions()
+
+    assert 'grep -qx "$name" "$SENTINEL_FILE"' in bash
+
+
 def test_submit_and_track_uses_sed_for_id():
     """Job ID extraction should use sed parsing."""
     bash = _build_orchestrator_bash_functions()
@@ -285,6 +296,14 @@ def test_submit_and_track_uses_manifest_and_wrapper():
     assert "manifest_job_tsv" in bash
     assert 'python - "$MANIFEST_PATH" "$job_key"' in bash
     assert '"$WRAPPER_SCRIPT"' in bash
+
+
+def test_submit_and_track_exports_sentinel_env():
+    """submit_and_track should export CED_JOB_NAME and CED_SENTINEL_FILE."""
+    bash = _build_orchestrator_bash_functions()
+
+    assert 'CED_JOB_NAME="$job_name"' in bash
+    assert 'CED_SENTINEL_FILE="$SENTINEL_FILE"' in bash
 
 
 def test_submit_and_track_avoids_literal_embedded_bsub_directives():
@@ -324,36 +343,36 @@ def test_orchestrator_script_training_only(tmp_path):
     assert "PANEL_SEED_KEYS=(" not in script
     assert 'barrier_wait "consensus"' not in script
     assert script.count("#BSUB -R ") == 1
+    assert "SENTINEL_FILE=" in script
+    assert "completed.log" in script
 
 
 def test_orchestrator_script_full(tmp_path):
     """Full orchestrator script should include permutation, panel, and consensus stages."""
-    sentinels_dir = tmp_path / "sentinels"
-
     script = _orchestrator_script_for_test(
         tmp_path,
         perm_keys=["perm_LR_EN_s0", "perm_RF_s0"],
-        perm_sentinels=[
-            sentinels_dir / "CeD_20260212_151826_perm_LR_EN_s0.done",
-            sentinels_dir / "CeD_20260212_151826_perm_RF_s0.done",
+        perm_job_names=[
+            "CeD_20260212_151826_perm_LR_EN_s0",
+            "CeD_20260212_151826_perm_RF_s0",
         ],
         perm_agg_keys=["perm_LR_EN_agg", "perm_RF_agg"],
-        perm_agg_sentinels=[
-            sentinels_dir / "CeD_20260212_151826_perm_LR_EN_agg.done",
-            sentinels_dir / "CeD_20260212_151826_perm_RF_agg.done",
+        perm_agg_job_names=[
+            "CeD_20260212_151826_perm_LR_EN_agg",
+            "CeD_20260212_151826_perm_RF_agg",
         ],
         panel_seed_keys=["panel_LR_EN_s0", "panel_RF_s0"],
-        panel_seed_sentinels=[
-            sentinels_dir / "CeD_20260212_151826_panel_LR_EN_s0.done",
-            sentinels_dir / "CeD_20260212_151826_panel_RF_s0.done",
+        panel_seed_job_names=[
+            "CeD_20260212_151826_panel_LR_EN_s0",
+            "CeD_20260212_151826_panel_RF_s0",
         ],
         panel_agg_keys=["panel_LR_EN_agg", "panel_RF_agg"],
-        panel_agg_sentinels=[
-            sentinels_dir / "CeD_20260212_151826_panel_LR_EN_agg.done",
-            sentinels_dir / "CeD_20260212_151826_panel_RF_agg.done",
+        panel_agg_job_names=[
+            "CeD_20260212_151826_panel_LR_EN_agg",
+            "CeD_20260212_151826_panel_RF_agg",
         ],
         consensus_key="consensus",
-        consensus_sentinel=sentinels_dir / "CeD_20260212_151826_consensus.done",
+        consensus_job_name="CeD_20260212_151826_consensus",
     )
 
     assert "PERM_KEYS=(" in script
@@ -372,11 +391,11 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
     hpc_config = _default_hpc_config(
         orchestrator={
             "poll_interval": 30,
-            "training_timeout": 4000,
-            "post_timeout": 2000,
-            "perm_timeout": 5000,
-            "panel_timeout": 3000,
-            "consensus_timeout": 1200,
+            "training_timeout": 2.0,
+            "post_timeout": 1.0,
+            "perm_timeout": 2.5,
+            "panel_timeout": 1.5,
+            "consensus_timeout": 0.5,
             "max_concurrent_submissions": 9,
             "cores": 1,
             "mem_per_core": 1024,
@@ -384,29 +403,28 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
         }
     )
 
-    sentinels_dir = tmp_path / "sentinels"
     script = _orchestrator_script_for_test(
         tmp_path,
         hpc_config=hpc_config,
         perm_keys=["perm"],
-        perm_sentinels=[sentinels_dir / "perm.done"],
+        perm_job_names=["CeD_perm"],
         perm_agg_keys=["perm_agg"],
-        perm_agg_sentinels=[sentinels_dir / "perm_agg.done"],
+        perm_agg_job_names=["CeD_perm_agg"],
         panel_seed_keys=["panel_seed"],
-        panel_seed_sentinels=[sentinels_dir / "panel_seed.done"],
+        panel_seed_job_names=["CeD_panel_seed"],
         panel_agg_keys=["panel_agg"],
-        panel_agg_sentinels=[sentinels_dir / "panel_agg.done"],
+        panel_agg_job_names=["CeD_panel_agg"],
         consensus_key="consensus",
-        consensus_sentinel=sentinels_dir / "consensus.done",
+        consensus_job_name="CeD_consensus",
     )
 
-    assert 'barrier_wait "training" 4000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "post-processing" 2000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "permutation-tests" 5000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "permutation-aggregation" 5000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "panel-seed" 3000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "panel-aggregation" 3000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "consensus" 1200 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "training" 7200 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "post-processing" 3600 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "permutation-tests" 9000 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "permutation-aggregation" 9000 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "panel-seed" 5400 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "panel-aggregation" 5400 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "consensus" 1800 "$POLL_INTERVAL"' in script
 
 
 def test_orchestrator_batch_chunking(tmp_path):
@@ -415,25 +433,24 @@ def test_orchestrator_batch_chunking(tmp_path):
         orchestrator={
             "max_concurrent_submissions": 7,
             "poll_interval": 60,
-            "training_timeout": 3600,
-            "post_timeout": 1800,
-            "perm_timeout": 3600,
-            "panel_timeout": 2400,
-            "consensus_timeout": 900,
+            "training_timeout": 1.0,
+            "post_timeout": 0.5,
+            "perm_timeout": 1.0,
+            "panel_timeout": 0.5,
+            "consensus_timeout": 0.25,
             "cores": 1,
             "mem_per_core": 1024,
             "walltime": "12:00",
         }
     )
 
-    sentinels_dir = tmp_path / "sentinels"
     script = _orchestrator_script_for_test(
         tmp_path,
         hpc_config=hpc_config,
         perm_keys=["perm"],
-        perm_sentinels=[sentinels_dir / "perm.done"],
+        perm_job_names=["CeD_perm"],
         perm_agg_keys=["perm_agg"],
-        perm_agg_sentinels=[sentinels_dir / "perm_agg.done"],
+        perm_agg_job_names=["CeD_perm_agg"],
     )
 
     assert "MAX_CHUNK=7" in script
@@ -508,8 +525,8 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
     assert result["orchestrator_job"].startswith("DRYRUN_")
 
 
-def test_submit_orchestrator_manifest_has_sentinels(monkeypatch, tmp_path):
-    """Manifest should contain base64 commands and sentinel paths for all staged jobs."""
+def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
+    """Manifest should contain base64 commands and job_name for all staged jobs."""
 
     def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
         return None
@@ -537,7 +554,7 @@ def test_submit_orchestrator_manifest_has_sentinels(monkeypatch, tmp_path):
         hpc_config=_default_hpc_config(),
         logs_dir=tmp_path / "logs",
         dry_run=True,
-        pipeline_logger=logging.getLogger("test_submit_orchestrator_manifest_has_sentinels"),
+        pipeline_logger=logging.getLogger("test_submit_orchestrator_manifest_format"),
     )
 
     scripts_dir = tmp_path / "logs" / f"run_{run_id}" / "scripts"
@@ -551,8 +568,9 @@ def test_submit_orchestrator_manifest_has_sentinels(monkeypatch, tmp_path):
     assert any(key.startswith("panel_") for key in manifest)
 
     for entry in manifest.values():
-        assert entry["sentinel"].endswith(".done")
-        assert f"/run_{run_id}/sentinels/" in entry["sentinel"]
+        assert "job_name" in entry
+        assert "command_b64" in entry
+        assert "sentinel" not in entry
         decoded = base64.b64decode(entry["command_b64"]).decode("utf-8")
         assert decoded.startswith("ced ") or decoded.startswith("echo ")
 

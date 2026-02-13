@@ -33,12 +33,12 @@ hpc:
   cores: 12
   mem_per_core: 8000  # MB
   orchestrator:
-    poll_interval: 60
-    training_timeout: 14400
-    post_timeout: 7200
-    perm_timeout: 14400
-    panel_timeout: 7200
-    consensus_timeout: 3600
+    poll_interval: 60  # seconds between sentinel checks
+    training_timeout: 4.0  # hours
+    post_timeout: 2.0  # hours
+    perm_timeout: 4.0  # hours
+    panel_timeout: 2.0  # hours
+    consensus_timeout: 1.0  # hours
     max_concurrent_submissions: 20
     cores: 1
     mem_per_core: 2000
