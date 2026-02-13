@@ -8,7 +8,6 @@ from pathlib import Path
 from ced_ml.config.schema import HPCConfig
 from ced_ml.hpc.lsf import (
     EnvironmentInfo,
-    _append_sentinel_mark,
     _build_consensus_panel_command,
     _build_orchestrator_bash_functions,
     _build_orchestrator_script,
@@ -18,7 +17,7 @@ from ced_ml.hpc.lsf import (
     _build_wrapper_script,
     _scripts_dir,
     _sentinel_dir,
-    _sentinel_file,
+    _sentinel_done_path,
     build_job_script,
     submit_hpc_pipeline,
 )
@@ -75,7 +74,6 @@ def _orchestrator_script_for_test(
         run_id=run_id,
         hpc_config=hpc_config,
         sentinel_dir=sentinel_dir,
-        sentinel_file=sentinel_dir / "completed.log",
         scripts_dir=scripts_dir,
         orchestrator_log=tmp_path / "orchestrator.log",
         orchestrator_job_name=f"CeD_{run_id}_orchestrator",
@@ -229,35 +227,38 @@ def test_sentinel_helpers():
 
     sent_dir = _sentinel_dir(logs_dir, run_id)
     scripts_dir = _scripts_dir(logs_dir, run_id)
-    sent_file = _sentinel_file(sent_dir)
+    done_path = _sentinel_done_path(sent_dir, "CeD_test_job")
 
     assert sent_dir == Path("/tmp/logs/run_20260212_151826/sentinels")
     assert scripts_dir == Path("/tmp/logs/run_20260212_151826/scripts")
-    assert sent_file == Path("/tmp/logs/run_20260212_151826/sentinels/completed.log")
+    assert done_path == Path("/tmp/logs/run_20260212_151826/sentinels/CeD_test_job.done")
 
 
-def test_append_sentinel_mark():
-    """Sentinel mark should append echo command without removing existing commands."""
-    script = "#!/bin/bash\nset -euo pipefail\nced train --run-id 1\n"
-    sentinel_file = Path("/tmp/logs/run_1/sentinels/completed.log")
+def test_sentinel_done_path():
+    """Per-job sentinel done path should be scoped to sentinel dir with .done suffix."""
+    sentinel_dir = Path("/tmp/logs/run_1/sentinels")
     job_name = "CeD_1_LR_EN_s0"
 
-    updated = _append_sentinel_mark(script, sentinel_file, job_name)
+    done_path = _sentinel_done_path(sentinel_dir, job_name)
 
-    assert "ced train --run-id 1" in updated
-    assert f'echo "{job_name}" >> "{sentinel_file}"' in updated
-    assert updated.strip().endswith(f'echo "{job_name}" >> "{sentinel_file}"')
+    assert done_path == sentinel_dir / f"{job_name}.done"
+    assert done_path.suffix == ".done"
 
 
 def test_wrapper_script_decodes_base64_and_marks_sentinel():
-    """Wrapper script should decode command payload and mark sentinel."""
+    """Wrapper script should decode command payload and write per-job sentinel file."""
     script = _build_wrapper_script('source "/venv/bin/activate"')
 
     assert "CED_JOB_COMMAND_B64" in script
     assert "CED_JOB_NAME" in script
-    assert "CED_SENTINEL_FILE" in script
+    assert "CED_SENTINEL_DIR" in script
     assert "base64.b64decode" in script
-    assert 'echo "$CED_JOB_NAME" >> "$CED_SENTINEL_FILE"' in script
+    # Per-job sentinel via EXIT trap
+    assert 'touch "$CED_SENTINEL_DIR/${CED_JOB_NAME}.done"' in script
+    assert "trap" in script
+    # Old shared-file append must be gone
+    assert "CED_SENTINEL_FILE" not in script
+    assert ">> " not in script
 
 
 def test_barrier_bash_uses_bjobs_and_bhist():
@@ -275,11 +276,13 @@ def test_barrier_bash_no_grep_p():
     assert "grep -P" not in bash
 
 
-def test_barrier_wait_uses_grep():
-    """barrier_wait should check completion via grep on the sentinel file."""
+def test_barrier_wait_uses_per_job_sentinel_files():
+    """barrier_wait should check completion via per-job .done files."""
     bash = _build_orchestrator_bash_functions()
 
-    assert 'grep -qx "$name" "$SENTINEL_FILE"' in bash
+    assert '[ -f "$SENTINEL_DIR/${name}.done" ]' in bash
+    # Old shared-file grep must be gone
+    assert "grep -qx" not in bash
 
 
 def test_submit_and_track_uses_sed_for_id():
@@ -299,11 +302,11 @@ def test_submit_and_track_uses_manifest_and_wrapper():
 
 
 def test_submit_and_track_exports_sentinel_env():
-    """submit_and_track should export CED_JOB_NAME and CED_SENTINEL_FILE."""
+    """submit_and_track should export CED_JOB_NAME and CED_SENTINEL_DIR."""
     bash = _build_orchestrator_bash_functions()
 
     assert 'CED_JOB_NAME="$job_name"' in bash
-    assert 'CED_SENTINEL_FILE="$SENTINEL_FILE"' in bash
+    assert 'CED_SENTINEL_DIR="$SENTINEL_DIR"' in bash
 
 
 def test_submit_and_track_avoids_literal_embedded_bsub_directives():
@@ -343,8 +346,10 @@ def test_orchestrator_script_training_only(tmp_path):
     assert "PANEL_SEED_KEYS=(" not in script
     assert 'barrier_wait "consensus"' not in script
     assert script.count("#BSUB -R ") == 1
-    assert "SENTINEL_FILE=" in script
-    assert "completed.log" in script
+    assert "SENTINEL_DIR=" in script
+    # Per-job sentinel files -- no shared completed.log
+    assert "completed.log" not in script
+    assert "SENTINEL_FILE" not in script
 
 
 def test_orchestrator_script_full(tmp_path):

@@ -63,14 +63,9 @@ def _scripts_dir(logs_dir: Path, run_id: str) -> Path:
     return logs_dir / f"run_{run_id}" / "scripts"
 
 
-def _sentinel_file(sentinel_dir: Path) -> Path:
-    """Get the single sentinel log file for a run."""
-    return sentinel_dir / "completed.log"
-
-
-def _append_sentinel_mark(script: str, sentinel_file: Path, job_name: str) -> str:
-    """Append a sentinel mark command (echo job name to shared log) to a job script."""
-    return script.rstrip() + f'\n\necho "{job_name}" >> "{sentinel_file}"\n'
+def _sentinel_done_path(sentinel_dir: Path, job_name: str) -> Path:
+    """Get the per-job sentinel done file path."""
+    return sentinel_dir / f"{job_name}.done"
 
 
 def _write_job_script(scripts_dir: Path, job_name: str, script: str) -> Path:
@@ -522,7 +517,14 @@ def _encode_command_b64(command: str) -> str:
 
 
 def _build_wrapper_script(env_activation: str) -> str:
-    """Build a generic wrapper that decodes and executes command payloads."""
+    """Build a generic wrapper that decodes and executes command payloads.
+
+    Sentinel write uses per-job touch files instead of appending to a shared
+    log, eliminating NFS concurrent-append races.  The sentinel is written in
+    an EXIT trap so that ``set -e`` cannot skip it -- the orchestrator always
+    sees completion (success or failure) and ``check_upstream_failures``
+    handles EXIT/TERM detection separately via bjobs/bhist.
+    """
     return f"""#!/bin/bash
 set -euo pipefail
 
@@ -539,10 +541,14 @@ if [ -z "${{CED_JOB_NAME:-}}" ]; then
     echo "[$(date '+%F %T')] FATAL: CED_JOB_NAME not set"
     exit 1
 fi
-if [ -z "${{CED_SENTINEL_FILE:-}}" ]; then
-    echo "[$(date '+%F %T')] FATAL: CED_SENTINEL_FILE not set"
+if [ -z "${{CED_SENTINEL_DIR:-}}" ]; then
+    echo "[$(date '+%F %T')] FATAL: CED_SENTINEL_DIR not set"
     exit 1
 fi
+
+# Write per-job sentinel on exit so set -e cannot skip it.
+_ced_rc=0
+trap 'touch "$CED_SENTINEL_DIR/${{CED_JOB_NAME}}.done"' EXIT
 
 COMMAND=$(python - "$CED_JOB_COMMAND_B64" <<'PY'
 import base64
@@ -551,8 +557,8 @@ print(base64.b64decode(sys.argv[1]).decode("utf-8"), end="")
 PY
 )
 
-eval "$COMMAND"
-echo "$CED_JOB_NAME" >> "$CED_SENTINEL_FILE"
+eval "$COMMAND" || _ced_rc=$?
+exit "$_ced_rc"
 """
 
 
@@ -560,7 +566,7 @@ def _build_wrapped_command(
     *,
     command_b64: str,
     job_name: str,
-    sentinel_file: Path,
+    sentinel_dir: Path,
     wrapper_script_path: Path,
 ) -> str:
     """Build a per-job command payload that runs through the shared wrapper."""
@@ -568,7 +574,7 @@ def _build_wrapped_command(
         [
             f'export CED_JOB_COMMAND_B64="{command_b64}"',
             f'export CED_JOB_NAME="{job_name}"',
-            f'export CED_SENTINEL_FILE="{sentinel_file.resolve()}"',
+            f'export CED_SENTINEL_DIR="{sentinel_dir.resolve()}"',
             f'"{wrapper_script_path.resolve()}"',
         ]
     )
@@ -632,7 +638,7 @@ ${bsub_directive} -eo /dev/null
 set -euo pipefail
 export CED_JOB_COMMAND_B64="$command_b64"
 export CED_JOB_NAME="$job_name"
-export CED_SENTINEL_FILE="$SENTINEL_FILE"
+export CED_SENTINEL_DIR="$SENTINEL_DIR"
 "$WRAPPER_SCRIPT"
 EOF
 )
@@ -714,7 +720,7 @@ barrier_wait() {
         local missing=0
         local name
         for name in "${job_names[@]}"; do
-            grep -qx "$name" "$SENTINEL_FILE" 2>/dev/null || missing=$((missing + 1))
+            [ -f "$SENTINEL_DIR/${name}.done" ] || missing=$((missing + 1))
         done
 
         if [ "$missing" -eq 0 ]; then
@@ -727,7 +733,7 @@ barrier_wait() {
             echo "[$(date '+%F %T')] TIMEOUT: $label after ${timeout}s ($((total - missing))/$total done)"
             echo "[$(date '+%F %T')] Missing jobs:"
             for name in "${job_names[@]}"; do
-                grep -qx "$name" "$SENTINEL_FILE" 2>/dev/null || echo "  $name"
+                [ -f "$SENTINEL_DIR/${name}.done" ] || echo "  $name"
             done
             printf '{"stage":"%s","status":"timeout","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
             exit 1
@@ -758,7 +764,6 @@ def _build_orchestrator_script(
     run_id: str,
     hpc_config: HPCConfig,
     sentinel_dir: Path,
-    sentinel_file: Path,
     scripts_dir: Path,
     orchestrator_log: Path,
     orchestrator_job_name: str,
@@ -806,7 +811,6 @@ def _build_orchestrator_script(
         f'MANIFEST_PATH="{manifest_path.resolve()}"',
         f'WRAPPER_SCRIPT="{wrapper_script_path.resolve()}"',
         f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
-        f'SENTINEL_FILE="{sentinel_file.resolve()}"',
         f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
         'STATE_FILE="$SENTINEL_DIR/orchestrator_state.jsonl"',
         f"POLL_INTERVAL={orchestrator_cfg.poll_interval}",
@@ -818,7 +822,7 @@ def _build_orchestrator_script(
         "",
         "UPSTREAM_IDS=()",
         'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR"',
-        'touch "$STATE_FILE" "$SENTINEL_FILE"',
+        'touch "$STATE_FILE"',
         f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",
         "echo \"[$(date '+%F %T')] Training IDs submitted: ${#TRAINING_IDS[@]} (expected: $EXPECTED_TRAINING)\"",
         "",
@@ -887,7 +891,7 @@ def _build_orchestrator_script(
 
     lines.extend(
         [
-            f'echo "{orchestrator_job_name}" >> "$SENTINEL_FILE"',
+            f'touch "$SENTINEL_DIR/{orchestrator_job_name}.done"',
             'printf \'{"stage":"orchestrator","status":"done","ts":"%s"}\\n\' "$(date -u \'+%FT%TZ\')" >> "$STATE_FILE"',
             f"echo \"[$(date '+%F %T')] Orchestrator complete for run {run_id}\"",
             "",
@@ -926,7 +930,6 @@ def _submit_orchestrator_pipeline(
     run_root = logs_dir / f"run_{run_id}"
     run_logs_dir = run_root / "training"
     sentinel_dir = _sentinel_dir(logs_dir, run_id)
-    sentinel_file = _sentinel_file(sentinel_dir)
     scripts_dir = _scripts_dir(logs_dir, run_id)
     run_logs_dir.mkdir(parents=True, exist_ok=True)
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -987,7 +990,7 @@ def _submit_orchestrator_pipeline(
             wrapped_command = _build_wrapped_command(
                 command_b64=_encode_command_b64(training_command),
                 job_name=job_name,
-                sentinel_file=sentinel_file,
+                sentinel_dir=sentinel_dir,
                 wrapper_script_path=wrapper_script_path,
             )
             submission_script = build_job_script(
@@ -1116,7 +1119,6 @@ def _submit_orchestrator_pipeline(
         run_id=run_id,
         hpc_config=hpc_config,
         sentinel_dir=sentinel_dir,
-        sentinel_file=sentinel_file,
         scripts_dir=scripts_dir,
         orchestrator_log=orchestrator_log,
         orchestrator_job_name=orchestrator_orch_name,
@@ -1153,7 +1155,6 @@ def _submit_orchestrator_pipeline(
     )
     pipeline_logger.info(f"Orchestrator job: {orchestrator_job_display}")
     pipeline_logger.info(f"Sentinel dir:     {sentinel_dir}/")
-    pipeline_logger.info(f"Sentinel file:    {sentinel_file}")
     pipeline_logger.info(f"Scripts dir:      {scripts_dir}/")
     pipeline_logger.info(f"Orchestrator log: {orchestrator_log}")
     pipeline_logger.info(f"Manifest file:    {manifest_path}")
@@ -1170,7 +1171,6 @@ def _submit_orchestrator_pipeline(
         "orchestrator_job": orchestrator_job_display,
         "logs_dir": run_logs_dir,
         "sentinel_dir": sentinel_dir,
-        "sentinel_file": sentinel_file,
         "scripts_dir": scripts_dir,
         "orchestrator_log": orchestrator_log,
         "panel_aggregation_jobs": panel_agg_names,
