@@ -20,9 +20,6 @@ pipeline:
   optimize_panel: true
   permutation_test: true  # Enable for model significance testing
   dry_run: false
-  # Note: Scientific parameters (n_boot, permutation_n_perms, etc.) are defined in their respective configs:
-  #   - n_boot: training_config.yaml
-  #   - permutation_n_perms, permutation_n_jobs: permutation_test.yaml
 
 # HPC Settings (LSF/Slurm)
 hpc:
