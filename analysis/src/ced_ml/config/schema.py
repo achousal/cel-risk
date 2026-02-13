@@ -18,7 +18,12 @@ from ced_ml.config.aggregate_schema import (
 from ced_ml.config.calibration_schema import CalibrationConfig, ThresholdConfig
 
 # Compute and HPC
-from ced_ml.config.compute_schema import ComputeConfig, HPCConfig, HPCResourceConfig
+from ced_ml.config.compute_schema import (
+    ComputeConfig,
+    HPCConfig,
+    HPCResourceConfig,
+    OrchestratorConfig,
+)
 
 # Cross-validation and Optuna
 from ced_ml.config.cv_schema import CVConfig, OptunaConfig
@@ -77,6 +82,7 @@ __all__ = [
     # Compute and HPC
     "ComputeConfig",
     "HPCResourceConfig",
+    "OrchestratorConfig",
     "HPCConfig",
     # Training (main config)
     "TrainingConfig",

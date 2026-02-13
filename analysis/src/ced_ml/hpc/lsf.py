@@ -1,17 +1,20 @@
 """LSF job submission utilities for HPC pipeline orchestration.
 
 Provides functions to build and submit LSF (bsub) job scripts for running
-the CeD-ML pipeline on HPC clusters with job dependency chains.
+the CeD-ML pipeline on HPC clusters.
 
 Parallelization strategy:
 - Training: M x S parallel jobs (one per model per split)
-- Post-processing: Single aggregation job (waits for all training)
+- Post-processing: Single aggregation job
 - Panel optimization: M x S seed jobs + M aggregation jobs
-- Consensus: Single job (waits for panel aggregation)
+- Consensus: Single job
 - Permutation tests: M x S parallel jobs (one per model per seed)
 - Permutation aggregation: M jobs (one per model, aggregates per-seed results)
 
-Example: 4 models × 10 splits = 40 training jobs running simultaneously
+Pipeline sequencing is coordinated by a lightweight orchestrator job that:
+1. Waits on sentinel files for stage completion.
+2. Polls upstream job status via bjobs/bhist for fail-fast behavior.
+3. Submits downstream stage scripts only after barriers are satisfied.
 """
 
 import logging
@@ -44,6 +47,39 @@ def validate_identifier(value: str, name: str = "identifier") -> None:
             f"Must contain only alphanumeric characters, underscores, hyphens, and dots.\n"
             f"This prevents shell injection when interpolating into commands."
         )
+
+
+def _sentinel_dir(logs_dir: Path, run_id: str) -> Path:
+    """Get run-specific sentinel directory."""
+    validate_identifier(run_id, "run_id")
+    return logs_dir / f"run_{run_id}" / "sentinels"
+
+
+def _scripts_dir(logs_dir: Path, run_id: str) -> Path:
+    """Get run-specific script directory."""
+    validate_identifier(run_id, "run_id")
+    return logs_dir / f"run_{run_id}" / "scripts"
+
+
+def _sentinel_path(sentinel_dir: Path, job_name: str) -> Path:
+    """Get sentinel file path for a job name."""
+    validate_identifier(job_name, "job_name")
+    return sentinel_dir / f"{job_name}.done"
+
+
+def _append_sentinel_touch(script: str, sentinel_path: Path) -> str:
+    """Append a sentinel touch command to a job script."""
+    return script.rstrip() + f'\n\ntouch "{sentinel_path}"\n'
+
+
+def _write_job_script(scripts_dir: Path, job_name: str, script: str) -> Path:
+    """Write script to disk and make it executable."""
+    validate_identifier(job_name, "job_name")
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    script_path = scripts_dir / f"{job_name}.sh"
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o750)
+    return script_path
 
 
 @dataclass
@@ -469,49 +505,523 @@ ced permutation-test \\
     return cmd
 
 
-def _build_job_id_dependency(job_ids: list[str]) -> str:
-    """Build a ``done(id1) && done(id2) && ...`` dependency expression.
-
-    Uses numeric LSF job IDs instead of name-based wildcards so that
-    dependencies remain valid even after matched jobs leave the active
-    job table (which causes TERM_ORPHAN_SYSTEM with wildcard patterns).
-    """
-    if not job_ids:
-        raise ValueError("job_ids must not be empty")
-    return " && ".join(f"done({jid})" for jid in job_ids)
+def _bash_array_literal(name: str, values: list[str]) -> str:
+    """Render a bash array declaration."""
+    if not values:
+        return f"{name}=()"
+    lines = [f"{name}=("]
+    lines.extend(f'  "{value}"' for value in values)
+    lines.append(")")
+    return "\n".join(lines)
 
 
-def _build_training_dependency_expression(*, run_id: str, models: list[str]) -> str:
-    """Build wildcard dependency expression for all training jobs.
+def _build_orchestrator_bash_functions() -> str:
+    """Bash helpers used by the orchestrator script."""
+    return """submit_and_track() {
+    local script_path="$1"
+    local label="$2"
+    local id_file="$3"
+    local output
+    output=$(bsub < "$script_path" 2>&1)
+    local rc=$?
+    if [ $rc -ne 0 ]; then
+        echo "[$(date '+%F %T')] FATAL: bsub failed for $label (rc=$rc): $output"
+        exit 1
+    fi
+    local job_id
+    job_id=$(echo "$output" | sed -n 's/.*Job <\\([0-9]*\\)>.*/\\1/p')
+    if [ -z "$job_id" ]; then
+        echo "[$(date '+%F %T')] FATAL: cannot parse job ID for $label: $output"
+        exit 1
+    fi
+    echo "[$(date '+%F %T')] Submitted $label: Job $job_id"
+    echo "$job_id" >> "$id_file"
+}
 
-    Uses one clause per base model so we only match training jobs:
-    ``done(CeD_<run_id>_<model>_s*)``.
-    """
+check_upstream_failures() {
+    local -a job_ids=("$@")
+    local jid
+    for jid in "${job_ids[@]}"; do
+        [ -z "$jid" ] && continue
+
+        local raw
+        raw=$(bjobs -noheader -o "stat" "$jid" 2>&1 || true)
+        local stat
+        stat=$(echo "$raw" | awk 'NF {print $1; exit}')
+
+        if [ "$stat" = "EXIT" ] || [ "$stat" = "TERM" ]; then
+            local jname
+            jname=$(bjobs -noheader -o "job_name" "$jid" 2>/dev/null | awk 'NF {print $1; exit}')
+            echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs)"
+            exit 1
+        fi
+
+        if [ -z "$stat" ] || echo "$raw" | grep -qi "not found"; then
+            local hist_exit
+            hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}')
+            if [ -n "$hist_exit" ]; then
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist): $hist_exit"
+                exit 1
+            fi
+            local hist_term
+            hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}')
+            if [ -n "$hist_term" ]; then
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist): $hist_term"
+                exit 1
+            fi
+        fi
+    done
+}
+
+barrier_wait() {
+    local label="$1"; shift
+    local timeout="$1"; shift
+    local poll="$1"; shift
+    local -a sentinels=("$@")
+    local total=${#sentinels[@]}
+    local elapsed=0
+
+    echo "[$(date '+%F %T')] Waiting for $label ($total sentinels, timeout=${timeout}s)..."
+
+    if [ "$total" -eq 0 ]; then
+        printf '{"stage":"%s","status":"done","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+        return 0
+    fi
+
+    while true; do
+        if [ ${#UPSTREAM_IDS[@]} -gt 0 ]; then
+            check_upstream_failures "${UPSTREAM_IDS[@]}"
+        fi
+
+        local missing=0
+        local sentinel
+        for sentinel in "${sentinels[@]}"; do
+            [ ! -f "$sentinel" ] && missing=$((missing + 1))
+        done
+
+        if [ "$missing" -eq 0 ]; then
+            echo "[$(date '+%F %T')] $label complete ($total/$total)."
+            printf '{"stage":"%s","status":"done","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+            return 0
+        fi
+
+        if [ "$elapsed" -ge "$timeout" ]; then
+            echo "[$(date '+%F %T')] TIMEOUT: $label after ${timeout}s ($((total - missing))/$total done)"
+            echo "[$(date '+%F %T')] Missing sentinels:"
+            for sentinel in "${sentinels[@]}"; do
+                [ ! -f "$sentinel" ] && echo "  $sentinel"
+            done
+            printf '{"stage":"%s","status":"timeout","ts":"%s"}\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
+            exit 1
+        fi
+
+        sleep "$poll"
+        elapsed=$((elapsed + poll))
+    done
+}
+
+submit_batch() {
+    local chunk_size="$1"; shift
+    local id_file="$1"; shift
+    local -a scripts=("$@")
+    local i
+    for ((i=0; i<${#scripts[@]}; i++)); do
+        submit_and_track "${scripts[$i]}" "$(basename "${scripts[$i]}" .sh)" "$id_file"
+        if (( (i + 1) % chunk_size == 0 && i + 1 < ${#scripts[@]} )); then
+            echo "[$(date '+%F %T')] Submitted $((i+1))/${#scripts[@]}, pausing..."
+            sleep 2
+        fi
+    done
+}"""
+
+
+def _build_orchestrator_script(
+    *,
+    run_id: str,
+    hpc_config: HPCConfig,
+    sentinel_dir: Path,
+    scripts_dir: Path,
+    orchestrator_log: Path,
+    orchestrator_sentinel: Path,
+    training_job_ids: list[str],
+    training_sentinels: list[Path],
+    post_script: Path,
+    post_sentinel: Path,
+    perm_scripts: list[Path],
+    perm_sentinels: list[Path],
+    perm_agg_scripts: list[Path],
+    perm_agg_sentinels: list[Path],
+    panel_seed_scripts: list[Path],
+    panel_seed_sentinels: list[Path],
+    panel_agg_scripts: list[Path],
+    panel_agg_sentinels: list[Path],
+    consensus_script: Path | None,
+    consensus_sentinel: Path | None,
+    expected_training_jobs: int,
+) -> str:
+    """Build the barrier-orchestrator bash script."""
     validate_identifier(run_id, "run_id")
-    if not models:
-        raise ValueError("models must not be empty")
+    orchestrator_cfg = hpc_config.orchestrator
 
-    deps: list[str] = []
+    training_sentinel_values = [str(p.resolve()) for p in training_sentinels]
+    perm_script_values = [str(p.resolve()) for p in perm_scripts]
+    perm_sentinel_values = [str(p.resolve()) for p in perm_sentinels]
+    perm_agg_script_values = [str(p.resolve()) for p in perm_agg_scripts]
+    perm_agg_sentinel_values = [str(p.resolve()) for p in perm_agg_sentinels]
+    panel_seed_script_values = [str(p.resolve()) for p in panel_seed_scripts]
+    panel_seed_sentinel_values = [str(p.resolve()) for p in panel_seed_sentinels]
+    panel_agg_script_values = [str(p.resolve()) for p in panel_agg_scripts]
+    panel_agg_sentinel_values = [str(p.resolve()) for p in panel_agg_sentinels]
+
+    lines: list[str] = [
+        "#!/bin/bash",
+        f"#BSUB -P {hpc_config.project}",
+        f"#BSUB -q {hpc_config.queue}",
+        f"#BSUB -J CeD_{run_id}_orchestrator",
+        f"#BSUB -n {orchestrator_cfg.cores}",
+        f"#BSUB -W {orchestrator_cfg.walltime}",
+        f'#BSUB -R "span[hosts=1] rusage[mem={orchestrator_cfg.mem_per_core}]"',
+        f"#BSUB -oo {orchestrator_log.resolve()}",
+        f"#BSUB -eo {orchestrator_log.resolve()}",
+        "",
+        "set -euo pipefail",
+        "",
+        "export PYTHONUNBUFFERED=1",
+        "export FORCE_COLOR=1",
+        "",
+        _build_orchestrator_bash_functions(),
+        "",
+        f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
+        f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
+        'STATE_FILE="$SENTINEL_DIR/orchestrator_state.jsonl"',
+        f"POLL_INTERVAL={orchestrator_cfg.poll_interval}",
+        f"MAX_CHUNK={orchestrator_cfg.max_concurrent_submissions}",
+        f"EXPECTED_TRAINING={expected_training_jobs}",
+        "",
+        _bash_array_literal("TRAINING_IDS", training_job_ids),
+        _bash_array_literal("TRAINING_SENTINELS", training_sentinel_values),
+        "",
+        "UPSTREAM_IDS=()",
+        'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR"',
+        'touch "$STATE_FILE"',
+        f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",
+        "echo \"[$(date '+%F %T')] Training IDs submitted: ${#TRAINING_IDS[@]} (expected: $EXPECTED_TRAINING)\"",
+        "",
+        'UPSTREAM_IDS=("${TRAINING_IDS[@]}")',
+        f'barrier_wait "training" {orchestrator_cfg.training_timeout} "$POLL_INTERVAL" "${{TRAINING_SENTINELS[@]}}"',
+        "",
+        'POST_IDS_FILE=$(mktemp "$SENTINEL_DIR/post_ids.XXXXXX")',
+        f'submit_and_track "{post_script.resolve()}" "post-processing" "$POST_IDS_FILE"',
+        'mapfile -t UPSTREAM_IDS < "$POST_IDS_FILE"',
+        _bash_array_literal("POST_SENTINELS", [str(post_sentinel.resolve())]),
+        f'barrier_wait "post-processing" {orchestrator_cfg.post_timeout} "$POLL_INTERVAL" "${{POST_SENTINELS[@]}}"',
+        "",
+    ]
+
+    if perm_script_values:
+        lines.extend(
+            [
+                _bash_array_literal("PERM_SCRIPTS", perm_script_values),
+                _bash_array_literal("PERM_SENTINELS", perm_sentinel_values),
+                'PERM_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_ids.XXXXXX")',
+                'submit_batch "$MAX_CHUNK" "$PERM_IDS_FILE" "${PERM_SCRIPTS[@]}"',
+                'mapfile -t UPSTREAM_IDS < "$PERM_IDS_FILE"',
+                f'barrier_wait "permutation-tests" {orchestrator_cfg.perm_timeout} "$POLL_INTERVAL" "${{PERM_SENTINELS[@]}}"',
+                "",
+                _bash_array_literal("PERM_AGG_SCRIPTS", perm_agg_script_values),
+                _bash_array_literal("PERM_AGG_SENTINELS", perm_agg_sentinel_values),
+                'PERM_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_agg_ids.XXXXXX")',
+                'submit_batch "$MAX_CHUNK" "$PERM_AGG_IDS_FILE" "${PERM_AGG_SCRIPTS[@]}"',
+                'mapfile -t UPSTREAM_IDS < "$PERM_AGG_IDS_FILE"',
+                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.perm_timeout} "$POLL_INTERVAL" "${{PERM_AGG_SENTINELS[@]}}"',
+                "",
+            ]
+        )
+
+    if panel_seed_script_values:
+        lines.extend(
+            [
+                _bash_array_literal("PANEL_SEED_SCRIPTS", panel_seed_script_values),
+                _bash_array_literal("PANEL_SEED_SENTINELS", panel_seed_sentinel_values),
+                'PANEL_SEED_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_seed_ids.XXXXXX")',
+                'submit_batch "$MAX_CHUNK" "$PANEL_SEED_IDS_FILE" "${PANEL_SEED_SCRIPTS[@]}"',
+                'mapfile -t UPSTREAM_IDS < "$PANEL_SEED_IDS_FILE"',
+                f'barrier_wait "panel-seed" {orchestrator_cfg.panel_timeout} "$POLL_INTERVAL" "${{PANEL_SEED_SENTINELS[@]}}"',
+                "",
+                _bash_array_literal("PANEL_AGG_SCRIPTS", panel_agg_script_values),
+                _bash_array_literal("PANEL_AGG_SENTINELS", panel_agg_sentinel_values),
+                'PANEL_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_agg_ids.XXXXXX")',
+                'submit_batch "$MAX_CHUNK" "$PANEL_AGG_IDS_FILE" "${PANEL_AGG_SCRIPTS[@]}"',
+                'mapfile -t UPSTREAM_IDS < "$PANEL_AGG_IDS_FILE"',
+                f'barrier_wait "panel-aggregation" {orchestrator_cfg.panel_timeout} "$POLL_INTERVAL" "${{PANEL_AGG_SENTINELS[@]}}"',
+                "",
+            ]
+        )
+
+    if consensus_script and consensus_sentinel:
+        lines.extend(
+            [
+                'CONSENSUS_IDS_FILE=$(mktemp "$SENTINEL_DIR/consensus_ids.XXXXXX")',
+                f'submit_and_track "{consensus_script.resolve()}" "consensus" "$CONSENSUS_IDS_FILE"',
+                'mapfile -t UPSTREAM_IDS < "$CONSENSUS_IDS_FILE"',
+                _bash_array_literal("CONSENSUS_SENTINELS", [str(consensus_sentinel.resolve())]),
+                f'barrier_wait "consensus" {orchestrator_cfg.consensus_timeout} "$POLL_INTERVAL" "${{CONSENSUS_SENTINELS[@]}}"',
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            f'touch "{orchestrator_sentinel.resolve()}"',
+            'printf \'{"stage":"orchestrator","status":"done","ts":"%s"}\\n\' "$(date -u \'+%FT%TZ\')" >> "$STATE_FILE"',
+            f"echo \"[$(date '+%F %T')] Orchestrator complete for run {run_id}\"",
+            "",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def _submit_orchestrator_pipeline(
+    *,
+    config_file: Path,
+    infile: Path,
+    split_dir: Path,
+    outdir: Path,
+    models: list[str],
+    split_seeds: list[int],
+    run_id: str,
+    enable_ensemble: bool,
+    enable_consensus: bool,
+    enable_optimize_panel: bool,
+    enable_permutation_test: bool = False,
+    permutation_n_perms: int = 200,
+    permutation_n_jobs: int = -1,
+    permutation_split_seeds: list[int] | None = None,
+    hpc_config: HPCConfig,
+    logs_dir: Path,
+    dry_run: bool,
+    pipeline_logger: logging.Logger,
+) -> dict:
+    """Submit complete HPC pipeline using a barrier-orchestrator job."""
+    base_dir = Path.cwd()
+    env_info = detect_environment(base_dir)
+    pipeline_logger.info(f"Python environment: {env_info.env_type}")
+
+    run_root = logs_dir / f"run_{run_id}"
+    run_logs_dir = run_root / "training"
+    sentinel_dir = _sentinel_dir(logs_dir, run_id)
+    scripts_dir = _scripts_dir(logs_dir, run_id)
+    run_logs_dir.mkdir(parents=True, exist_ok=True)
+    sentinel_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    default_resources = hpc_config.get_resources("default")
+    bsub_params = {
+        "project": hpc_config.project,
+        "env_activation": env_info.activation_cmd,
+        "log_dir": run_logs_dir,
+        **default_resources,
+    }
+
+    def _build_and_stage_script(job_name: str, command: str) -> tuple[str, Path, Path]:
+        script = build_job_script(job_name=job_name, command=command, **bsub_params)
+        sentinel = _sentinel_path(sentinel_dir, job_name)
+        script = _append_sentinel_touch(script, sentinel)
+        script_path = _write_job_script(scripts_dir, job_name, script)
+        return script, script_path, sentinel
+
+    # Stage 1: training (submit immediately; orchestrator waits on sentinels)
+    training_job_names: list[str] = []
+    training_job_ids: list[str] = []
+    training_sentinels: list[Path] = []
+    expected_training_jobs = len(models) * len(split_seeds)
+    pipeline_logger.info(
+        f"Submitting {expected_training_jobs} training jobs "
+        f"({len(models)} models x {len(split_seeds)} seeds)..."
+    )
+
     for model in models:
-        validate_identifier(model, "model")
-        deps.append(f"done(CeD_{run_id}_{model}_s*)")
-    return " && ".join(deps)
+        for seed in split_seeds:
+            job_name = f"CeD_{run_id}_{model}_s{seed}"
+            training_job_names.append(job_name)
+            command = _build_training_command(
+                config_file=config_file.resolve(),
+                infile=infile.resolve(),
+                split_dir=split_dir.resolve(),
+                outdir=outdir.resolve(),
+                model=model,
+                split_seed=seed,
+                run_id=run_id,
+            )
+            script, _, sentinel = _build_and_stage_script(job_name, command)
+            training_sentinels.append(sentinel)
 
+            if dry_run:
+                pipeline_logger.info(f"  [DRY RUN] Training ({model} s{seed}): {job_name}")
+                continue
 
-def _merge_dependency_with_fallback(
-    primary: str | None,
-    fallback: str | None,
-) -> str | None:
-    """Combine primary and fallback dependency expressions with OR.
+            job_id = submit_job(script, dry_run=False)
+            if not job_id:
+                raise RuntimeError(f"Training job submission failed: {job_name}")
+            training_job_ids.append(job_id)
+            pipeline_logger.info(f"  Training ({model} s{seed}): Job {job_id}")
 
-    This keeps numeric-ID dependencies (fast path) while preserving a
-    wildcard fallback when a scheduler can no longer resolve older IDs.
-    """
-    if primary and fallback:
-        if primary == fallback:
-            return primary
-        return f"({primary}) || ({fallback})"
-    return primary or fallback
+    if not dry_run and len(training_job_ids) != expected_training_jobs:
+        raise RuntimeError(
+            f"Expected {expected_training_jobs} training job IDs, got {len(training_job_ids)}"
+        )
+
+    # Stage 2: post-processing script (submitted by orchestrator)
+    post_job_name = f"CeD_{run_id}_post"
+    post_command = _build_postprocessing_command(
+        config_file=config_file.resolve(),
+        run_id=run_id,
+        outdir=outdir.resolve(),
+        infile=infile.resolve(),
+        split_dir=split_dir.resolve(),
+        models=models,
+        split_seeds=split_seeds,
+        enable_ensemble=enable_ensemble,
+    )
+    _, post_script_path, post_sentinel = _build_and_stage_script(post_job_name, post_command)
+
+    # Stage 3/4: permutation test + aggregation scripts (optional)
+    permutation_job_names: list[str] = []
+    permutation_agg_names: list[str] = []
+    perm_script_paths: list[Path] = []
+    perm_sentinels: list[Path] = []
+    perm_agg_script_paths: list[Path] = []
+    perm_agg_sentinels: list[Path] = []
+    if enable_permutation_test:
+        perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
+        for model in models:
+            for seed in perm_seeds:
+                perm_job_name = f"CeD_{run_id}_perm_{model}_s{seed}"
+                perm_command = _build_permutation_test_full_command(
+                    run_id=run_id,
+                    model=model,
+                    split_seed=seed,
+                    n_perms=permutation_n_perms,
+                    n_jobs=permutation_n_jobs,
+                )
+                _, script_path, sentinel = _build_and_stage_script(perm_job_name, perm_command)
+                permutation_job_names.append(perm_job_name)
+                perm_script_paths.append(script_path)
+                perm_sentinels.append(sentinel)
+
+            perm_agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
+            perm_agg_command = _build_permutation_aggregation_command(run_id=run_id, model=model)
+            _, agg_script_path, agg_sentinel = _build_and_stage_script(
+                perm_agg_job_name, perm_agg_command
+            )
+            permutation_agg_names.append(perm_agg_job_name)
+            perm_agg_script_paths.append(agg_script_path)
+            perm_agg_sentinels.append(agg_sentinel)
+
+    # Stage 5/6: panel seed + aggregation scripts (optional)
+    panel_job_names: list[str] = []
+    panel_seed_script_paths: list[Path] = []
+    panel_seed_sentinels: list[Path] = []
+    panel_agg_script_paths: list[Path] = []
+    panel_agg_sentinels: list[Path] = []
+    panel_agg_names: list[str] = []
+    if enable_optimize_panel:
+        for model in models:
+            for seed in split_seeds:
+                panel_seed_job = f"CeD_{run_id}_panel_{model}_s{seed}"
+                panel_seed_cmd = _build_panel_optimization_command(
+                    run_id=run_id,
+                    model=model,
+                    split_seed=seed,
+                )
+                _, seed_script_path, seed_sentinel = _build_and_stage_script(
+                    panel_seed_job, panel_seed_cmd
+                )
+                panel_job_names.append(panel_seed_job)
+                panel_seed_script_paths.append(seed_script_path)
+                panel_seed_sentinels.append(seed_sentinel)
+
+            panel_agg_job = f"CeD_{run_id}_panel_{model}_agg"
+            panel_agg_cmd = _build_panel_optimization_command(run_id=run_id, model=model)
+            _, panel_agg_script, panel_agg_sentinel = _build_and_stage_script(
+                panel_agg_job, panel_agg_cmd
+            )
+            panel_job_names.append(panel_agg_job)
+            panel_agg_names.append(panel_agg_job)
+            panel_agg_script_paths.append(panel_agg_script)
+            panel_agg_sentinels.append(panel_agg_sentinel)
+
+    # Stage 7: consensus script (optional)
+    consensus_job_name = f"CeD_{run_id}_consensus"
+    consensus_script_path: Path | None = None
+    consensus_sentinel: Path | None = None
+    if enable_consensus:
+        consensus_cmd = _build_consensus_panel_command(run_id=run_id)
+        _, consensus_script_path, consensus_sentinel = _build_and_stage_script(
+            consensus_job_name, consensus_cmd
+        )
+
+    # Orchestrator submission
+    orchestrator_job_name = f"CeD_{run_id}_orchestrator"
+    orchestrator_log = run_root / "orchestrator.log"
+    orchestrator_sentinel = _sentinel_path(sentinel_dir, orchestrator_job_name)
+    orchestrator_script = _build_orchestrator_script(
+        run_id=run_id,
+        hpc_config=hpc_config,
+        sentinel_dir=sentinel_dir,
+        scripts_dir=scripts_dir,
+        orchestrator_log=orchestrator_log,
+        orchestrator_sentinel=orchestrator_sentinel,
+        training_job_ids=training_job_ids,
+        training_sentinels=training_sentinels,
+        post_script=post_script_path,
+        post_sentinel=post_sentinel,
+        perm_scripts=perm_script_paths,
+        perm_sentinels=perm_sentinels,
+        perm_agg_scripts=perm_agg_script_paths,
+        perm_agg_sentinels=perm_agg_sentinels,
+        panel_seed_scripts=panel_seed_script_paths,
+        panel_seed_sentinels=panel_seed_sentinels,
+        panel_agg_scripts=panel_agg_script_paths,
+        panel_agg_sentinels=panel_agg_sentinels,
+        consensus_script=consensus_script_path,
+        consensus_sentinel=consensus_sentinel,
+        expected_training_jobs=expected_training_jobs,
+    )
+    _write_job_script(scripts_dir, orchestrator_job_name, orchestrator_script)
+
+    orchestrator_job_id = submit_job(orchestrator_script, dry_run=dry_run)
+    if not dry_run and not orchestrator_job_id:
+        raise RuntimeError("Orchestrator submission failed")
+
+    orchestrator_job_display = orchestrator_job_id or f"DRYRUN_{orchestrator_job_name}"
+    pipeline_logger.info("-- HPC Pipeline Summary --")
+    pipeline_logger.info("Mode:             orchestrator")
+    pipeline_logger.info(f"Run ID:           {run_id}")
+    pipeline_logger.info(
+        f"Training jobs:    {expected_training_jobs} ({len(models)} models x {len(split_seeds)} seeds)"
+    )
+    pipeline_logger.info(f"Orchestrator job: {orchestrator_job_display}")
+    pipeline_logger.info(f"Sentinel dir:     {sentinel_dir}/")
+    pipeline_logger.info(f"Scripts dir:      {scripts_dir}/")
+    pipeline_logger.info(f"Orchestrator log: {orchestrator_log}")
+
+    return {
+        "run_id": run_id,
+        "training_jobs": training_job_names,
+        "postprocessing_job": f"ORCH_{post_job_name}",
+        "panel_optimization_jobs": panel_job_names,
+        "consensus_job": f"ORCH_{consensus_job_name}" if enable_consensus else None,
+        "permutation_jobs": permutation_job_names,
+        "permutation_aggregation_jobs": permutation_agg_names,
+        "orchestrator_job": orchestrator_job_display,
+        "logs_dir": run_logs_dir,
+        "sentinel_dir": sentinel_dir,
+        "scripts_dir": scripts_dir,
+        "orchestrator_log": orchestrator_log,
+        "panel_aggregation_jobs": panel_agg_names,
+    }
 
 
 def submit_hpc_pipeline(
@@ -535,383 +1045,24 @@ def submit_hpc_pipeline(
     dry_run: bool,
     pipeline_logger: logging.Logger,
 ) -> dict:
-    """Submit complete HPC pipeline with dependency chains.
-
-    Job dependency architecture (OPTIMIZED FOR CORRECTNESS + PARALLELIZATION):
-    1. Training jobs (M x S jobs: one per model per split, fully parallel)
-       Example: 4 models x 10 splits = 40 parallel jobs
-    2. Post-processing job (aggregation + ensemble, depends on ALL training)
-    3. Permutation test jobs (M x S, depends on training - parallel w/ post)
-    4. Permutation aggregation (M jobs, depends on perm tests - produces sig)
-    5. Panel seed jobs (M x S, depends on post + perm agg for sig gating)
-    6. Panel aggregation jobs (M jobs, depends on that model's seed jobs)
-    7. Consensus panel (depends on post + panel agg + perm agg)
-
-    Args:
-        config_file: Path to training config YAML.
-        infile: Path to input data file.
-        split_dir: Path to split indices directory.
-        outdir: Path to results output directory.
-        models: List of model names.
-        split_seeds: List of split seeds.
-        run_id: Shared run identifier.
-        enable_ensemble: Enable ensemble training in post-processing.
-        enable_consensus: Enable consensus panel generation.
-        enable_optimize_panel: Enable parallel panel optimization jobs.
-        enable_permutation_test: Enable permutation testing for significance.
-        permutation_n_perms: Number of permutations (default: 200).
-        permutation_n_jobs: Parallel jobs for permutation testing (-1 = all cores).
-        hpc_config: HPCConfig schema instance.
-        logs_dir: Directory for job logs.
-        dry_run: Preview without submitting.
-        pipeline_logger: Logger instance.
-
-    Returns:
-        Dict with run_id, training_jobs, postprocessing_job, panel_jobs,
-        consensus_job, permutation_jobs, logs_dir.
-    """
-    base_dir = Path.cwd()
-
-    # Detect environment
-    env_info = detect_environment(base_dir)
-    pipeline_logger.info(f"Python environment: {env_info.env_type}")
-
-    # Create log directory (structure: logs/run_{ID}/training/)
-    run_logs_dir = logs_dir / f"run_{run_id}" / "training"
-    run_logs_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get default resource config
-    default_resources = hpc_config.get_resources("default")
-
-    # Common bsub parameters (using default resources for now, can be customized per stage)
-    bsub_params = {
-        "project": hpc_config.project,
-        "env_activation": env_info.activation_cmd,
-        "log_dir": run_logs_dir,
-        **default_resources,
-    }
-
-    # Submit training jobs (one per model per split for maximum parallelization)
-    n_jobs = len(models) * len(split_seeds)
-    pipeline_logger.info(
-        f"Submitting {n_jobs} training jobs "
-        f"({len(models)} models \u00d7 {len(split_seeds)} splits)..."
-    )
-    training_job_names = []
-    training_job_ids: list[str] = []
-
-    for model in models:
-        for seed in split_seeds:
-            job_name = f"CeD_{run_id}_{model}_s{seed}"
-            training_job_names.append(job_name)
-
-            command = _build_training_command(
-                config_file=config_file.resolve(),
-                infile=infile.resolve(),
-                split_dir=split_dir.resolve(),
-                outdir=outdir.resolve(),
-                model=model,
-                split_seed=seed,
-                run_id=run_id,
-            )
-
-            script = build_job_script(
-                job_name=job_name,
-                command=command,
-                **bsub_params,
-            )
-
-            job_id = submit_job(script, dry_run=dry_run)
-            if job_id:
-                training_job_ids.append(job_id)
-                pipeline_logger.info(f"  {model} seed {seed}: Job {job_id}")
-            elif dry_run:
-                pipeline_logger.info(f"  [DRY RUN] {model} seed {seed}: {job_name}")
-            else:
-                pipeline_logger.error(f"  {model} seed {seed}: Submission failed")
-
-    # Submit post-processing job (aggregation + ensemble) with dependency on all
-    # training jobs. Use IDs as the primary condition with model-scoped wildcard
-    # fallback for clusters that may evict old job IDs from active tables.
-    pipeline_logger.info("Submitting post-processing job (aggregation + ensemble)...")
-    post_job_name = f"CeD_{run_id}_post"
-    post_dep_ids = _build_job_id_dependency(training_job_ids) if training_job_ids else None
-    post_dep_names = _build_training_dependency_expression(run_id=run_id, models=models)
-    dependency_expr = _merge_dependency_with_fallback(post_dep_ids, post_dep_names)
-
-    post_command = _build_postprocessing_command(
-        config_file=config_file.resolve(),
-        run_id=run_id,
-        outdir=outdir.resolve(),
-        infile=infile.resolve(),
-        split_dir=split_dir.resolve(),
+    """Submit complete HPC pipeline using orchestrator barriers."""
+    return _submit_orchestrator_pipeline(
+        config_file=config_file,
+        infile=infile,
+        split_dir=split_dir,
+        outdir=outdir,
         models=models,
         split_seeds=split_seeds,
+        run_id=run_id,
         enable_ensemble=enable_ensemble,
+        enable_consensus=enable_consensus,
+        enable_optimize_panel=enable_optimize_panel,
+        enable_permutation_test=enable_permutation_test,
+        permutation_n_perms=permutation_n_perms,
+        permutation_n_jobs=permutation_n_jobs,
+        permutation_split_seeds=permutation_split_seeds,
+        hpc_config=hpc_config,
+        logs_dir=logs_dir,
+        dry_run=dry_run,
+        pipeline_logger=pipeline_logger,
     )
-
-    post_script = build_job_script(
-        job_name=post_job_name,
-        command=post_command,
-        dependency=dependency_expr,
-        **bsub_params,
-    )
-
-    post_job_id = submit_job(post_script, dry_run=dry_run)
-    if post_job_id:
-        pipeline_logger.info(f"  Post-processing: Job {post_job_id}")
-    elif dry_run:
-        pipeline_logger.info(f"  [DRY RUN] Post-processing: {post_job_name}")
-
-    # Submit permutation test jobs BEFORE panel optimization (significance gating)
-    # Permutation jobs depend on training jobs (can run in parallel with post-processing)
-    # Permutation aggregation produces aggregated_significance.csv needed by panel optimization
-    permutation_job_names = []
-    permutation_agg_names: list[str] = []
-    perm_agg_ids_by_model: dict[str, str] = {}
-    if enable_permutation_test:
-        # Use dedicated permutation seeds if provided, else fall back to training seeds
-        perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
-        n_perm_jobs = len(models) * len(perm_seeds)
-        pipeline_logger.info(
-            f"Submitting {n_perm_jobs} permutation test jobs "
-            f"({len(models)} models x {len(perm_seeds)} seeds, "
-            f"seeds={perm_seeds[0]}..{perm_seeds[-1]})..."
-        )
-
-        # Track permutation job IDs by model for aggregation dependencies
-        perm_ids_by_model: dict[str, list[str]] = {m: [] for m in models}
-
-        for model in models:
-            for seed in perm_seeds:
-                perm_job_name = f"CeD_{run_id}_perm_{model}_s{seed}"
-                permutation_job_names.append(perm_job_name)
-
-                # Depend on post-processing (aggregation) so observed AUROC is
-                # available and all training outputs exist.  Permutation tests
-                # train from scratch with permuted labels -- they do not need
-                # a training job for this specific seed.
-                perm_dep_ids = f"done({post_job_id})" if post_job_id else None
-                perm_dep_names = f"done({post_job_name})"
-                perm_dependency = _merge_dependency_with_fallback(perm_dep_ids, perm_dep_names)
-
-                perm_command = _build_permutation_test_full_command(
-                    run_id=run_id,
-                    model=model,
-                    split_seed=seed,
-                    n_perms=permutation_n_perms,
-                    n_jobs=permutation_n_jobs,
-                )
-
-                perm_script = build_job_script(
-                    job_name=perm_job_name,
-                    command=perm_command,
-                    dependency=perm_dependency,
-                    **bsub_params,
-                )
-
-                perm_job_id = submit_job(perm_script, dry_run=dry_run)
-                if perm_job_id:
-                    perm_ids_by_model[model].append(perm_job_id)
-                    pipeline_logger.info(f"  Permutation test ({model} s{seed}): Job {perm_job_id}")
-                elif dry_run:
-                    pipeline_logger.info(
-                        f"  [DRY RUN] Permutation test ({model} s{seed}): {perm_job_name}"
-                    )
-                else:
-                    pipeline_logger.error(
-                        f"  Permutation test ({model} s{seed}): Submission failed"
-                    )
-
-        # Submit permutation aggregation jobs (one per model, depends on all
-        # perm jobs for that model + post-processing)
-        pipeline_logger.info(f"Submitting {len(models)} permutation aggregation jobs...")
-        for model in models:
-            agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
-            model_perm_ids = perm_ids_by_model[model]
-
-            if model_perm_ids:
-                # Depend on all permutation jobs for this model AND post-processing.
-                # Post-processing produces pooled_val_metrics.csv which provides the
-                # observed AUROC needed for computing empirical p-values.
-                agg_dep_ids_list = list(model_perm_ids)
-                if post_job_id:
-                    agg_dep_ids_list.append(post_job_id)
-                agg_dep_ids = _build_job_id_dependency(agg_dep_ids_list)
-                agg_dep_names = f"done(CeD_{run_id}_perm_{model}_s*) && " f"done({post_job_name})"
-                agg_dependency = _merge_dependency_with_fallback(agg_dep_ids, agg_dep_names)
-
-                agg_command = _build_permutation_aggregation_command(
-                    run_id=run_id,
-                    model=model,
-                )
-
-                agg_script = build_job_script(
-                    job_name=agg_job_name,
-                    command=agg_command,
-                    dependency=agg_dependency,
-                    **bsub_params,
-                )
-
-                agg_job_id = submit_job(agg_script, dry_run=dry_run)
-                if agg_job_id:
-                    pipeline_logger.info(f"  Permutation aggregation ({model}): Job {agg_job_id}")
-                    perm_agg_ids_by_model[model] = agg_job_id
-                elif dry_run:
-                    pipeline_logger.info(
-                        f"  [DRY RUN] Permutation aggregation ({model}): " f"{agg_job_name}"
-                    )
-                else:
-                    pipeline_logger.error(f"  Permutation aggregation ({model}): Submission failed")
-
-                permutation_agg_names.append(agg_job_name)
-
-    # Submit panel optimization jobs: M x S seed jobs + M aggregation jobs
-    # When permutation testing is enabled, panel optimization depends on permutation
-    # aggregation completing first (significance gating requires aggregated_significance.csv)
-    panel_job_ids = []
-    panel_agg_ids: list[str] = []
-    panel_agg_names: list[str] = []  # populated inside enable_optimize_panel block
-    if enable_optimize_panel:
-        n_panel_seed_jobs = len(models) * len(split_seeds)
-        pipeline_logger.info(
-            f"Submitting {n_panel_seed_jobs} panel seed jobs "
-            f"({len(models)} models x {len(split_seeds)} seeds) + "
-            f"{len(models)} aggregation jobs..."
-        )
-
-        # Phase 1: Per-seed RFE jobs (M x S, parallel, depend on post-processing)
-        # When permutation testing is enabled, also depend on permutation aggregation
-        # so that significance data is available for gating
-        panel_seed_ids_by_model: dict[str, list[str]] = {m: [] for m in models}
-        for model in models:
-            for seed in split_seeds:
-                seed_job_name = f"CeD_{run_id}_panel_{model}_s{seed}"
-                # Base dependency: post-processing must complete
-                seed_dep_ids_list: list[str] = []
-                if post_job_id:
-                    seed_dep_ids_list.append(post_job_id)
-                # If permutation testing enabled, also depend on that model's perm aggregation
-                if enable_permutation_test and model in perm_agg_ids_by_model:
-                    seed_dep_ids_list.append(perm_agg_ids_by_model[model])
-                seed_dep_ids = (
-                    _build_job_id_dependency(seed_dep_ids_list) if seed_dep_ids_list else None
-                )
-                seed_dep_names = f"done({post_job_name})"
-                if enable_permutation_test:
-                    seed_dep_names += f" && done(CeD_{run_id}_perm_{model}_agg)"
-                seed_dependency = _merge_dependency_with_fallback(seed_dep_ids, seed_dep_names)
-
-                seed_command = _build_panel_optimization_command(
-                    run_id=run_id,
-                    model=model,
-                    split_seed=seed,
-                )
-
-                seed_script = build_job_script(
-                    job_name=seed_job_name,
-                    command=seed_command,
-                    dependency=seed_dependency,
-                    **bsub_params,
-                )
-
-                seed_job_id = submit_job(seed_script, dry_run=dry_run)
-                if seed_job_id:
-                    pipeline_logger.info(f"  Panel seed ({model} s{seed}): Job {seed_job_id}")
-                    panel_seed_ids_by_model[model].append(seed_job_id)
-                panel_job_ids.append(seed_job_name)
-                if not seed_job_id and not dry_run:
-                    pipeline_logger.error(f"  Panel seed ({model} s{seed}): Submission failed")
-                elif dry_run:
-                    pipeline_logger.info(
-                        f"  [DRY RUN] Panel seed ({model} s{seed}): {seed_job_name}"
-                    )
-
-        # Phase 2: Per-model aggregation jobs (M, depend on all seed jobs for that model)
-        for model in models:
-            agg_job_name = f"CeD_{run_id}_panel_{model}_agg"
-            model_seed_ids = panel_seed_ids_by_model[model]
-            agg_dep_ids = _build_job_id_dependency(model_seed_ids) if model_seed_ids else None
-            agg_dep_names = f"done(CeD_{run_id}_panel_{model}_s*)"
-            agg_dependency = _merge_dependency_with_fallback(agg_dep_ids, agg_dep_names)
-
-            agg_command = _build_panel_optimization_command(
-                run_id=run_id,
-                model=model,
-            )
-
-            agg_script = build_job_script(
-                job_name=agg_job_name,
-                command=agg_command,
-                dependency=agg_dependency,
-                **bsub_params,
-            )
-
-            agg_job_id = submit_job(agg_script, dry_run=dry_run)
-            if agg_job_id:
-                pipeline_logger.info(f"  Panel aggregation ({model}): Job {agg_job_id}")
-                panel_agg_ids.append(agg_job_id)
-            panel_job_ids.append(agg_job_name)
-            panel_agg_names.append(agg_job_name)
-            if not agg_job_id and not dry_run:
-                pipeline_logger.error(f"  Panel aggregation ({model}): Submission failed")
-            elif dry_run:
-                pipeline_logger.info(f"  [DRY RUN] Panel aggregation ({model}): {agg_job_name}")
-
-    # Submit consensus panel job (depends on post + panel agg + perm agg)
-    consensus_job_id = None
-    if enable_consensus:
-        pipeline_logger.info("Submitting consensus panel job...")
-        consensus_job_name = f"CeD_{run_id}_consensus"
-
-        # Consensus depends on:
-        # - post-processing (aggregation)
-        # - panel aggregation jobs (if enabled)
-        # - permutation aggregation jobs (if enabled, for significance filtering)
-        consensus_dep_ids_list: list[str] = []
-        if post_job_id:
-            consensus_dep_ids_list.append(post_job_id)
-        if enable_optimize_panel:
-            consensus_dep_ids_list.extend(panel_agg_ids)
-        if enable_permutation_test:
-            consensus_dep_ids_list.extend(perm_agg_ids_by_model.values())
-        consensus_dep_ids = (
-            _build_job_id_dependency(consensus_dep_ids_list) if consensus_dep_ids_list else None
-        )
-        consensus_dep_names_list = [f"done({post_job_name})"]
-        if enable_optimize_panel:
-            consensus_dep_names_list.append(f"done(CeD_{run_id}_panel_*_agg)")
-        if enable_permutation_test:
-            consensus_dep_names_list.append(f"done(CeD_{run_id}_perm_*_agg)")
-        consensus_dep_names = " && ".join(consensus_dep_names_list)
-        consensus_dependency = _merge_dependency_with_fallback(
-            consensus_dep_ids,
-            consensus_dep_names,
-        )
-
-        consensus_command = _build_consensus_panel_command(run_id=run_id)
-
-        consensus_script = build_job_script(
-            job_name=consensus_job_name,
-            command=consensus_command,
-            dependency=consensus_dependency,
-            **bsub_params,
-        )
-
-        consensus_job_id = submit_job(consensus_script, dry_run=dry_run)
-        if consensus_job_id:
-            pipeline_logger.info(f"  Consensus panel: Job {consensus_job_id}")
-        elif dry_run:
-            pipeline_logger.info(f"  [DRY RUN] Consensus panel: {consensus_job_name}")
-
-    return {
-        "run_id": run_id,
-        "training_jobs": training_job_names,
-        "postprocessing_job": post_job_id or f"DRYRUN_{post_job_name}",
-        "panel_optimization_jobs": panel_job_ids,
-        "consensus_job": consensus_job_id
-        or (f"DRYRUN_{consensus_job_name}" if enable_consensus else None),
-        "permutation_jobs": permutation_job_names,
-        "permutation_aggregation_jobs": permutation_agg_names,
-        "logs_dir": run_logs_dir,
-    }

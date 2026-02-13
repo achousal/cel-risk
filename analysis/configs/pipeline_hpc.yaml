@@ -32,3 +32,14 @@ hpc:
   walltime: "48:00"  # hours:minutes
   cores: 12
   mem_per_core: 8000  # MB
+  orchestrator:
+    poll_interval: 60
+    training_timeout: 14400
+    post_timeout: 7200
+    perm_timeout: 14400
+    panel_timeout: 7200
+    consensus_timeout: 3600
+    max_concurrent_submissions: 20
+    cores: 1
+    mem_per_core: 2000
+    walltime: "48:00"

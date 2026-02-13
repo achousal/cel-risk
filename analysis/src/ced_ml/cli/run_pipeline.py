@@ -519,6 +519,8 @@ def _run_hpc_mode(
     hpc_logger.info(f"Run ID: {result['run_id']}")
     hpc_logger.info(f"Training jobs: {len(result['training_jobs'])}")
     hpc_logger.info(f"Post-processing job: {result['postprocessing_job']}")
+    if result.get("orchestrator_job"):
+        hpc_logger.info(f"Orchestrator job: {result['orchestrator_job']}")
 
     if result.get("panel_optimization_jobs"):
         hpc_logger.info(
@@ -530,6 +532,12 @@ def _run_hpc_mode(
 
     if result.get("permutation_jobs"):
         hpc_logger.info(f"Permutation test jobs: {len(result['permutation_jobs'])}")
+    if result.get("sentinel_dir"):
+        hpc_logger.info(f"Sentinel dir: {result['sentinel_dir']}")
+    if result.get("scripts_dir"):
+        hpc_logger.info(f"Scripts dir: {result['scripts_dir']}")
+    if result.get("orchestrator_log"):
+        hpc_logger.info(f"Orchestrator log: {result['orchestrator_log']}")
 
     hpc_logger.info("")
     hpc_logger.info("Submission log:")

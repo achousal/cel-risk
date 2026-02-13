@@ -1,8 +1,18 @@
 """Compute and HPC resource configuration schemas for CeD-ML pipeline."""
 
 import os
+import re
 
 from pydantic import BaseModel, Field, model_validator
+
+
+def _validate_walltime_format(value: str, field_name: str = "walltime") -> None:
+    """Validate LSF-style walltime as HH:MM or HH:MM:SS."""
+    if not re.match(r"^\d{1,3}:\d{2}(:\d{2})?$", value):
+        raise ValueError(
+            f"Invalid {field_name} format: '{value}'\n"
+            "Expected HH:MM or HH:MM:SS (e.g., '24:00' or '24:00:00')"
+        )
 
 
 class ComputeConfig(BaseModel):
@@ -25,14 +35,28 @@ class HPCResourceConfig(BaseModel):
     @model_validator(mode="after")
     def validate_walltime_format(self) -> "HPCResourceConfig":
         """Validate walltime format."""
-        import re
+        _validate_walltime_format(self.walltime)
+        return self
 
-        # Accept HH:MM or HH:MM:SS
-        if not re.match(r"^\d{1,3}:\d{2}(:\d{2})?$", self.walltime):
-            raise ValueError(
-                f"Invalid walltime format: '{self.walltime}'\n"
-                f"Expected HH:MM or HH:MM:SS (e.g., '24:00' or '24:00:00')"
-            )
+
+class OrchestratorConfig(BaseModel):
+    """Resources and timeouts for the barrier-orchestrator job."""
+
+    poll_interval: int = Field(default=60, ge=10, le=600)
+    training_timeout: int = Field(default=14400, ge=3600)
+    post_timeout: int = Field(default=7200, ge=1800)
+    perm_timeout: int = Field(default=14400, ge=1800)
+    panel_timeout: int = Field(default=7200, ge=1800)
+    consensus_timeout: int = Field(default=3600, ge=900)
+    max_concurrent_submissions: int = Field(default=20, ge=1, le=100)
+    cores: int = Field(default=1, ge=1, le=4)
+    mem_per_core: int = Field(default=2000, ge=512, le=8000)
+    walltime: str = Field(default="48:00")
+
+    @model_validator(mode="after")
+    def validate_walltime_format(self) -> "OrchestratorConfig":
+        """Validate walltime format."""
+        _validate_walltime_format(self.walltime)
         return self
 
 
@@ -49,6 +73,7 @@ class HPCConfig(BaseModel):
         training: Optional resource override for training jobs.
         postprocessing: Optional resource override for aggregation/ensemble jobs.
         optimization: Optional resource override for panel optimization jobs.
+        orchestrator: Barrier-orchestrator polling settings and resources.
     """
 
     project: str = Field(
@@ -72,12 +97,11 @@ class HPCConfig(BaseModel):
     training: HPCResourceConfig | None = None
     postprocessing: HPCResourceConfig | None = None
     optimization: HPCResourceConfig | None = None
+    orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
 
     @model_validator(mode="after")
     def validate_project_and_walltime(self) -> "HPCConfig":
         """Validate that project is not a placeholder and walltime format."""
-        import re
-
         # Validate project
         placeholders = {"YOUR_PROJECT_ALLOCATION", "YOUR_ALLOCATION"}
         if self.project in placeholders:
@@ -87,11 +111,7 @@ class HPCConfig(BaseModel):
             )
 
         # Validate walltime format (HH:MM or HH:MM:SS)
-        if not re.match(r"^\d{1,3}:\d{2}(:\d{2})?$", self.walltime):
-            raise ValueError(
-                f"Invalid walltime format: '{self.walltime}'\n"
-                f"Expected HH:MM or HH:MM:SS (e.g., '24:00' or '24:00:00')"
-            )
+        _validate_walltime_format(self.walltime)
 
         return self
 

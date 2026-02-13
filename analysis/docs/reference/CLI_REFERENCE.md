@@ -33,7 +33,23 @@ When running in HPC mode (`--hpc`), a detailed submission log is automatically c
 ```
 logs/run_{RUN_ID}/submission.log
 ```
-This log captures all job submission details, dependency chains, and job IDs for monitoring.
+This log captures orchestrator submission details, training job IDs, and barrier progress metadata.
+
+HPC runs now use a sentinel-based orchestrator job (instead of long LSF `-w done(...)` chains):
+- Stage sentinels: `logs/run_{RUN_ID}/sentinels/`
+- Generated job scripts: `logs/run_{RUN_ID}/scripts/`
+- Orchestrator runtime log: `logs/run_{RUN_ID}/orchestrator.log`
+
+Per-stage waits are tuned under `hpc.orchestrator` in `configs/pipeline_hpc.yaml`:
+- `poll_interval`
+- `training_timeout`, `post_timeout`, `perm_timeout`, `panel_timeout`, `consensus_timeout`
+- `max_concurrent_submissions`
+
+Troubleshooting:
+```bash
+ls logs/run_<RUN_ID>/sentinels/
+cat logs/run_<RUN_ID>/orchestrator.log
+```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
