@@ -209,7 +209,7 @@ def build_job_script(
 #BSUB -J {job_name}
 #BSUB -n {cores}
 #BSUB -W {walltime}
-#BSUB -R "span[hosts=1] rusage[mem={mem_per_core}]"
+#BSUB -R "rusage[mem={mem_per_core}] span[hosts=1]"
 #BSUB -oo /dev/null
 #BSUB -eo /dev/null
 {dep_line}
@@ -620,7 +620,7 @@ submit_and_track() {
 #BSUB -J $job_name
 #BSUB -n $cores
 #BSUB -W $walltime
-#BSUB -R "span[hosts=1] rusage[mem=$mem_per_core]"
+#BSUB -R "rusage[mem=$mem_per_core] span[hosts=1]"
 #BSUB -oo /dev/null
 #BSUB -eo /dev/null
 
@@ -790,7 +790,7 @@ def _build_orchestrator_script(
         f"#BSUB -J CeD_{run_id}_orchestrator",
         f"#BSUB -n {orchestrator_cfg.cores}",
         f"#BSUB -W {orchestrator_cfg.walltime}",
-        f'#BSUB -R "span[hosts=1] rusage[mem={orchestrator_cfg.mem_per_core}]"',
+        f'#BSUB -R "rusage[mem={orchestrator_cfg.mem_per_core}] span[hosts=1]"',
         f"#BSUB -oo {orchestrator_log.resolve()}",
         f"#BSUB -eo {orchestrator_log.resolve()}",
         "",
