@@ -12,6 +12,7 @@ from ced_ml.hpc.common import (
     _build_orchestrator_bash_functions,
     _build_orchestrator_script,
     _build_panel_optimization_command,
+    _build_permutation_aggregation_command,
     _build_postprocessing_command,
     _build_training_command,
     _build_wrapper_script,
@@ -19,6 +20,7 @@ from ced_ml.hpc.common import (
     _sentinel_dir,
     _sentinel_log_path,
     build_job_script,
+    detect_environment,
     submit_hpc_pipeline,
 )
 from ced_ml.hpc.lsf import LSFScheduler
@@ -172,6 +174,13 @@ def test_build_panel_optimization_command():
     assert cmd == "ced optimize-panel --run-id 20260130_120000 --model LR_EN"
 
 
+def test_build_permutation_aggregation_command():
+    """Test permutation aggregation command builds --aggregate-only CLI call."""
+    cmd = _build_permutation_aggregation_command(run_id="20260130_120000", model="LR_EN")
+
+    assert cmd == "ced permutation-test --run-id 20260130_120000 --model LR_EN --aggregate-only"
+
+
 def test_build_consensus_panel_command():
     """Test consensus panel command builder."""
     cmd = _build_consensus_panel_command(run_id="20260130_120000")
@@ -248,6 +257,71 @@ def test_sentinel_log_path():
 
     assert log_path == sentinel_dir / "completed.log"
     assert log_path.name == "completed.log"
+
+
+def test_detect_environment_prefers_venv(tmp_path, monkeypatch):
+    """If both venv and .venv exist, prefer analysis/venv for stability."""
+    project_root = tmp_path / "project"
+    venv_activate = project_root / "analysis" / "venv" / "bin" / "activate"
+    dotvenv_activate = project_root / "analysis" / ".venv" / "bin" / "activate"
+    venv_activate.parent.mkdir(parents=True)
+    dotvenv_activate.parent.mkdir(parents=True)
+    venv_activate.write_text("# venv\n")
+    dotvenv_activate.write_text("# dotvenv\n")
+
+    monkeypatch.setattr("ced_ml.utils.paths.get_project_root", lambda: project_root)
+    env = detect_environment(project_root)
+
+    assert env.env_type == "venv"
+    assert str(venv_activate) in env.activation_cmd
+
+
+def test_detect_environment_uses_dotvenv(tmp_path, monkeypatch):
+    """Fallback to analysis/.venv when analysis/venv is absent."""
+    project_root = tmp_path / "project"
+    dotvenv_activate = project_root / "analysis" / ".venv" / "bin" / "activate"
+    dotvenv_activate.parent.mkdir(parents=True)
+    dotvenv_activate.write_text("# dotvenv\n")
+
+    monkeypatch.setattr("ced_ml.utils.paths.get_project_root", lambda: project_root)
+    env = detect_environment(project_root)
+
+    assert env.env_type == "venv"
+    assert str(dotvenv_activate) in env.activation_cmd
+
+
+def test_detect_environment_uses_virtual_env_fallback(tmp_path, monkeypatch):
+    """Fallback to $VIRTUAL_ENV when no project-local venv path exists."""
+    project_root = tmp_path / "project"
+    (project_root / "analysis").mkdir(parents=True)
+    fallback_activate = tmp_path / "external_venv" / "bin" / "activate"
+    fallback_activate.parent.mkdir(parents=True)
+    fallback_activate.write_text("# external venv\n")
+
+    monkeypatch.setattr("ced_ml.utils.paths.get_project_root", lambda: project_root)
+    monkeypatch.setenv("VIRTUAL_ENV", str(fallback_activate.parent.parent))
+    env = detect_environment(project_root)
+
+    assert env.env_type == "venv"
+    assert str(fallback_activate) in env.activation_cmd
+
+
+def test_detect_environment_raises_with_checked_paths(tmp_path, monkeypatch):
+    """Error should list checked project-local venv candidates for diagnostics."""
+    project_root = tmp_path / "project"
+    (project_root / "analysis").mkdir(parents=True)
+
+    monkeypatch.setattr("ced_ml.utils.paths.get_project_root", lambda: project_root)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+    import pytest
+
+    with pytest.raises(RuntimeError) as exc_info:
+        detect_environment(project_root)
+
+    message = str(exc_info.value)
+    assert "analysis/venv/bin/activate" in message
+    assert "analysis/.venv/bin/activate" in message
 
 
 def test_wrapper_script_decodes_base64_and_marks_sentinel():
@@ -430,7 +504,8 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
     assert 'barrier_wait "training" 7200 "$POLL_INTERVAL"' in script
     assert 'barrier_wait "post-processing" 3600 "$POLL_INTERVAL"' in script
     assert 'barrier_wait "permutation-tests" 9000 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "permutation-aggregation" 9000 "$POLL_INTERVAL"' in script
+    # perm aggregation uses post_timeout (1.0h = 3600s)
+    assert 'barrier_wait "permutation-aggregation" 3600 "$POLL_INTERVAL"' in script
     assert 'barrier_wait "panel-seed" 5400 "$POLL_INTERVAL"' in script
     assert 'barrier_wait "panel-aggregation" 5400 "$POLL_INTERVAL"' in script
     assert 'barrier_wait "consensus" 1800 "$POLL_INTERVAL"' in script
@@ -458,8 +533,6 @@ def test_orchestrator_batch_chunking(tmp_path):
         hpc_config=hpc_config,
         perm_keys=["perm"],
         perm_job_names=["CeD_perm"],
-        perm_agg_keys=["perm_agg"],
-        perm_agg_job_names=["CeD_perm_agg"],
     )
 
     assert "MAX_CHUNK=7" in script

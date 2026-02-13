@@ -90,10 +90,6 @@ def test_slurm_parse_job_id():
     assert _SLURM.parse_job_id("Some other output") is None
 
 
-def test_slurm_job_array_index_var():
-    assert _SLURM.job_array_index_var() == "SLURM_ARRAY_TASK_ID"
-
-
 def test_slurm_monitor_hint():
     hint = _SLURM.monitor_hint("CeD_*")
     assert "squeue" in hint

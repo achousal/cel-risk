@@ -121,9 +121,30 @@ def detect_environment(base_dir: Path) -> EnvironmentInfo:
         else:
             project_root = base_dir
 
-    venv_activate = project_root / "analysis" / "venv" / "bin" / "activate"
-    if not venv_activate.exists():
-        raise RuntimeError(f"venv not found at {venv_activate}. " f"Run: bash scripts/hpc_setup.sh")
+    analysis_dir = project_root / "analysis"
+    candidates = [
+        analysis_dir / "venv" / "bin" / "activate",
+        analysis_dir / ".venv" / "bin" / "activate",
+    ]
+
+    venv_activate = next((p for p in candidates if p.exists()), None)
+    if venv_activate is None:
+        # Fallback for environments that are already activated outside project-local venv.
+        import os
+
+        virtual_env_raw = os.environ.get("VIRTUAL_ENV")
+        if virtual_env_raw:
+            activate = Path(virtual_env_raw).expanduser() / "bin" / "activate"
+            if activate.exists():
+                return EnvironmentInfo(
+                    env_type="venv",
+                    activation_cmd=f'source "{activate}"',
+                )
+
+        searched = ", ".join(str(p) for p in candidates)
+        raise RuntimeError(
+            f"venv not found. Checked: {searched}. " "Run: bash analysis/scripts/hpc_setup.sh"
+        )
 
     return EnvironmentInfo(
         env_type="venv",
@@ -435,50 +456,6 @@ def _build_consensus_panel_command(
     return f"ced consensus-panel --run-id {run_id}"
 
 
-def _build_permutation_test_command(
-    *,
-    run_id: str,
-    model: str,
-    split_seed: int = 0,
-    n_perms: int = 200,
-    random_state: int = 42,
-) -> str:
-    """Build permutation test command for HPC job array.
-
-    Uses $LSB_JOBINDEX for LSF or $SLURM_ARRAY_TASK_ID for Slurm.
-
-    Args:
-        run_id: Run identifier.
-        model: Model name.
-        split_seed: Split seed to use.
-        n_perms: Total number of permutations (for reference, not used in command).
-        random_state: Random seed for reproducibility.
-
-    Returns:
-        A bash command string that uses the job array index for --perm-index.
-    """
-    validate_identifier(run_id, "run_id")
-    validate_identifier(model, "model")
-    # Support both LSF ($LSB_JOBINDEX) and Slurm ($SLURM_ARRAY_TASK_ID)
-    cmd = f"""# Detect job array index (LSF or Slurm)
-if [ -n "${{LSB_JOBINDEX:-}}" ]; then
-    PERM_INDEX=$LSB_JOBINDEX
-elif [ -n "${{SLURM_ARRAY_TASK_ID:-}}" ]; then
-    PERM_INDEX=$SLURM_ARRAY_TASK_ID
-else
-    echo "Error: Not running in a job array context (no LSB_JOBINDEX or SLURM_ARRAY_TASK_ID)"
-    exit 1
-fi
-
-ced permutation-test \\
-  --run-id {run_id} \\
-  --model {model} \\
-  --split-seed-start {split_seed} \\
-  --perm-index $PERM_INDEX \\
-  --random-state {random_state}"""
-    return cmd
-
-
 def _build_permutation_test_full_command(
     *,
     run_id: str,
@@ -520,25 +497,21 @@ def _build_permutation_aggregation_command(
     run_id: str,
     model: str,
 ) -> str:
-    """Build permutation aggregation command (runs after job array completes).
+    """Build permutation aggregation command for a single model.
 
-    This command aggregates individual perm_*.joblib files into a pooled
-    significance result.
+    Produces a ``ced permutation-test --aggregate-only`` command that pools
+    per-seed null distribution CSVs into ``aggregated_significance.csv``.
 
     Args:
         run_id: Run identifier.
-        model: Model name.
+        model: Model name to aggregate.
 
     Returns:
-        A bash command string for aggregating permutation results.
+        A bash command string for aggregating per-seed permutation results.
     """
     validate_identifier(run_id, "run_id")
     validate_identifier(model, "model")
-    cmd = f"""echo "Aggregating permutation results for {model}..."
-ced permutation-test \\
-  --run-id {run_id} \\
-  --model {model}"""
-    return cmd
+    return f"ced permutation-test --run-id {run_id} --model {model} --aggregate-only"
 
 
 # ---------------------------------------------------------------------------
@@ -827,12 +800,18 @@ def _build_orchestrator_script(
                 'mapfile -t UPSTREAM_IDS < "$PERM_IDS_FILE"',
                 f'barrier_wait "permutation-tests" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_JOBS[@]}}"',
                 "",
+            ]
+        )
+
+    if perm_agg_keys:
+        lines.extend(
+            [
                 _bash_array_literal("PERM_AGG_KEYS", perm_agg_keys),
                 _bash_array_literal("PERM_AGG_JOBS", perm_agg_job_names),
                 'PERM_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_agg_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PERM_AGG_IDS_FILE" "${PERM_AGG_KEYS[@]}"',
                 'mapfile -t UPSTREAM_IDS < "$PERM_AGG_IDS_FILE"',
-                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_AGG_JOBS[@]}}"',
+                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.timeout_seconds("post")} "$POLL_INTERVAL" "${{PERM_AGG_JOBS[@]}}"',
                 "",
             ]
         )
@@ -1043,8 +1022,8 @@ def _submit_orchestrator_pipeline(
     )
 
     permutation_job_names: list[str] = []
-    permutation_agg_names: list[str] = []
     perm_keys: list[str] = []
+    perm_agg_names: list[str] = []
     perm_agg_keys: list[str] = []
     if enable_permutation_test:
         perm_seeds = permutation_split_seeds if permutation_split_seeds else split_seeds
@@ -1066,14 +1045,18 @@ def _submit_orchestrator_pipeline(
                 permutation_job_names.append(perm_job_name)
                 perm_keys.append(perm_key)
 
-            perm_agg_job_name = f"CeD_{run_id}_perm_{model}_agg"
-            perm_agg_command = _build_permutation_aggregation_command(run_id=run_id, model=model)
+            # Per-model aggregation of per-seed null CSVs
+            perm_agg_job = f"CeD_{run_id}_perm_{model}_agg"
+            perm_agg_cmd = _build_permutation_aggregation_command(
+                run_id=run_id,
+                model=model,
+            )
             perm_agg_key = f"perm_{model}_agg"
             manifest_jobs[perm_agg_key] = _manifest_entry(
-                job_name=perm_agg_job_name,
-                command=perm_agg_command,
+                job_name=perm_agg_job,
+                command=perm_agg_cmd,
             )
-            permutation_agg_names.append(perm_agg_job_name)
+            perm_agg_names.append(perm_agg_job)
             perm_agg_keys.append(perm_agg_key)
 
     panel_job_names: list[str] = []
@@ -1140,7 +1123,7 @@ def _submit_orchestrator_pipeline(
         perm_keys=perm_keys,
         perm_job_names=permutation_job_names,
         perm_agg_keys=perm_agg_keys,
-        perm_agg_job_names=permutation_agg_names,
+        perm_agg_job_names=perm_agg_names,
         panel_seed_keys=panel_seed_keys,
         panel_seed_job_names=[n for n in panel_job_names if n not in panel_agg_names],
         panel_agg_keys=panel_agg_keys,
@@ -1176,7 +1159,7 @@ def _submit_orchestrator_pipeline(
         "panel_optimization_jobs": panel_job_names,
         "consensus_job": f"ORCH_{consensus_job_name}" if enable_consensus else None,
         "permutation_jobs": permutation_job_names,
-        "permutation_aggregation_jobs": permutation_agg_names,
+        "permutation_aggregation_jobs": perm_agg_names,
         "orchestrator_job": orchestrator_job_display,
         "logs_dir": run_logs_dir,
         "sentinel_dir": sentinel_dir,

@@ -5,28 +5,18 @@ trained models generalize above chance level via label permutation testing.
 
 USAGE MODES:
     1. Local parallel mode: --run-id <id> --model <model> [--n-jobs N]
-    2. HPC job array mode: --run-id <id> --model <model> --hpc
-    3. Run-based (all models): --run-id <id>
+    2. Run-based (all models): --run-id <id>
 
 WORKFLOW:
     1. Train base models across splits (ced train)
     2. Test significance:
        - Local: ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
-       - HPC: ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
-
-HPC PARALLELIZATION:
-    The --hpc flag submits a job array to LSF/Slurm (consistent with other CLI commands).
-    Each job runs a single permutation via --perm-index and saves the result
-    as a joblib file for later aggregation.
-
-    After completion, run without --hpc to aggregate results:
-        ced permutation-test --run-id <RUN_ID> --model LR_EN
+       - HPC (orchestrator): submit via ced run-pipeline --hpc
 
 OUTPUT STRUCTURE:
     results/run_{RUN_ID}/{MODEL}/significance/
         permutation_test_results.csv     # Summary metrics per fold
         null_distribution.csv            # Full null distributions
-        perm_{index}.joblib             # Individual permutation results (HPC mode)
 """
 
 import logging
@@ -40,13 +30,10 @@ from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file
 from ced_ml.data.schema import TARGET_COL, get_positive_label
 from ced_ml.significance.aggregation import (
-    detect_and_aggregate,
-    load_hpc_permutation_results,
     pool_null_distribution,
 )
 from ced_ml.significance.permutation_test import (
     aggregate_permutation_results,
-    run_permutation_for_fold,
     run_permutation_test,
     save_null_distributions,
 )
@@ -92,17 +79,99 @@ def find_trained_model_path(
     return model_path
 
 
+def _aggregate_existing_results(
+    *,
+    sig_dir: Path,
+    run_path: Path,
+    model_name: str,
+    run_id: str,
+    logger: logging.Logger,
+) -> bool:
+    """Aggregate per-seed null distribution CSVs for a single model.
+
+    Looks for null_distribution_seed*.csv files produced by the full-command
+    HPC mode (one job per seed, all permutations in one job).
+
+    Returns True if aggregation was performed, False if no results found.
+    """
+    null_csv_files = sorted(sig_dir.glob("null_distribution_seed*.csv"))
+    if not null_csv_files:
+        return False
+
+    logger.info(
+        f"Found {len(null_csv_files)} per-seed null distribution CSVs "
+        f"- aggregating across seeds"
+    )
+    dfs = []
+    for csv_file in null_csv_files:
+        try:
+            df_seed = pd.read_csv(csv_file)
+            dfs.append(df_seed)
+        except Exception as e:
+            logger.warning(f"Failed to load {csv_file.name}: {e}")
+
+    if not dfs:
+        return False
+
+    df_combined = pd.concat(dfs, ignore_index=True)
+
+    val_metrics_file = run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
+    if val_metrics_file.exists():
+        val_df = pd.read_csv(val_metrics_file)
+        if "auroc" in val_df.columns:
+            df_combined["observed_auroc"] = float(val_df["auroc"].iloc[0])
+    else:
+        logger.warning(
+            f"Observed AUROC file not found: {val_metrics_file}\n"
+            f"Run 'ced aggregate-splits --run-id {run_id}' first to "
+            f"produce pooled_val_metrics.csv."
+        )
+
+    result = pool_null_distribution(df_combined, model=model_name, alpha=0.05)
+
+    agg_df = pd.DataFrame(
+        [
+            {
+                "model": result.model,
+                "observed_auroc": result.observed_auroc,
+                "empirical_p_value": result.empirical_p_value,
+                "n_seeds": result.n_seeds,
+                "n_perms_total": result.n_perms_total,
+                "significant": result.significant,
+                "alpha": result.alpha,
+                **result.summary_stats(),
+            }
+        ]
+    )
+    agg_path = sig_dir / "aggregated_significance.csv"
+    agg_df.to_csv(agg_path, index=False)
+
+    print(f"\n{'='*60}")
+    print(f"Aggregated Permutation Results: {model_name}")
+    print(f"{'='*60}")
+    if result.n_seeds > 1:
+        print(f"Seeds aggregated: {result.n_seeds}")
+    print(f"Permutations aggregated: {result.n_perms_total}")
+    print(f"Observed AUROC: {result.observed_auroc:.4f}")
+    print(f"Empirical p-value: {result.empirical_p_value:.4f}")
+    print(f"Significant (alpha=0.05): {result.significant}")
+    print(f"Saved to: {agg_path}")
+    print(f"{'='*60}\n")
+
+    return True
+
+
 def run_permutation_test_cli(
     run_id: str | None = None,
     model: str | None = None,
     split_seeds: list[int] | None = None,
     n_perms: int = 200,
-    perm_index: int | None = None,
     metric: str = "auroc",
     n_jobs: int = 1,
     outdir: str | None = None,
     random_state: int = 42,
     log_level: int | None = None,
+    aggregate_only: bool = False,
 ) -> None:
     """Run permutation test for trained model(s) across one or more split seeds.
 
@@ -114,12 +183,14 @@ def run_permutation_test_cli(
         model: Specific model to test (default: all models with results)
         split_seeds: List of split seeds to test (default: [0])
         n_perms: Number of permutations per seed (default: 200)
-        perm_index: Single permutation index for HPC job arrays (optional)
         metric: Metric to use (default: 'auroc', only AUROC supported per ADR-007)
         n_jobs: Parallel jobs for in-process parallelization (default: 1)
         outdir: Output directory (default: {run_dir}/{model}/significance/)
         random_state: Random seed for reproducibility
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
+        aggregate_only: If True, only aggregate existing per-seed CSVs into
+            a single aggregated_significance.csv (do not run permutations).
+            Used after HPC per-seed jobs complete.
 
     Raises:
         FileNotFoundError: If model artifacts or data not found
@@ -167,129 +238,29 @@ def run_permutation_test_cli(
     for model_name in models_to_test:
         logger.info(f"\n{'='*60}\nTesting model: {model_name}\n{'='*60}")
 
-        # Check for pre-computed HPC permutation results (per-model check)
         sig_dir = run_path / model_name / "significance"
-        perm_files = list(sig_dir.glob("perm_*.joblib")) if sig_dir.exists() else []
 
-        if perm_files and perm_index is None:
-            # HPC results exist - aggregate and skip local execution
-            logger.info(f"Found {len(perm_files)} pre-computed permutation results from HPC")
-
-            df_hpc = load_hpc_permutation_results(sig_dir)
-
-            val_metrics_file = (
-                run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
-            )
-            if val_metrics_file.exists():
-                val_df = pd.read_csv(val_metrics_file)
-                if "auroc" in val_df.columns:
-                    df_hpc["observed_auroc"] = float(val_df["auroc"].iloc[0])
-            else:
+        # --- Aggregate-only mode ---
+        # Only entered when explicitly requested via --aggregate-only.
+        # Pools existing per-seed null distribution CSVs into a single
+        # aggregated_significance.csv with a model-level p-value.
+        if aggregate_only:
+            if not sig_dir.exists():
                 logger.warning(
-                    f"Observed AUROC file not found: {val_metrics_file}\n"
-                    f"Run 'ced aggregate-splits --run-id {run_id}' first to "
-                    f"produce pooled_val_metrics.csv."
+                    f"No significance directory for {model_name} -- nothing to aggregate"
                 )
+                continue
 
-            result = pool_null_distribution(df_hpc, model=model_name, alpha=0.05)
-
-            agg_df = pd.DataFrame(
-                [
-                    {
-                        "model": result.model,
-                        "observed_auroc": result.observed_auroc,
-                        "empirical_p_value": result.empirical_p_value,
-                        "n_seeds": result.n_seeds,
-                        "n_perms_total": result.n_perms_total,
-                        "significant": result.significant,
-                        "alpha": result.alpha,
-                        **result.summary_stats(),
-                    }
-                ]
+            aggregated = _aggregate_existing_results(
+                sig_dir=sig_dir,
+                run_path=run_path,
+                model_name=model_name,
+                run_id=run_id,
+                logger=logger,
             )
-            agg_path = sig_dir / "aggregated_significance.csv"
-            agg_df.to_csv(agg_path, index=False)
-
-            print(f"\n{'='*60}")
-            print(f"Aggregated HPC Permutation Results: {model_name}")
-            print(f"{'='*60}")
-            print(f"Permutations aggregated: {result.n_perms_total}")
-            print(f"Observed AUROC: {result.observed_auroc:.4f}")
-            print(f"Empirical p-value: {result.empirical_p_value:.4f}")
-            print(f"Significant (alpha=0.05): {result.significant}")
-            print(f"Saved to: {agg_path}")
-            print(f"{'='*60}\n")
-
-            continue  # Skip to next model
-
-        # Check for per-seed null distribution CSVs (produced by full-command
-        # HPC mode where each job runs all permutations for one seed).
-        # These have the same schema as perm_*.joblib aggregation output.
-        null_csv_files = (
-            sorted(sig_dir.glob("null_distribution_seed*.csv")) if sig_dir.exists() else []
-        )
-        if null_csv_files and perm_index is None:
-            logger.info(
-                f"Found {len(null_csv_files)} per-seed null distribution CSVs "
-                f"- aggregating across seeds"
-            )
-
-            dfs = []
-            for csv_file in null_csv_files:
-                try:
-                    df_seed = pd.read_csv(csv_file)
-                    dfs.append(df_seed)
-                except Exception as e:
-                    logger.warning(f"Failed to load {csv_file.name}: {e}")
-
-            if dfs:
-                df_combined = pd.concat(dfs, ignore_index=True)
-
-                val_metrics_file = (
-                    run_path / model_name / "aggregated" / "metrics" / "pooled_val_metrics.csv"
-                )
-                if val_metrics_file.exists():
-                    val_df = pd.read_csv(val_metrics_file)
-                    if "auroc" in val_df.columns:
-                        df_combined["observed_auroc"] = float(val_df["auroc"].iloc[0])
-                else:
-                    logger.warning(
-                        f"Observed AUROC file not found: {val_metrics_file}\n"
-                        f"Run 'ced aggregate-splits --run-id {run_id}' first to "
-                        f"produce pooled_val_metrics.csv."
-                    )
-
-                result = pool_null_distribution(df_combined, model=model_name, alpha=0.05)
-
-                agg_df = pd.DataFrame(
-                    [
-                        {
-                            "model": result.model,
-                            "observed_auroc": result.observed_auroc,
-                            "empirical_p_value": result.empirical_p_value,
-                            "n_seeds": result.n_seeds,
-                            "n_perms_total": result.n_perms_total,
-                            "significant": result.significant,
-                            "alpha": result.alpha,
-                            **result.summary_stats(),
-                        }
-                    ]
-                )
-                agg_path = sig_dir / "aggregated_significance.csv"
-                agg_df.to_csv(agg_path, index=False)
-
-                print(f"\n{'='*60}")
-                print(f"Aggregated Per-Seed Permutation Results: {model_name}")
-                print(f"{'='*60}")
-                print(f"Seeds aggregated: {result.n_seeds}")
-                print(f"Permutations aggregated: {result.n_perms_total}")
-                print(f"Observed AUROC: {result.observed_auroc:.4f}")
-                print(f"Empirical p-value: {result.empirical_p_value:.4f}")
-                print(f"Significant (alpha=0.05): {result.significant}")
-                print(f"Saved to: {agg_path}")
-                print(f"{'='*60}\n")
-
-                continue  # Skip to next model
+            if not aggregated:
+                logger.warning(f"No permutation results found to aggregate for {model_name}")
+            continue
 
         # Load first seed's model bundle to get column metadata and scenario
         first_model_path = find_trained_model_path(run_id, model_name, split_seeds[0])
@@ -376,6 +347,15 @@ def run_permutation_test_cli(
         for split_seed in split_seeds:
             logger.info(f"\n{'-'*40}\n" f"  Split seed: {split_seed}\n" f"{'-'*40}")
 
+            # Seed-level idempotency: skip if THIS seed's output already exists
+            existing_null_csv = seed_outdir / f"null_distribution_seed{split_seed}.csv"
+            if existing_null_csv.exists():
+                logger.info(
+                    f"Seed {split_seed} already completed: {existing_null_csv.name} "
+                    f"exists -- skipping"
+                )
+                continue
+
             # Load model bundle for this seed
             model_path = find_trained_model_path(run_id, model_name, split_seed)
             logger.info(f"Loading model from: {model_path}")
@@ -404,44 +384,8 @@ def run_permutation_test_cli(
             logger.info(f"Train: {len(train_idx)} samples, {y_all[train_idx].sum()} cases")
             logger.info(f"Val: {len(val_idx)} samples, {y_all[val_idx].sum()} cases")
 
-            # HPC single-permutation mode
-            if perm_index is not None:
-                logger.info(f"HPC mode: Running single permutation {perm_index}")
-
-                perm_seed = random_state + perm_index
-                auroc = run_permutation_for_fold(
-                    pipeline=pipeline,
-                    X_train=X_all.iloc[train_idx],
-                    y_train=y_all[train_idx],
-                    X_test=X_all.iloc[val_idx],
-                    y_test=y_all[val_idx],
-                    random_state=random_state,
-                    perm_idx=perm_index,
-                )
-
-                result_dict = {
-                    "model": model_name,
-                    "split_seed": split_seed,
-                    "outer_fold": 0,
-                    "perm_index": perm_index,
-                    "perm_seed": perm_seed,
-                    "null_auroc": auroc,
-                }
-
-                result_path = seed_outdir / f"perm_{perm_index}.joblib"
-                joblib.dump(result_dict, result_path)
-                logger.info(f"Saved permutation result to {result_path}")
-
-                print(f"\nPermutation {perm_index} complete:")
-                print(f"  Model: {model_name}")
-                print(f"  Split seed: {split_seed}")
-                print(f"  Null AUROC: {auroc:.4f}")
-                print(f"  Saved to: {result_path}")
-
-                return
-
             # Local parallel mode: run full permutation test
-            logger.info(f"Local mode: Running {n_perms} permutations with {n_jobs} jobs")
+            logger.info(f"Running {n_perms} permutations with {n_jobs} jobs")
 
             result = run_permutation_test(
                 pipeline=pipeline,
@@ -496,46 +440,16 @@ def run_permutation_test_cli(
             print(f"  - {null_path.name}")
             print(f"{'='*60}\n")
 
-        # Auto-aggregate across seeds (after seed loop)
-        if len(split_seeds) > 1:
-            try:
-                aggregated = detect_and_aggregate(run_path, model=model_name, alpha=0.05)
-
-                if aggregated:
-                    result_agg = aggregated[model_name]
-
-                    sig_outdir = run_path / model_name / "significance"
-                    sig_outdir.mkdir(parents=True, exist_ok=True)
-
-                    agg_df = pd.DataFrame(
-                        [
-                            {
-                                "model": result_agg.model,
-                                "observed_auroc": result_agg.observed_auroc,
-                                "empirical_p_value": result_agg.empirical_p_value,
-                                "n_seeds": result_agg.n_seeds,
-                                "n_perms_total": result_agg.n_perms_total,
-                                "significant": result_agg.significant,
-                                "alpha": result_agg.alpha,
-                                **result_agg.summary_stats(),
-                            }
-                        ]
-                    )
-                    agg_path = sig_outdir / "aggregated_significance.csv"
-                    agg_df.to_csv(agg_path, index=False)
-
-                    logger.info(
-                        f"Auto-aggregated permutation results: "
-                        f"p={result_agg.empirical_p_value:.4f}, "
-                        f"significant={result_agg.significant}"
-                    )
-
-                    print(f"\nPooled significance (across {result_agg.n_seeds} seeds):")
-                    print(f"  Empirical p-value: {result_agg.empirical_p_value:.4f}")
-                    print(f"  Significant (alpha=0.05): {result_agg.significant}")
-                    print(f"  Total permutations pooled: {result_agg.n_perms_total}")
-                    print(f"  Saved to: {agg_path}")
-            except Exception as e:
-                logger.debug(f"Auto-aggregation skipped: {e}")
+        # Auto-aggregate across seeds when running multiple seeds locally
+        # (not needed in aggregate_only mode -- that handles aggregation above)
+        if len(split_seeds) > 1 and not aggregate_only:
+            logger.info("Auto-aggregating results across seeds...")
+            _aggregate_existing_results(
+                sig_dir=seed_outdir,
+                run_path=run_path,
+                model_name=model_name,
+                run_id=run_id,
+                logger=logger,
+            )
 
     logger.info("Permutation testing completed successfully")

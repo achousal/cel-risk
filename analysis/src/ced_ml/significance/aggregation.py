@@ -27,10 +27,8 @@ performance. Journal of Machine Learning Research, 11, 1833-1863.
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
 
@@ -224,7 +222,7 @@ def pool_null_distribution(
     ----------
     results_df : pd.DataFrame
         DataFrame with columns: model, split_seed, outer_fold, null_auroc.
-        Expected format from load_hpc_permutation_results() or
+        Expected format from per-seed null distribution CSVs or
         aggregated per-fold permutation test results.
     model : str, optional
         Model name to filter (if None, uses first model in results_df).
@@ -334,173 +332,3 @@ def pool_null_distribution(
     )
 
     return result
-
-
-def load_hpc_permutation_results(outdir: Path) -> pd.DataFrame:
-    """Load individual permutation results from HPC job array runs.
-
-    This function discovers and loads all perm_*.joblib files generated
-    by HPC job arrays (via --perm-index flag in CLI).
-
-    Parameters
-    ----------
-    outdir : Path
-        Directory containing perm_*.joblib files.
-        Expected location: results/run_{id}/{model}/significance/
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with columns: model, split_seed, outer_fold, perm_index,
-        perm_seed, null_auroc. Returns empty DataFrame if no results found.
-
-    Notes
-    -----
-    Expected joblib file structure:
-        {
-            'model': str,
-            'split_seed': int,
-            'outer_fold': int,
-            'perm_index': int,
-            'perm_seed': int,
-            'null_auroc': float
-        }
-
-    Examples
-    --------
-    >>> outdir = Path('results/run_20260127_115115/LR_EN/significance')
-    >>> df = load_hpc_permutation_results(outdir)
-    >>> print(f"Loaded {len(df)} permutation results")
-    """
-    if not outdir.exists():
-        logger.warning(f"Output directory does not exist: {outdir}")
-        return pd.DataFrame()
-
-    perm_files = sorted(outdir.glob("perm_*.joblib"))
-
-    if not perm_files:
-        logger.warning(f"No perm_*.joblib files found in {outdir}")
-        return pd.DataFrame()
-
-    logger.info(f"Found {len(perm_files)} permutation result files in {outdir}")
-
-    records = []
-    for perm_file in perm_files:
-        try:
-            result = joblib.load(perm_file)
-            if isinstance(result, dict):
-                records.append(result)
-            else:
-                logger.warning(f"Unexpected format in {perm_file.name}: {type(result)}")
-        except Exception as e:
-            logger.warning(f"Failed to load {perm_file.name}: {e}")
-
-    if not records:
-        logger.warning("No valid permutation results loaded")
-        return pd.DataFrame()
-
-    df = pd.DataFrame.from_records(records)
-
-    expected_cols = ["model", "split_seed", "outer_fold", "perm_index", "null_auroc"]
-    missing = [c for c in expected_cols if c not in df.columns]
-    if missing:
-        logger.warning(f"Loaded results missing expected columns: {missing}")
-
-    df = df.sort_values(["model", "split_seed", "outer_fold", "perm_index"]).reset_index(drop=True)
-
-    logger.info(
-        f"Loaded {len(df)} permutation results: "
-        f"models={df['model'].unique().tolist() if 'model' in df.columns else []}, "
-        f"n_perms={len(df)}"
-    )
-
-    return df
-
-
-def detect_and_aggregate(
-    run_dir: Path,
-    model: str | None = None,
-    alpha: float = 0.05,
-) -> dict[str, PooledNullResult]:
-    """Auto-detect permutation results and aggregate if complete.
-
-    This convenience function discovers permutation test results from a run
-    directory and aggregates them into pooled null distributions for all
-    available models.
-
-    Parameters
-    ----------
-    run_dir : Path
-        Run directory containing model subdirectories.
-        Expected structure: run_dir/{model}/significance/perm_*.joblib
-    model : str, optional
-        Specific model to aggregate (if None, processes all models).
-    alpha : float, default=0.05
-        Significance level for hypothesis testing.
-
-    Returns
-    -------
-    dict[str, PooledNullResult]
-        Dictionary mapping model names to PooledNullResult objects.
-        Returns empty dict if no results found.
-
-    Notes
-    -----
-    - Scans run_dir for model subdirectories with significance/ folders
-    - Loads all perm_*.joblib files for each model
-    - Aggregates into pooled null distributions
-    - Logs warnings if results incomplete or missing
-
-    Examples
-    --------
-    >>> run_dir = Path('results/run_20260127_115115')
-    >>> results = detect_and_aggregate(run_dir, alpha=0.05)
-    >>> for model_name, result in results.items():
-    ...     print(f"{model_name}: p={result.empirical_p_value:.4f}")
-    """
-    if not run_dir.exists():
-        logger.warning(f"Run directory does not exist: {run_dir}")
-        return {}
-
-    if model is not None:
-        model_dirs = [run_dir / model]
-    else:
-        model_dirs = [d for d in run_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
-
-    if not model_dirs:
-        logger.warning(f"No model directories found in {run_dir}")
-        return {}
-
-    results = {}
-
-    for model_dir in model_dirs:
-        model_name = model_dir.name
-        sig_dir = model_dir / "significance"
-
-        if not sig_dir.exists():
-            logger.info(f"No significance/ directory for model {model_name}")
-            continue
-
-        df = load_hpc_permutation_results(sig_dir)
-
-        if df.empty:
-            logger.warning(f"No permutation results found for model {model_name}")
-            continue
-
-        try:
-            pooled_result = pool_null_distribution(df, model=model_name, alpha=alpha)
-            results[model_name] = pooled_result
-
-            logger.info(
-                f"Aggregated {model_name}: p={pooled_result.empirical_p_value:.4f}, "
-                f"significant={pooled_result.significant}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to aggregate {model_name}: {e}")
-
-    if not results:
-        logger.warning(f"No permutation results aggregated for run {run_dir.name}")
-    else:
-        logger.info(f"Successfully aggregated {len(results)} models: {list(results.keys())}")
-
-    return results

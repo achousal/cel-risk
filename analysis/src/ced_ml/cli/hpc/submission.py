@@ -1,7 +1,7 @@
 """
 HPC job submission functions for CLI commands.
 
-Provides high-level functions to submit training and permutation test jobs,
+Provides high-level functions to submit training jobs,
 abstracting away the details of config loading, job script building, and submission.
 """
 
@@ -18,7 +18,6 @@ from ced_ml.hpc import (
     submit_job,
 )
 from ced_ml.hpc.common import (
-    _build_permutation_test_command,
     _build_training_command,
 )
 from ced_ml.utils.paths import get_project_root
@@ -205,84 +204,3 @@ def submit_train_jobs(
         click.echo(f"Monitor with: {scheduler.monitor_hint(f'CeD_{run_id}_{model}_*')}")
 
     return submitted_jobs
-
-
-def submit_permutation_test_jobs(
-    run_id: str,
-    model: str,
-    split_seeds: list[int],
-    n_perms: int,
-    random_state: int,
-    hpc_config_path: str | None,
-    dry_run: bool,
-) -> list[tuple[int, str]]:
-    """
-    Submit permutation test job arrays to HPC cluster.
-
-    Args:
-        run_id: Run ID to test
-        model: Model name to test
-        split_seeds: List of split seeds to test
-        n_perms: Number of permutations per seed
-        random_state: Random seed for reproducibility
-        hpc_config_path: Path to HPC config (optional, will search defaults)
-        dry_run: If True, preview jobs without submitting
-
-    Returns:
-        List of (seed, job_id) tuples for submitted job arrays
-
-    Raises:
-        click.UsageError: If required config is missing
-    """
-    # Resolve HPC config
-    hpc_config_path_resolved = load_hpc_config_with_fallback(hpc_config_path)
-
-    # Setup environment
-    bsub_params, log_dir = setup_hpc_environment(hpc_config_path_resolved, log_subdir="hpc")
-
-    # Display summary
-    click.echo(f"\nSubmitting permutation test job arrays for {model}:")
-    click.echo(f"  Run ID: {run_id}")
-    click.echo(f"  Model: {model}")
-    click.echo(f"  Split seeds: {split_seeds}")
-    click.echo(f"  Permutations per seed: {n_perms}")
-    click.echo(f"  Total permutations: {n_perms * len(split_seeds)}")
-
-    # Submit job arrays
-    submitted_ids = []
-    for seed in split_seeds:
-        cmd = _build_permutation_test_command(
-            run_id=run_id,
-            model=model,
-            split_seed=seed,
-            n_perms=n_perms,
-            random_state=random_state,
-        )
-
-        job_name = f"perm_{model}_{run_id}_s{seed}[0-{n_perms - 1}]"
-
-        script = build_job_script(
-            job_name=job_name,
-            command=cmd,
-            **bsub_params,
-        )
-
-        scheduler = bsub_params["scheduler"]
-        job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run)
-
-        if job_id:
-            submitted_ids.append((seed, job_id))
-            click.echo(f"  Seed {seed}: job_id={job_id}")
-        elif dry_run:
-            click.echo(f"  Seed {seed}: [DRY RUN] Job not submitted")
-
-    # Display post-submission message
-    if submitted_ids:
-        scheduler = bsub_params["scheduler"]
-        click.echo(f"\nMonitor with: {scheduler.monitor_hint(f'perm_{model}_{run_id}*')}")
-        click.echo(
-            f"After completion, run aggregation:\n"
-            f"  ced permutation-test --run-id {run_id} --model {model}"
-        )
-
-    return submitted_ids

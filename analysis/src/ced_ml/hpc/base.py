@@ -91,14 +91,6 @@ class SchedulerBackend(ABC):
         to ``log_path`` instead of /dev/null.
         """
 
-    @abstractmethod
-    def job_array_index_var(self) -> str:
-        """Shell variable name for the job array index.
-
-        Returns:
-            e.g. 'LSB_JOBINDEX' or 'SLURM_ARRAY_TASK_ID'.
-        """
-
     def monitor_hint(self, job_name_pattern: str) -> str:
         """Human-readable command to monitor jobs matching a pattern.
 

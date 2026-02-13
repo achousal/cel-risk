@@ -44,9 +44,9 @@ ced train --model LR_EN,RF,XGBoost --split-seed 0,1,2
 ced aggregate-splits --run-id <RUN_ID>
 
 # Stage 2: Model gate (permutation testing)
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
-ced permutation-test --run-id <RUN_ID> --model RF --hpc
-ced permutation-test --run-id <RUN_ID> --model XGBoost --hpc
+ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
+ced permutation-test --run-id <RUN_ID> --model RF --n-jobs 4
+ced permutation-test --run-id <RUN_ID> --model XGBoost --n-jobs 4
 
 # Per-model evidence (automatically computed during training/aggregation):
 # - OOF grouped importance: feature_importance/oof_grouped_importance.csv

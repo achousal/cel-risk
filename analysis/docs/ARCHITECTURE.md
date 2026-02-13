@@ -252,7 +252,7 @@ p-value = (1 + #{null >= observed}) / (1 + B)
 
 **CLI:** `ced permutation-test --run-id <RUN_ID> [--model <MODEL>] [--n-perms 200]`
 
-**HPC support:** `--perm-index` flag for LSF/Slurm job arrays.
+**HPC support:** Orchestrator submits one full-command job per seed via `_build_permutation_test_full_command`.
 
 **Code pointers:**
 - [significance/permutation_test.py](../src/ced_ml/significance/permutation_test.py) - Core algorithm

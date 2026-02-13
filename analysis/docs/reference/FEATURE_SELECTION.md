@@ -19,11 +19,11 @@ Feature selection workflow comprises three sequential stages:
 **Method:** Label permutation test of classifier AUROC (per ADR-011).
 
 ```bash
-# Run permutation test (HPC recommended for B >= 200)
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
+# Run permutation test locally (or via HPC orchestrator: ced run-pipeline --hpc)
+ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
 
-# After completion, view results
-ced permutation-test --run-id <RUN_ID> --model LR_EN
+# Aggregate per-seed results after HPC jobs complete
+ced permutation-test --run-id <RUN_ID> --model LR_EN --aggregate-only
 ```
 
 **Algorithm:**
@@ -239,9 +239,10 @@ ced train --model LR_EN,RF,XGBoost --split-seed 0,1,2
 ced aggregate-splits --run-id <RUN_ID>
 
 # Step 3: Test model significance (model gate)
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
-ced permutation-test --run-id <RUN_ID> --model RF --hpc
-ced permutation-test --run-id <RUN_ID> --model XGBoost --hpc
+# Local: run per-model with internal parallelism
+ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
+ced permutation-test --run-id <RUN_ID> --model RF --n-jobs 4
+ced permutation-test --run-id <RUN_ID> --model XGBoost --n-jobs 4
 
 # Step 4: Compute per-model evidence (OOF importance, essentiality, RFE)
 # (automatically computed during training and aggregation)

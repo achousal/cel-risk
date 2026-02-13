@@ -89,7 +89,7 @@ ced train --model LR_EN,RF,XGBoost --split-seed 0,1,2
 ced aggregate-splits --run-id <RUN_ID>
 
 # Model gate (keep only significant models)
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
+ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
 
 # Cross-model consensus (significant models only)
 ced consensus-panel --run-id <RUN_ID> --models LR_EN,RF

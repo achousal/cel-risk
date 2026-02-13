@@ -290,11 +290,11 @@ ced permutation-test [OPTIONS]
 | `--split-seed-start` | INT | 0 | First split seed to test |
 | `--n-split-seeds` | INT | 1 | Number of consecutive seeds to test |
 | `--n-perms` | INT | 200 | Number of permutations per seed |
-| `--perm-index` | INT | - | Single permutation index (HPC mode) |
 | `--metric` | TEXT | `auroc` | Metric (only `auroc` supported) |
 | `--n-jobs` | INT | 1 | Parallel jobs |
 | `--outdir` | PATH | Auto | Output directory |
 | `--random-state` | INT | 42 | Random seed |
+| `--aggregate-only` | FLAG | False | Only aggregate existing per-seed results |
 
 **Usage Modes:**
 
@@ -303,20 +303,17 @@ ced permutation-test [OPTIONS]
    ced permutation-test --run-id 20260127_115115 --model LR_EN --n-jobs 4
    ```
 
-2. **HPC job array mode**: Run single permutation per job
+2. **HPC mode**: Orchestrator submits one full-command job per seed
    ```bash
-   bsub -J "perm[0-199]" ced permutation-test \
-       --run-id 20260127_115115 \
-       --model LR_EN \
-       --perm-index $LSB_JOBINDEX
+   ced run-pipeline --hpc  # includes permutation testing if enabled
    ```
 
 **Output:**
 ```
 results/run_{RUN_ID}/{MODEL}/significance/
-    permutation_test_results.csv   # Summary: observed_auroc, p_value, null_mean, null_std
-    null_distribution.csv          # Full null: perm_index, null_auroc
-    perm_{i}.joblib               # Individual results (HPC mode)
+    permutation_test_results_seed{N}.csv  # Summary per seed
+    null_distribution_seed{N}.csv         # Full null per seed
+    aggregated_significance.csv           # Pooled result (multi-seed)
 ```
 
 **Interpretation:**
@@ -334,11 +331,10 @@ ced permutation-test --run-id 20260127_115115 \
     --model LR_EN \
     --n-perms 200
 
-# HPC job array (LSF)
-bsub -J "perm[0-199]" ced permutation-test \
-    --run-id 20260127_115115 \
+# Aggregate existing per-seed results only
+ced permutation-test --run-id 20260127_115115 \
     --model LR_EN \
-    --perm-index \$LSB_JOBINDEX
+    --aggregate-only
 ```
 
 ---

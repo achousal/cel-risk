@@ -40,19 +40,17 @@ The +1 correction ensures p-values are never exactly zero (per Phipson & Smyth 2
 ## Implementation
 
 **HPC Parallelization:**
-- `--hpc` flag submits LSF/Slurm job array (consistent with other CLI commands)
-- Each job runs single permutation via `--perm-index`, saves to `perm_{i}.joblib`
-- Aggregation collects results post-hoc
+- Orchestrator submits one full-command job per (model, seed) pair
+- Each job runs all permutations internally with `--n-jobs -1` (all cores)
+- Produces `null_distribution_seed{N}.csv` per seed
+- `--aggregate-only` pools per-seed CSVs into a single significance result
 
 ```bash
-# Submit job array to HPC (recommended)
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc
+# Local: run all permutations with internal parallelism
+ced permutation-test --run-id <RUN_ID> --model LR_EN --n-jobs 4
 
-# Preview without submitting
-ced permutation-test --run-id <RUN_ID> --model LR_EN --hpc --dry-run
-
-# After completion, aggregate results
-ced permutation-test --run-id <RUN_ID> --model LR_EN
+# Aggregate existing per-seed results
+ced permutation-test --run-id <RUN_ID> --model LR_EN --aggregate-only
 ```
 
 **Recommended B values:**

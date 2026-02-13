@@ -14,10 +14,6 @@ compute_p_value
     Calculate p-value from observed score and null distribution.
 pool_null_distribution
     Pool null distributions across seeds/folds for model-level significance.
-load_hpc_permutation_results
-    Load permutation results from HPC job array runs.
-detect_and_aggregate
-    Auto-detect and aggregate permutation results for a run.
 
 Classes
 -------
@@ -44,7 +40,7 @@ Example
 >>> df = aggregate_permutation_results([result1, result2, result3])
 
 >>> # Pooled null aggregation
->>> from ced_ml.significance import pool_null_distribution, detect_and_aggregate
+>>> from ced_ml.significance import pool_null_distribution
 >>> pooled = pool_null_distribution(results_df, model='LR_EN', alpha=0.05)
 >>> print(f"Pooled p-value: {pooled.empirical_p_value:.4f}")
 """
@@ -52,8 +48,6 @@ Example
 from ced_ml.significance.aggregation import (
     PooledNullResult,
     compute_pooled_p_value,
-    detect_and_aggregate,
-    load_hpc_permutation_results,
     pool_null_distribution,
 )
 from ced_ml.significance.permutation_test import (
@@ -71,6 +65,4 @@ __all__ = [
     "PooledNullResult",
     "compute_pooled_p_value",
     "pool_null_distribution",
-    "load_hpc_permutation_results",
-    "detect_and_aggregate",
 ]

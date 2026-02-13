@@ -51,7 +51,6 @@ def test_scheduler_contract(name):
 
     assert isinstance(scheduler.build_orchestrator_submit_func(), str)
     assert isinstance(scheduler.build_orchestrator_status_func(), str)
-    assert isinstance(scheduler.job_array_index_var(), str)
     assert isinstance(scheduler.monitor_hint("test_*"), str)
 
 

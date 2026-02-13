@@ -23,7 +23,6 @@ from ced_ml.hpc.common import (  # noqa: F401 -- re-exports
     _build_orchestrator_script,
     _build_panel_optimization_command,
     _build_permutation_aggregation_command,
-    _build_permutation_test_command,
     _build_permutation_test_full_command,
     _build_postprocessing_command,
     _build_training_command,
@@ -204,9 +203,6 @@ EOF
             f"#BSUB -oo {log_path.resolve()}",
             f"#BSUB -eo {log_path.resolve()}",
         ]
-
-    def job_array_index_var(self) -> str:
-        return "LSB_JOBINDEX"
 
     def monitor_hint(self, job_name_pattern: str) -> str:
         return f"bjobs -w | grep '{job_name_pattern}'"

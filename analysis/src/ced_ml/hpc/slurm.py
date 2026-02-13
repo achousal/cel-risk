@@ -164,9 +164,6 @@ EOF
             f"#SBATCH --error={log_path.resolve()}",
         ]
 
-    def job_array_index_var(self) -> str:
-        return "SLURM_ARRAY_TASK_ID"
-
     def monitor_hint(self, job_name_pattern: str) -> str:
         return f"squeue -u $USER --name='{job_name_pattern}'"
 
