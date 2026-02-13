@@ -37,7 +37,8 @@ This log captures orchestrator submission details, training job IDs, and barrier
 
 HPC runs now use a sentinel-based orchestrator job (instead of long LSF `-w done(...)` chains):
 - Stage sentinels: `logs/run_{RUN_ID}/sentinels/`
-- Generated job scripts: `logs/run_{RUN_ID}/scripts/`
+- Wrapper + orchestrator scripts: `logs/run_{RUN_ID}/scripts/`
+- Job manifest: `logs/run_{RUN_ID}/scripts/jobs_manifest.json`
 - Orchestrator runtime log: `logs/run_{RUN_ID}/orchestrator.log`
 
 Per-stage waits are tuned under `hpc.orchestrator` in `configs/pipeline_hpc.yaml`:

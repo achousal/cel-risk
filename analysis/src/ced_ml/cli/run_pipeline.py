@@ -538,6 +538,10 @@ def _run_hpc_mode(
         hpc_logger.info(f"Scripts dir: {result['scripts_dir']}")
     if result.get("orchestrator_log"):
         hpc_logger.info(f"Orchestrator log: {result['orchestrator_log']}")
+    if result.get("manifest_path"):
+        hpc_logger.info(f"Manifest file: {result['manifest_path']}")
+    if result.get("wrapper_script"):
+        hpc_logger.info(f"Wrapper script: {result['wrapper_script']}")
 
     hpc_logger.info("")
     hpc_logger.info("Submission log:")

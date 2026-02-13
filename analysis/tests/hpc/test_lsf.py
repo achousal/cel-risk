@@ -1,5 +1,7 @@
 """Tests for HPC LSF job submission utilities."""
 
+import base64
+import json
 import logging
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from ced_ml.hpc.lsf import (
     _build_panel_optimization_command,
     _build_postprocessing_command,
     _build_training_command,
+    _build_wrapper_script,
     _scripts_dir,
     _sentinel_dir,
     _sentinel_path,
@@ -40,15 +43,15 @@ def _orchestrator_script_for_test(
     hpc_config: HPCConfig | None = None,
     training_job_ids: list[str] | None = None,
     training_sentinels: list[Path] | None = None,
-    perm_scripts: list[Path] | None = None,
+    perm_keys: list[str] | None = None,
     perm_sentinels: list[Path] | None = None,
-    perm_agg_scripts: list[Path] | None = None,
+    perm_agg_keys: list[str] | None = None,
     perm_agg_sentinels: list[Path] | None = None,
-    panel_seed_scripts: list[Path] | None = None,
+    panel_seed_keys: list[str] | None = None,
     panel_seed_sentinels: list[Path] | None = None,
-    panel_agg_scripts: list[Path] | None = None,
+    panel_agg_keys: list[str] | None = None,
     panel_agg_sentinels: list[Path] | None = None,
-    consensus_script: Path | None = None,
+    consensus_key: str | None = None,
     consensus_sentinel: Path | None = None,
 ) -> str:
     """Build an orchestrator script with configurable stage inputs."""
@@ -68,9 +71,6 @@ def _orchestrator_script_for_test(
             sentinel_dir / "CeD_20260212_151826_RF_s0.done",
         ]
 
-    post_script = scripts_dir / "CeD_20260212_151826_post.sh"
-    post_sentinel = sentinel_dir / "CeD_20260212_151826_post.done"
-
     return _build_orchestrator_script(
         run_id=run_id,
         hpc_config=hpc_config,
@@ -78,19 +78,21 @@ def _orchestrator_script_for_test(
         scripts_dir=scripts_dir,
         orchestrator_log=tmp_path / "orchestrator.log",
         orchestrator_sentinel=sentinel_dir / "CeD_20260212_151826_orchestrator.done",
+        manifest_path=scripts_dir / "jobs_manifest.json",
+        wrapper_script_path=scripts_dir / "CeD_20260212_151826_job_wrapper.sh",
         training_job_ids=training_job_ids,
         training_sentinels=training_sentinels,
-        post_script=post_script,
-        post_sentinel=post_sentinel,
-        perm_scripts=perm_scripts or [],
+        post_key="post",
+        post_sentinel=sentinel_dir / "CeD_20260212_151826_post.done",
+        perm_keys=perm_keys or [],
         perm_sentinels=perm_sentinels or [],
-        perm_agg_scripts=perm_agg_scripts or [],
+        perm_agg_keys=perm_agg_keys or [],
         perm_agg_sentinels=perm_agg_sentinels or [],
-        panel_seed_scripts=panel_seed_scripts or [],
+        panel_seed_keys=panel_seed_keys or [],
         panel_seed_sentinels=panel_seed_sentinels or [],
-        panel_agg_scripts=panel_agg_scripts or [],
+        panel_agg_keys=panel_agg_keys or [],
         panel_agg_sentinels=panel_agg_sentinels or [],
-        consensus_script=consensus_script,
+        consensus_key=consensus_key,
         consensus_sentinel=consensus_sentinel,
         expected_training_jobs=2,
     )
@@ -245,6 +247,15 @@ def test_append_sentinel_touch():
     assert updated.strip().endswith(f'touch "{sentinel}"')
 
 
+def test_wrapper_script_decodes_base64_and_touches_sentinel():
+    """Wrapper script should decode command payload and create sentinel."""
+    script = _build_wrapper_script('source "/venv/bin/activate"')
+
+    assert "CED_JOB_COMMAND_B64" in script
+    assert "base64.b64decode" in script
+    assert 'touch "$CED_SENTINEL_PATH"' in script
+
+
 def test_barrier_bash_uses_bjobs_and_bhist():
     """Failure checks must use bjobs first and bhist as fallback."""
     bash = _build_orchestrator_bash_functions()
@@ -267,6 +278,15 @@ def test_submit_and_track_uses_sed_for_id():
     assert "sed -n 's/.*Job" in bash
 
 
+def test_submit_and_track_uses_manifest_and_wrapper():
+    """submit_and_track should read manifest entries and run shared wrapper."""
+    bash = _build_orchestrator_bash_functions()
+
+    assert "manifest_job_tsv" in bash
+    assert 'python - "$MANIFEST_PATH" "$job_key"' in bash
+    assert '"$WRAPPER_SCRIPT"' in bash
+
+
 def test_submit_and_track_writes_to_id_file():
     """submit_and_track should append parsed IDs to caller-provided file."""
     bash = _build_orchestrator_bash_functions()
@@ -280,7 +300,8 @@ def test_submit_batch_writes_ids_to_file():
 
     assert "submit_batch()" in bash
     assert 'local id_file="$1"' in bash
-    assert 'submit_and_track "${scripts[$i]}"' in bash
+    assert 'local -a job_keys=("$@")' in bash
+    assert 'submit_and_track "${job_keys[$i]}"' in bash
 
 
 def test_orchestrator_script_training_only(tmp_path):
@@ -289,70 +310,49 @@ def test_orchestrator_script_training_only(tmp_path):
 
     assert 'barrier_wait "training"' in script
     assert 'barrier_wait "post-processing"' in script
-    assert "PERM_SCRIPTS=(" not in script
-    assert "PANEL_SEED_SCRIPTS=(" not in script
+    assert 'submit_and_track "post" "post-processing"' in script
+    assert "PERM_KEYS=(" not in script
+    assert "PANEL_SEED_KEYS=(" not in script
     assert 'barrier_wait "consensus"' not in script
 
 
 def test_orchestrator_script_full(tmp_path):
     """Full orchestrator script should include permutation, panel, and consensus stages."""
-    scripts_dir = tmp_path / "scripts"
     sentinels_dir = tmp_path / "sentinels"
-
-    perm_scripts = [
-        scripts_dir / "CeD_20260212_151826_perm_LR_EN_s0.sh",
-        scripts_dir / "CeD_20260212_151826_perm_RF_s0.sh",
-    ]
-    perm_sentinels = [
-        sentinels_dir / "CeD_20260212_151826_perm_LR_EN_s0.done",
-        sentinels_dir / "CeD_20260212_151826_perm_RF_s0.done",
-    ]
-    perm_agg_scripts = [
-        scripts_dir / "CeD_20260212_151826_perm_LR_EN_agg.sh",
-        scripts_dir / "CeD_20260212_151826_perm_RF_agg.sh",
-    ]
-    perm_agg_sentinels = [
-        sentinels_dir / "CeD_20260212_151826_perm_LR_EN_agg.done",
-        sentinels_dir / "CeD_20260212_151826_perm_RF_agg.done",
-    ]
-    panel_seed_scripts = [
-        scripts_dir / "CeD_20260212_151826_panel_LR_EN_s0.sh",
-        scripts_dir / "CeD_20260212_151826_panel_RF_s0.sh",
-    ]
-    panel_seed_sentinels = [
-        sentinels_dir / "CeD_20260212_151826_panel_LR_EN_s0.done",
-        sentinels_dir / "CeD_20260212_151826_panel_RF_s0.done",
-    ]
-    panel_agg_scripts = [
-        scripts_dir / "CeD_20260212_151826_panel_LR_EN_agg.sh",
-        scripts_dir / "CeD_20260212_151826_panel_RF_agg.sh",
-    ]
-    panel_agg_sentinels = [
-        sentinels_dir / "CeD_20260212_151826_panel_LR_EN_agg.done",
-        sentinels_dir / "CeD_20260212_151826_panel_RF_agg.done",
-    ]
 
     script = _orchestrator_script_for_test(
         tmp_path,
-        perm_scripts=perm_scripts,
-        perm_sentinels=perm_sentinels,
-        perm_agg_scripts=perm_agg_scripts,
-        perm_agg_sentinels=perm_agg_sentinels,
-        panel_seed_scripts=panel_seed_scripts,
-        panel_seed_sentinels=panel_seed_sentinels,
-        panel_agg_scripts=panel_agg_scripts,
-        panel_agg_sentinels=panel_agg_sentinels,
-        consensus_script=scripts_dir / "CeD_20260212_151826_consensus.sh",
+        perm_keys=["perm_LR_EN_s0", "perm_RF_s0"],
+        perm_sentinels=[
+            sentinels_dir / "CeD_20260212_151826_perm_LR_EN_s0.done",
+            sentinels_dir / "CeD_20260212_151826_perm_RF_s0.done",
+        ],
+        perm_agg_keys=["perm_LR_EN_agg", "perm_RF_agg"],
+        perm_agg_sentinels=[
+            sentinels_dir / "CeD_20260212_151826_perm_LR_EN_agg.done",
+            sentinels_dir / "CeD_20260212_151826_perm_RF_agg.done",
+        ],
+        panel_seed_keys=["panel_LR_EN_s0", "panel_RF_s0"],
+        panel_seed_sentinels=[
+            sentinels_dir / "CeD_20260212_151826_panel_LR_EN_s0.done",
+            sentinels_dir / "CeD_20260212_151826_panel_RF_s0.done",
+        ],
+        panel_agg_keys=["panel_LR_EN_agg", "panel_RF_agg"],
+        panel_agg_sentinels=[
+            sentinels_dir / "CeD_20260212_151826_panel_LR_EN_agg.done",
+            sentinels_dir / "CeD_20260212_151826_panel_RF_agg.done",
+        ],
+        consensus_key="consensus",
         consensus_sentinel=sentinels_dir / "CeD_20260212_151826_consensus.done",
     )
 
-    assert "PERM_SCRIPTS=(" in script
+    assert "PERM_KEYS=(" in script
     assert 'barrier_wait "permutation-tests"' in script
-    assert "PERM_AGG_SCRIPTS=(" in script
+    assert "PERM_AGG_KEYS=(" in script
     assert 'barrier_wait "permutation-aggregation"' in script
-    assert "PANEL_SEED_SCRIPTS=(" in script
+    assert "PANEL_SEED_KEYS=(" in script
     assert 'barrier_wait "panel-seed"' in script
-    assert "PANEL_AGG_SCRIPTS=(" in script
+    assert "PANEL_AGG_KEYS=(" in script
     assert 'barrier_wait "panel-aggregation"' in script
     assert 'barrier_wait "consensus"' in script
 
@@ -374,20 +374,19 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
         }
     )
 
-    scripts_dir = tmp_path / "scripts"
     sentinels_dir = tmp_path / "sentinels"
     script = _orchestrator_script_for_test(
         tmp_path,
         hpc_config=hpc_config,
-        perm_scripts=[scripts_dir / "perm.sh"],
+        perm_keys=["perm"],
         perm_sentinels=[sentinels_dir / "perm.done"],
-        perm_agg_scripts=[scripts_dir / "perm_agg.sh"],
+        perm_agg_keys=["perm_agg"],
         perm_agg_sentinels=[sentinels_dir / "perm_agg.done"],
-        panel_seed_scripts=[scripts_dir / "panel_seed.sh"],
+        panel_seed_keys=["panel_seed"],
         panel_seed_sentinels=[sentinels_dir / "panel_seed.done"],
-        panel_agg_scripts=[scripts_dir / "panel_agg.sh"],
+        panel_agg_keys=["panel_agg"],
         panel_agg_sentinels=[sentinels_dir / "panel_agg.done"],
-        consensus_script=scripts_dir / "consensus.sh",
+        consensus_key="consensus",
         consensus_sentinel=sentinels_dir / "consensus.done",
     )
 
@@ -417,14 +416,13 @@ def test_orchestrator_batch_chunking(tmp_path):
         }
     )
 
-    scripts_dir = tmp_path / "scripts"
     sentinels_dir = tmp_path / "sentinels"
     script = _orchestrator_script_for_test(
         tmp_path,
         hpc_config=hpc_config,
-        perm_scripts=[scripts_dir / "perm.sh"],
+        perm_keys=["perm"],
         perm_sentinels=[sentinels_dir / "perm.done"],
-        perm_agg_scripts=[scripts_dir / "perm_agg.sh"],
+        perm_agg_keys=["perm_agg"],
         perm_agg_sentinels=[sentinels_dir / "perm_agg.done"],
     )
 
@@ -456,7 +454,7 @@ def test_orchestrator_state_file(tmp_path):
 
 
 def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
-    """Dry run should stage scripts but only dry-submit the orchestrator job."""
+    """Dry run should stage wrapper+orchestrator and dry-submit only orchestrator."""
     submitted: list[tuple[str, bool]] = []
 
     def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
@@ -490,16 +488,18 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
 
     scripts_dir = tmp_path / "logs" / f"run_{run_id}" / "scripts"
     assert scripts_dir.exists()
+    assert (scripts_dir / f"CeD_{run_id}_job_wrapper.sh").exists()
     assert (scripts_dir / f"CeD_{run_id}_orchestrator.sh").exists()
-    assert len(list(scripts_dir.glob("*.sh"))) == 4  # 2 training + post + orchestrator
+    assert len(list(scripts_dir.glob("*.sh"))) == 2
+    assert (scripts_dir / "jobs_manifest.json").exists()
 
     assert len(submitted) == 1
     assert submitted[0][1] is True
     assert result["orchestrator_job"].startswith("DRYRUN_")
 
 
-def test_submit_orchestrator_scripts_have_sentinels(monkeypatch, tmp_path):
-    """Every generated downstream job script should end with a sentinel touch."""
+def test_submit_orchestrator_manifest_has_sentinels(monkeypatch, tmp_path):
+    """Manifest should contain base64 commands and sentinel paths for all staged jobs."""
 
     def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
         return None
@@ -527,18 +527,24 @@ def test_submit_orchestrator_scripts_have_sentinels(monkeypatch, tmp_path):
         hpc_config=_default_hpc_config(),
         logs_dir=tmp_path / "logs",
         dry_run=True,
-        pipeline_logger=logging.getLogger("test_submit_orchestrator_scripts_have_sentinels"),
+        pipeline_logger=logging.getLogger("test_submit_orchestrator_manifest_has_sentinels"),
     )
 
     scripts_dir = tmp_path / "logs" / f"run_{run_id}" / "scripts"
-    assert scripts_dir.exists()
+    manifest_path = scripts_dir / "jobs_manifest.json"
+    assert manifest_path.exists()
 
-    for script_path in scripts_dir.glob("*.sh"):
-        # Orchestrator script has its own internal touch logic and terminal echo.
-        if script_path.name == f"CeD_{run_id}_orchestrator.sh":
-            continue
+    manifest = json.loads(manifest_path.read_text())
+    assert "post" in manifest
+    assert "consensus" in manifest
+    assert any(key.startswith("perm_") for key in manifest)
+    assert any(key.startswith("panel_") for key in manifest)
 
-        content = script_path.read_text()
-        lines = [line for line in content.strip().splitlines() if line.strip()]
-        assert lines[-1].startswith('touch "')
-        assert f"/run_{run_id}/sentinels/" in lines[-1]
+    for entry in manifest.values():
+        assert entry["sentinel"].endswith(".done")
+        assert f"/run_{run_id}/sentinels/" in entry["sentinel"]
+        decoded = base64.b64decode(entry["command_b64"]).decode("utf-8")
+        assert decoded.startswith("ced ") or decoded.startswith("echo ")
+
+    # With manifest+wrapper approach, script files remain bounded.
+    assert len(list(scripts_dir.glob("*.sh"))) == 2
