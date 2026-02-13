@@ -62,6 +62,35 @@ from ced_ml.models.calibration import OOFCalibratedModel
 logger = logging.getLogger(__name__)
 
 
+def _configure_screen_step_for_panel_refit(pipeline, panel_features: list[str]) -> None:
+    """Configure screening step for fixed-panel refits used in essentiality validation.
+
+    During within-panel essentiality, we refit on a reduced feature matrix
+    (panel proteins, optionally plus metadata). If the trained pipeline includes
+    a ``screen`` step, its original ``protein_cols`` still points to the full
+    training protein universe and can trigger KeyError on missing columns.
+
+    This helper rewires screening to:
+    1) treat only the panel proteins as proteins for this refit context, and
+    2) skip re-running univariate screening by pinning precomputed_features.
+
+    That keeps drop-column refits stable when each cluster removes additional
+    panel proteins.
+    """
+    if not hasattr(pipeline, "named_steps"):
+        return
+
+    screen_step = pipeline.named_steps.get("screen")
+    if screen_step is None:
+        return
+
+    panel_copy = list(panel_features)
+    if hasattr(screen_step, "protein_cols"):
+        screen_step.protein_cols = panel_copy
+    if hasattr(screen_step, "precomputed_features"):
+        screen_step.precomputed_features = panel_copy
+
+
 def _extract_bundle_metadata(model_path: Path) -> dict:
     """Extract only metadata keys from a model bundle without full deserialization.
 
@@ -523,8 +552,9 @@ def run_consensus_panel(
     _paths = save_consensus_results(result, outdir)  # noqa: F841
 
     # --- Within-panel essentiality validation (post-hoc interpretation) ---
-    # After the consensus panel is built, refit a model on ONLY the panel
-    # features and run drop-column to measure each cluster's contribution.
+    # After the consensus panel is built, refit a model on the panel proteins
+    # (plus resolved metadata covariates) and run drop-column to measure each
+    # cluster's contribution.
     # This is a validation/interpretation artifact, NOT an input to selection.
     essentiality_summary = None
     if run_essentiality and len(result.final_panel) > 0:
@@ -549,6 +579,20 @@ def run_consensus_panel(
             panel_features = [p for p in result.final_panel if p in df.columns]
             logger.info(f"Validating {len(panel_features)} panel features")
 
+            # Keep resolved metadata columns in refits so the original preprocessing
+            # graph (covariate scaling / categorical encoding) remains valid.
+            metadata_features = resolved_cols.get("numeric_metadata", []) + resolved_cols.get(
+                "categorical_metadata", []
+            )
+            metadata_features = [
+                c for c in metadata_features if c in df.columns and c not in panel_features
+            ]
+            refit_features = panel_features + metadata_features
+            logger.info(
+                f"Refit features: {len(panel_features)} panel proteins + "
+                f"{len(metadata_features)} metadata covariates"
+            )
+
             # Build correlation clusters for the consensus panel
             X_corr = df_train[panel_features]
             corr_matrix = compute_correlation_matrix(X_corr, panel_features, method="spearman")
@@ -558,8 +602,8 @@ def run_consensus_panel(
 
             # Run drop-column across all available splits.
             # For each seed we clone the original model architecture (preserving
-            # tuned hyperparameters) and refit it on ONLY the panel features so
-            # that the estimator's expected input dimension matches the panel.
+            # tuned hyperparameters) and refit on the panel proteins plus
+            # resolved metadata covariates.
             drop_column_results_per_fold = []
             brier_deltas_per_fold = []
             pr_auc_deltas_per_fold = []
@@ -602,16 +646,17 @@ def run_consensus_panel(
                 # Clone preserves tuned hyperparameters but produces an
                 # unfitted estimator that can be trained on the panel subset.
                 panel_pipeline = clone(original_pipeline)
+                _configure_screen_step_for_panel_refit(panel_pipeline, panel_features)
 
-                X_train_seed = df.iloc[train_idx][panel_features]
+                X_train_seed = df.iloc[train_idx][refit_features]
                 y_train_seed = y_all[train_idx]
-                X_val_seed = df.iloc[val_idx][panel_features]
+                X_val_seed = df.iloc[val_idx][refit_features]
                 y_val_seed = y_all[val_idx]
 
-                # Fit the cloned model on panel features only
+                # Fit the cloned model on panel proteins (+ metadata covariates)
                 logger.info(
                     f"  Seed {seed}: refitting {first_model} on "
-                    f"{len(panel_features)} panel features"
+                    f"{len(panel_features)} panel proteins (+{len(metadata_features)} covariates)"
                 )
                 panel_pipeline.fit(X_train_seed, y_train_seed)
 

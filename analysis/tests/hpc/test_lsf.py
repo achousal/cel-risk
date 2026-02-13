@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from ced_ml.config.schema import HPCConfig
-from ced_ml.hpc.lsf import (
+from ced_ml.hpc.common import (
     EnvironmentInfo,
     _build_consensus_panel_command,
     _build_orchestrator_bash_functions,
@@ -21,6 +21,9 @@ from ced_ml.hpc.lsf import (
     build_job_script,
     submit_hpc_pipeline,
 )
+from ced_ml.hpc.lsf import LSFScheduler
+
+_LSF = LSFScheduler()
 
 
 def _default_hpc_config(**overrides) -> HPCConfig:
@@ -71,6 +74,7 @@ def _orchestrator_script_for_test(
         ]
 
     return _build_orchestrator_script(
+        scheduler=_LSF,
         run_id=run_id,
         hpc_config=hpc_config,
         sentinel_dir=sentinel_dir,
@@ -178,6 +182,7 @@ def test_build_consensus_panel_command():
 def test_build_job_script_basic():
     """Test LSF job script builder without dependency."""
     script = build_job_script(
+        scheduler=_LSF,
         job_name="test_job",
         command="echo 'Hello World'",
         project="test_project",
@@ -204,6 +209,7 @@ def test_build_job_script_basic():
 def test_build_job_script_with_dependency():
     """Test LSF job script builder with dependency."""
     script = build_job_script(
+        scheduler=_LSF,
         job_name="dependent_job",
         command="echo 'Dependent'",
         project="test_project",
@@ -261,7 +267,7 @@ def test_wrapper_script_decodes_base64_and_marks_sentinel():
 
 def test_barrier_bash_uses_bjobs_and_bhist():
     """Failure checks must use bjobs first and bhist as fallback."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert 'bjobs -noheader -o "stat"' in bash
     assert "bhist -l" in bash
@@ -269,14 +275,14 @@ def test_barrier_bash_uses_bjobs_and_bhist():
 
 def test_barrier_bash_no_grep_p():
     """Generated orchestrator bash must avoid grep -P for POSIX compatibility."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert "grep -P" not in bash
 
 
 def test_barrier_wait_uses_consolidated_log():
     """barrier_wait should check completion via grep in consolidated log."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert 'grep -qx "${name}" "$SENTINEL_DIR/completed.log"' in bash
     # Old per-job file check must be gone
@@ -285,14 +291,14 @@ def test_barrier_wait_uses_consolidated_log():
 
 def test_submit_and_track_uses_sed_for_id():
     """Job ID extraction should use sed parsing."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert "sed -n 's/.*Job" in bash
 
 
 def test_submit_and_track_uses_manifest_and_wrapper():
     """submit_and_track should read manifest entries and run shared wrapper."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert "manifest_job_tsv" in bash
     assert 'python - "$MANIFEST_PATH" "$job_key"' in bash
@@ -301,7 +307,7 @@ def test_submit_and_track_uses_manifest_and_wrapper():
 
 def test_submit_and_track_exports_sentinel_env():
     """submit_and_track should export CED_JOB_NAME and CED_SENTINEL_DIR."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert 'CED_JOB_NAME="$job_name"' in bash
     assert 'CED_SENTINEL_DIR="$SENTINEL_DIR"' in bash
@@ -309,7 +315,7 @@ def test_submit_and_track_exports_sentinel_env():
 
 def test_submit_and_track_avoids_literal_embedded_bsub_directives():
     """Embedded child script directives must not be literal #BSUB lines in orchestrator source."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert 'local bsub_directive="#BSUB"' in bash
     assert '#BSUB -R "rusage[mem=$mem_per_core] span[hosts=1]"' not in bash
@@ -318,14 +324,14 @@ def test_submit_and_track_avoids_literal_embedded_bsub_directives():
 
 def test_submit_and_track_writes_to_id_file():
     """submit_and_track should append parsed IDs to caller-provided file."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert 'echo "$job_id" >> "$id_file"' in bash
 
 
 def test_submit_batch_writes_ids_to_file():
     """submit_batch should route IDs through id_file to avoid stdout word-splitting."""
-    bash = _build_orchestrator_bash_functions()
+    bash = _build_orchestrator_bash_functions(_LSF)
 
     assert "submit_batch()" in bash
     assert 'local id_file="$1"' in bash
@@ -487,16 +493,16 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
     """Dry run should stage wrapper+orchestrator and dry-submit only orchestrator."""
     submitted: list[tuple[str, bool]] = []
 
-    def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
+    def fake_submit_job(script: str, *, scheduler=None, dry_run: bool = False) -> str | None:
         submitted.append((script, dry_run))
         return None
 
     run_id = "20260212_151826"
     monkeypatch.setattr(
-        "ced_ml.hpc.lsf.detect_environment",
+        "ced_ml.hpc.common.detect_environment",
         lambda _: EnvironmentInfo(env_type="venv", activation_cmd="source venv/bin/activate"),
     )
-    monkeypatch.setattr("ced_ml.hpc.lsf.submit_job", fake_submit_job)
+    monkeypatch.setattr("ced_ml.hpc.common.submit_job", fake_submit_job)
 
     result = submit_hpc_pipeline(
         config_file=tmp_path / "training_config.yaml",
@@ -536,15 +542,15 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
 def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
     """Manifest should contain base64 commands and job_name for all staged jobs."""
 
-    def fake_submit_job(script: str, dry_run: bool = False) -> str | None:
+    def fake_submit_job(script: str, *, scheduler=None, dry_run: bool = False) -> str | None:
         return None
 
     run_id = "20260212_151827"
     monkeypatch.setattr(
-        "ced_ml.hpc.lsf.detect_environment",
+        "ced_ml.hpc.common.detect_environment",
         lambda _: EnvironmentInfo(env_type="venv", activation_cmd="source venv/bin/activate"),
     )
-    monkeypatch.setattr("ced_ml.hpc.lsf.submit_job", fake_submit_job)
+    monkeypatch.setattr("ced_ml.hpc.common.submit_job", fake_submit_job)
 
     submit_hpc_pipeline(
         config_file=tmp_path / "training_config.yaml",

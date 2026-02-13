@@ -10,13 +10,16 @@ from typing import Any
 
 import click
 
-from ced_ml.hpc.lsf import (
-    _build_permutation_test_command,
-    _build_training_command,
+from ced_ml.hpc import (
     build_job_script,
     detect_environment,
+    get_scheduler,
     load_hpc_config,
     submit_job,
+)
+from ced_ml.hpc.common import (
+    _build_permutation_test_command,
+    _build_training_command,
 )
 from ced_ml.utils.paths import get_project_root
 
@@ -58,16 +61,20 @@ def setup_hpc_environment(
     """
     Set up HPC environment by loading config and creating log directory.
 
+    The returned params dict includes a ``scheduler`` key suitable for passing
+    through to :func:`build_job_script`.
+
     Args:
         hpc_config_path: Path to HPC config file
         log_subdir: Subdirectory under logs/hpc/ for job logs
         run_id: Optional run ID to include in log path
 
     Returns:
-        Tuple of (bsub_params dict, log_dir path)
+        Tuple of (job_params dict, log_dir path).
     """
     hpc_config = load_hpc_config(hpc_config_path)
     env_info = detect_environment(get_project_root())
+    scheduler = get_scheduler(hpc_config.scheduler)
 
     # Build log directory
     root = get_project_root()
@@ -77,16 +84,17 @@ def setup_hpc_environment(
         log_dir = root / "logs" / "hpc" / log_subdir
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build bsub parameters
+    # Build job parameters (scheduler included for build_job_script)
     default_resources = hpc_config.get_resources("default")
-    bsub_params = {
+    job_params = {
+        "scheduler": scheduler,
         "project": hpc_config.project,
         "env_activation": env_info.activation_cmd,
         "log_dir": log_dir,
         **default_resources,
     }
 
-    return bsub_params, log_dir
+    return job_params, log_dir
 
 
 def submit_train_jobs(
@@ -173,7 +181,8 @@ def submit_train_jobs(
             **bsub_params,
         )
 
-        job_id = submit_job(script, dry_run=dry_run)
+        scheduler = bsub_params["scheduler"]
+        job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run)
 
         if job_id:
             submitted_jobs.append((seed, job_id))
@@ -191,8 +200,9 @@ def submit_train_jobs(
     if dry_run:
         click.echo("\n[DRY RUN] No jobs were actually submitted.")
     elif submitted_jobs:
+        scheduler = bsub_params["scheduler"]
         click.echo(f"\nSubmitted {len(submitted_jobs)} job(s).")
-        click.echo(f"Monitor with: bjobs -J 'CeD_{run_id}_{model}_*'")
+        click.echo(f"Monitor with: {scheduler.monitor_hint(f'CeD_{run_id}_{model}_*')}")
 
     return submitted_jobs
 
@@ -257,7 +267,8 @@ def submit_permutation_test_jobs(
             **bsub_params,
         )
 
-        job_id = submit_job(script, dry_run=dry_run)
+        scheduler = bsub_params["scheduler"]
+        job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run)
 
         if job_id:
             submitted_ids.append((seed, job_id))
@@ -267,7 +278,8 @@ def submit_permutation_test_jobs(
 
     # Display post-submission message
     if submitted_ids:
-        click.echo(f"\nMonitor with: bjobs -J 'perm_{model}_{run_id}*'")
+        scheduler = bsub_params["scheduler"]
+        click.echo(f"\nMonitor with: {scheduler.monitor_hint(f'perm_{model}_{run_id}*')}")
         click.echo(
             f"After completion, run aggregation:\n"
             f"  ced permutation-test --run-id {run_id} --model {model}"

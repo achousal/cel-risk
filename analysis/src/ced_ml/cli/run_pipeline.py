@@ -345,7 +345,7 @@ def _run_hpc_mode(
     """
     from datetime import datetime
 
-    from ced_ml.hpc.lsf import (
+    from ced_ml.hpc import (
         load_hpc_config,
         submit_hpc_pipeline,
     )

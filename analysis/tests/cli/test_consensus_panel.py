@@ -1,13 +1,19 @@
 """Tests for consensus panel CLI auto-discovery and loading."""
 
+import numpy as np
 import pandas as pd
 import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
 
 from ced_ml.cli.consensus_panel import (
+    _configure_screen_step_for_panel_refit,
     discover_models_with_aggregated_results,
     load_model_stability,
     run_consensus_panel,
 )
+from ced_ml.features.drop_column import compute_drop_column_importance
+from ced_ml.features.kbest import ScreeningTransformer
 
 
 @pytest.fixture
@@ -214,3 +220,61 @@ def test_consensus_fails_fast_when_min_significant_models_is_impossible(tmp_path
             min_significant_models=3,
             run_essentiality=False,
         )
+
+
+def test_configure_screen_step_for_panel_refit_prevents_missing_protein_keyerror():
+    """Configured screen step should refit cleanly on reduced panel inputs."""
+    X_train = pd.DataFrame(
+        {
+            "P1_resid": [0.1, 0.2, 0.9, 1.0, 0.15, 0.25, 0.8, 0.95],
+            "P2_resid": [1.0, 0.9, 0.2, 0.1, 0.85, 0.8, 0.25, 0.2],
+            "age": [30, 31, 42, 43, 29, 33, 45, 46],
+        }
+    )
+    y_train = np.array([0, 0, 1, 1, 0, 0, 1, 1])
+
+    X_val = pd.DataFrame(
+        {
+            "P1_resid": [0.12, 0.22, 0.88, 0.98],
+            "P2_resid": [0.95, 0.82, 0.22, 0.12],
+            "age": [30, 34, 44, 47],
+        }
+    )
+    y_val = np.array([0, 0, 1, 1])
+
+    # Mimic trained pipeline state where screener still references full protein universe.
+    pipeline = Pipeline(
+        [
+            (
+                "screen",
+                ScreeningTransformer(
+                    method="mannwhitney",
+                    top_n=1000,
+                    protein_cols=["P1_resid", "P2_resid", "P3_resid"],
+                ),
+            ),
+            ("clf", LogisticRegression(max_iter=200)),
+        ]
+    )
+
+    panel_features = ["P1_resid", "P2_resid"]
+    _configure_screen_step_for_panel_refit(pipeline, panel_features)
+
+    screen_step = pipeline.named_steps["screen"]
+    assert screen_step.protein_cols == panel_features
+    assert screen_step.precomputed_features == panel_features
+
+    pipeline.fit(X_train, y_train)
+
+    results = compute_drop_column_importance(
+        estimator=pipeline,
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        feature_clusters=[["P1_resid"]],
+        random_state=0,
+    )
+
+    assert len(results) == 1
+    assert results[0].error_msg is None

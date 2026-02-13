@@ -2,6 +2,7 @@
 
 import os
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -98,7 +99,9 @@ class HPCConfig(BaseModel):
         ...,
         description="HPC project allocation code (e.g., acc_elahi, required)",
     )
-    scheduler: str = Field(default="lsf", description="Scheduler type (lsf only)")
+    scheduler: Literal["lsf", "slurm"] = Field(
+        default="lsf", description="Scheduler type: 'lsf' or 'slurm'"
+    )
     queue: str = Field(default="medium", description="Default queue name")
     cores: int = Field(default=4, ge=1, le=128, description="Default number of CPU cores (max 128)")
     mem_per_core: int = Field(

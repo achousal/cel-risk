@@ -384,9 +384,10 @@ def optimize_panel(ctx, config, **kwargs):
         import os
         from pathlib import Path
 
-        from ced_ml.hpc.lsf import (
+        from ced_ml.hpc import (
             build_job_script,
             detect_environment,
+            get_scheduler,
             load_hpc_config,
             submit_job,
         )
@@ -421,6 +422,7 @@ def optimize_panel(ctx, config, **kwargs):
 
         hpc_config = load_hpc_config(Path(hpc_config_path))
         env_info = detect_environment(get_project_root())
+        scheduler = get_scheduler(hpc_config.scheduler)
 
         # Discover models to submit jobs for
         results_dir_env = os.environ.get("CED_RESULTS_DIR")
@@ -449,13 +451,14 @@ def optimize_panel(ctx, config, **kwargs):
         for model_name in model_dirs.keys():
             click.echo(f"  - {model_name}")
 
-        # Build bsub parameters from config + environment
+        # Build job parameters from config + environment
         default_resources = hpc_config.get_resources("default")
         root = get_project_root()
         log_dir = root / "logs" / "hpc"
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        bsub_params = {
+        job_params = {
+            "scheduler": scheduler,
             "project": hpc_config.project,
             "env_activation": env_info.activation_cmd,
             "log_dir": log_dir,
@@ -463,7 +466,7 @@ def optimize_panel(ctx, config, **kwargs):
         }
 
         # Build and submit jobs for each model
-        from ced_ml.hpc.lsf import _build_panel_optimization_command
+        from ced_ml.hpc.common import _build_panel_optimization_command
 
         submitted_jobs = []
         for model_name in model_dirs.keys():
@@ -473,10 +476,10 @@ def optimize_panel(ctx, config, **kwargs):
             script = build_job_script(
                 job_name=job_name,
                 command=cmd,
-                **bsub_params,
+                **job_params,
             )
 
-            job_id = submit_job(script, dry_run=dry_run_flag)
+            job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run_flag)
 
             if job_id:
                 submitted_jobs.append((model_name, job_id))
@@ -494,7 +497,7 @@ def optimize_panel(ctx, config, **kwargs):
             click.echo("\n[DRY RUN] No jobs were actually submitted.")
         elif submitted_jobs:
             click.echo(f"\nSuccessfully submitted {len(submitted_jobs)} job(s)")
-            click.echo("Monitor with: bjobs")
+            click.echo(f"Monitor with: {scheduler.monitor_hint('opt_panel_*')}")
 
         return
 
