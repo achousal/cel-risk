@@ -13,8 +13,8 @@ pipeline:
   models:
     - LR_EN
     - LinSVM_cal
-    - RF
-    - XGBoost
+  #  - RF
+  #  - XGBoost
   ensemble: true
   consensus: true
   optimize_panel: true
@@ -26,17 +26,17 @@ hpc:
   scheduler: lsf  # lsf or slurm
   project: acc_Chipuk_Laboratory  # Required: update before use
   queue: premium
-  walltime: "48:00"  # hours:minutes
+  walltime: "24:00"  # hours:minutes
   cores: 12
   mem_per_core: 8000  # MB
   orchestrator:
-    poll_interval: 60  # seconds between sentinel checks
-    training_timeout: 4.0  # hours
-    post_timeout: 2.0  # hours
-    perm_timeout: 4.0  # hours
-    panel_timeout: 2.0  # hours
-    consensus_timeout: 1.0  # hours
+    poll_interval: 60  # sec
+    training_timeout: 20.0  # hr
+    post_timeout: 2.0  # hr
+    perm_timeout: 20.0  # hr
+    panel_timeout: 10.0  # hr
+    consensus_timeout: 8.0  # hr
     max_concurrent_submissions: 20
     cores: 1
     mem_per_core: 2000
-    walltime: "48:00"
+    walltime: "60:00"
