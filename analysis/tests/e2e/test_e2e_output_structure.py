@@ -639,8 +639,9 @@ class TestAggregationOutputStructure:
         if result_agg.exit_code != 0:
             pytest.skip("Aggregation failed")
 
-        # Find summary metrics
-        summary_files = list(results_dir.rglob("*summary*.csv"))
+        # Find summary metrics (use specific pattern to avoid matching
+        # feature_stability_summary.csv which has non-statistical columns)
+        summary_files = list(results_dir.rglob("*metrics_summary*.csv"))
         if len(summary_files) == 0:
             summary_files = list(results_dir.rglob("*aggregated*metrics*.csv"))
 

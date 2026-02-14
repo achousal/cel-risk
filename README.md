@@ -9,12 +9,10 @@
 
 ---
 
-**Core features:**
-- Three-stage feature selection: permutation-gated model filtering -> stability filter + OOF importance ranking -> cross-model consensus via geometric mean rank aggregation
+**Methods:**
+- Feature selection: stability filter + OOF importance ranking -> cross-model consensus via rank aggregation
 - Nested cross-validation with Bayesian hyperparameter optimization
 - Multi-model stacking ensemble with OOF-based calibration
-- Temporal validation with holdout test sets
-- Panel size optimization for biomarker discovery/deployment
 - HPC-ready (LSF/Slurm) with efficient run-time parallelization
 
 ---
