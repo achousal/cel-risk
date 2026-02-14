@@ -64,6 +64,12 @@ class OutputConfig(BaseModel):
     save_stability_ranks: bool = True
     save_consensus_ranks: bool = True
 
+    # SHAP output controls
+    save_shap_importance: bool = True
+    plot_shap_summary: bool = True
+    plot_shap_waterfall: bool = True
+    plot_shap_dependence: bool = True
+
 
 class StrictnessConfig(BaseModel):
     """Configuration for validation strictness."""

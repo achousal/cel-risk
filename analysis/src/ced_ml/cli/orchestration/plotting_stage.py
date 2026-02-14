@@ -128,6 +128,9 @@ def generate_plots(ctx: TrainingContext) -> TrainingContext:
     # Risk distribution plots
     _generate_risk_distribution_plots(ctx, plots_dir, meta_lines, val_bundle, test_bundle)
 
+    # SHAP explainability plots
+    _generate_shap_plots(ctx, plots_dir)
+
     logger.info(f"All diagnostic plots saved to: {plots_dir}")
 
     return ctx
@@ -224,6 +227,9 @@ def _generate_test_plots(
         target_spec=config.thresholds.fixed_spec,
         dca_threshold=dca_thr,
     )
+
+    # Store test threshold in context (used as fallback if no validation set)
+    ctx.test_threshold = test_bundle["spec_target_threshold"]
 
     youden_thr = test_bundle["youden_threshold"]
     spec_target_thr = test_bundle["spec_target_threshold"]
@@ -387,3 +393,35 @@ def _generate_risk_distribution_plots(
         threshold_bundle=oof_bundle,
     )
     logger.info("Train OOF risk distribution plot saved")
+
+
+def _generate_shap_plots(ctx: TrainingContext, plots_dir: Path) -> None:
+    """Generate SHAP explainability plots if SHAP data is available."""
+    config = ctx.config
+    shap_config = getattr(config.features, "shap", None)
+
+    if not shap_config or not shap_config.enabled:
+        return
+
+    if ctx.test_shap_payload is None:
+        logger.debug("Skipping SHAP plots: no test SHAP payload available")
+        return
+
+    try:
+        from ced_ml.plotting.shap_plots import generate_all_shap_plots
+    except ImportError:
+        logger.warning("SHAP plotting not available: shap package not installed")
+        return
+
+    try:
+        generate_all_shap_plots(
+            test_payload=ctx.test_shap_payload,
+            oof_shap_df=ctx.oof_shap_df,
+            threshold=ctx.val_threshold if ctx.val_threshold is not None else ctx.test_threshold,
+            config=config,
+            outdir=plots_dir,
+            test_preds_df=ctx.test_preds_df,
+        )
+        logger.info("SHAP plots generated")
+    except Exception as e:
+        logger.warning("SHAP plot generation failed: %s", e)

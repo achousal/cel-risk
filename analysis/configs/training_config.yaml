@@ -224,3 +224,19 @@ dca:
   dca_report_points: [0.01, 0.05, 0.10, 0.20]
 
 # Outputs: See configs/output_config.yaml for all artifact and plot controls
+
+# --- SHAP Explainability (opt-in) ---
+# features:
+#   shap:
+#     enabled: false
+#     compute_oof_shap: true
+#     compute_final_shap: true
+#     max_background_samples: 100
+#     background_strategy: random_train
+#     tree_feature_perturbation: tree_path_dependent
+#     tree_model_output: auto   # RF->probability, XGBoost->raw
+#     max_eval_samples: 0
+#     save_raw_values: false
+#     save_val_shap: false
+#     raw_dtype: float32
+#     positive_label: 1

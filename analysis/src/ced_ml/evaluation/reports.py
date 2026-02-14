@@ -77,6 +77,7 @@ class OutputDirectories:
     diag_dca: str
     diag_screening: str
     diag_test_ci: str
+    shap: str
 
     @classmethod
     def create(
@@ -138,6 +139,7 @@ class OutputDirectories:
             "diag_dca": "diagnostics",
             "diag_screening": "diagnostics",
             "diag_test_ci": "diagnostics",
+            "shap": "shap",
         }
 
         # Create all directories

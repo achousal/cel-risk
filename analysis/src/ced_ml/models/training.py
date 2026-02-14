@@ -16,6 +16,7 @@ Provides:
 # Including private functions that may be used by other modules
 from .nested_cv import (
     _DEFAULT_N_ITER,
+    NestedCVResult,
     _apply_per_fold_calibration,
     _build_hyperparameter_search,
     _convert_numpy_types,
@@ -32,6 +33,7 @@ from .nested_cv import (
 )
 
 __all__ = [
+    "NestedCVResult",
     "get_model_n_iter",
     "oof_predictions_with_nested_cv",
     # Private functions and constants re-exported for backward compatibility

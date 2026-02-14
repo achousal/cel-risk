@@ -13,10 +13,13 @@ Key components:
 - Protein selection extraction from fitted models
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 import warnings
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -50,6 +53,20 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_N_ITER = 30  # Fallback when neither global nor per-model n_iter is set
+
+
+@dataclass
+class NestedCVResult:
+    """Result of nested cross-validation with OOF predictions."""
+
+    preds: np.ndarray
+    elapsed_sec: float
+    best_params_df: pd.DataFrame
+    selected_proteins_df: pd.DataFrame
+    oof_calibrator: OOFCalibrator | None
+    nested_rfecv_result: NestedRFECVResult | None
+    oof_importance_df: pd.DataFrame | None
+    oof_shap_df: pd.DataFrame | None = None
 
 
 def get_model_n_iter(model_name: str, config: TrainingConfig) -> int:
@@ -111,15 +128,7 @@ def oof_predictions_with_nested_cv(
     config: TrainingConfig,
     random_state: int,
     grid_rng: np.random.Generator | None = None,
-) -> tuple[
-    np.ndarray,
-    float,
-    pd.DataFrame,
-    pd.DataFrame,
-    "OOFCalibrator | None",
-    "NestedRFECVResult | None",
-    pd.DataFrame | None,
-]:
+) -> NestedCVResult:
     """
     Generate out-of-fold predictions using nested cross-validation.
 
@@ -138,17 +147,19 @@ def oof_predictions_with_nested_cv(
         grid_rng: Optional RNG for grid randomization
 
     Returns:
-        preds: OOF predictions (n_repeats x N) - each row is one repeat's predictions
-               If calibration strategy is "oof_posthoc", predictions are calibrated.
-        elapsed_sec: Training time in seconds
-        best_params_df: DataFrame with best hyperparameters per fold
-        selected_proteins_df: DataFrame with selected proteins per fold
-        oof_calibrator: OOFCalibrator instance if strategy is "oof_posthoc", else None.
-                        Use this calibrator for val/test predictions.
-        rfecv_result: NestedRFECVResult if rfe_enabled, else None.
-                      Contains consensus panel and fold-wise feature selection.
-        oof_importance_df: DataFrame with OOF feature importance if compute_oof_importance=True,
-                           else None. Contains aggregated importance across folds.
+        NestedCVResult with:
+            preds: OOF predictions (n_repeats x N) - each row is one repeat's predictions
+                   If calibration strategy is "oof_posthoc", predictions are calibrated.
+            elapsed_sec: Training time in seconds
+            best_params_df: DataFrame with best hyperparameters per fold
+            selected_proteins_df: DataFrame with selected proteins per fold
+            oof_calibrator: OOFCalibrator instance if strategy is "oof_posthoc", else None.
+                            Use this calibrator for val/test predictions.
+            nested_rfecv_result: NestedRFECVResult if rfe_enabled, else None.
+                                 Contains consensus panel and fold-wise feature selection.
+            oof_importance_df: DataFrame with OOF feature importance if compute_oof_importance=True,
+                               else None. Contains aggregated importance across folds.
+            oof_shap_df: Placeholder for SHAP values (not yet implemented)
 
     Raises:
         RuntimeError: If any repeat has missing OOF predictions (CV split bug)
@@ -182,6 +193,9 @@ def oof_predictions_with_nested_cv(
 
     # OOF importance tracking (if enabled)
     fold_importances: list[pd.DataFrame] = []
+
+    # OOF SHAP tracking (if enabled)
+    fold_shap_results: list = []
 
     # Validate outer CV folds
     if n_splits < 2:
@@ -273,6 +287,30 @@ def oof_predictions_with_nested_cv(
             fitted_model = search.best_estimator_
             best_params = search.best_params_
             best_score = float(search.best_score_)
+
+        # --- OOF SHAP computation (BEFORE calibration) ---
+        if (
+            (shap_config := getattr(config.features, "shap", None))
+            and shap_config.enabled
+            and shap_config.compute_oof_shap
+        ):
+            from ced_ml.features.shap_values import compute_shap_for_fold
+
+            try:
+                fold_shap = compute_shap_for_fold(
+                    fitted_model,
+                    model_name,
+                    X_val=X.iloc[test_idx],
+                    X_train=X.iloc[train_idx],
+                    config=shap_config,
+                    random_state=random_state,
+                    y_train=y[train_idx],
+                )
+                fold_shap.repeat = repeat_num
+                fold_shap.outer_split = split_idx
+                fold_shap_results.append(fold_shap)
+            except Exception as e:
+                logger.warning("Fold %d/%d: SHAP failed: %s", repeat_num, split_idx, e)
 
         # Optional post-hoc calibration (only for per_fold strategy)
         # For oof_posthoc, calibration happens after CV loop completes
@@ -557,14 +595,27 @@ def oof_predictions_with_nested_cv(
         oof_importance_df = aggregate_fold_importances(fold_importances)
         logger.info(f"OOF importance computed for {len(oof_importance_df)} features")
 
-    return (
-        preds,
-        elapsed_sec,
-        pd.DataFrame(best_params_rows),
-        pd.DataFrame(selected_proteins_rows),
-        oof_calibrator,
-        nested_rfecv_result,
-        oof_importance_df,
+    # Aggregate OOF SHAP across folds
+    oof_shap_df = None
+    if fold_shap_results and getattr(config.features, "shap", None):
+        from ced_ml.features.shap_values import aggregate_fold_shap
+
+        shap_cfg = config.features.shap
+        try:
+            oof_shap_df = aggregate_fold_shap(fold_shap_results, shap_cfg)
+            logger.info("OOF SHAP computed for %d features", len(oof_shap_df))
+        except Exception as e:
+            logger.warning("OOF SHAP aggregation failed: %s", e)
+
+    return NestedCVResult(
+        preds=preds,
+        elapsed_sec=elapsed_sec,
+        best_params_df=pd.DataFrame(best_params_rows),
+        selected_proteins_df=pd.DataFrame(selected_proteins_rows),
+        oof_calibrator=oof_calibrator,
+        nested_rfecv_result=nested_rfecv_result,
+        oof_importance_df=oof_importance_df,
+        oof_shap_df=oof_shap_df,
     )
 
 

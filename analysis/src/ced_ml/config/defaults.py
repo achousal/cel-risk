@@ -139,6 +139,11 @@ DEFAULT_OUTPUT_CONFIG: dict[str, Any] = {
     "save_rfe_curve": True,
     "save_stability_ranks": True,
     "save_consensus_ranks": True,
+    # SHAP output controls
+    "save_shap_importance": True,
+    "plot_shap_summary": True,
+    "plot_shap_waterfall": True,
+    "plot_shap_dependence": True,
 }
 
 # Default strictness configuration

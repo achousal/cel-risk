@@ -211,6 +211,95 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
         ctx.oof_importance_df.to_csv(oof_importance_path, index=False)
         logger.info(f"OOF importance saved: {oof_importance_path.name}")
 
+    # OOF SHAP importance
+    if ctx.oof_shap_df is not None and getattr(config.output, "save_shap_importance", True):
+        cv_dir = Path(outdirs.cv)
+        shap_importance_path = cv_dir / f"oof_shap_importance__{config.model}.csv"
+        ctx.oof_shap_df.to_csv(shap_importance_path, index=False)
+        logger.info(f"OOF SHAP importance saved: {shap_importance_path.name}")
+
+        # SHAP metadata
+        shap_config = getattr(config.features, "shap", None)
+        if shap_config:
+            import json
+
+            metadata = {
+                "shap_output_scale": (
+                    ctx.test_shap_payload.shap_output_scale if ctx.test_shap_payload else "unknown"
+                ),
+                "tree_model_output_requested": shap_config.tree_model_output,
+                "tree_model_output_effective": (
+                    "probability"
+                    if (
+                        ctx.test_shap_payload
+                        and ctx.test_shap_payload.shap_output_scale == "probability"
+                    )
+                    else ("raw" if config.model in ("RF", "XGBoost") else None)
+                ),
+                "explained_model_state": (
+                    ctx.test_shap_payload.explained_model_state
+                    if ctx.test_shap_payload
+                    else "unknown"
+                ),
+                "explainer_type": (
+                    ctx.test_shap_payload.explainer_type if ctx.test_shap_payload else "unknown"
+                ),
+                "n_features": len(ctx.oof_shap_df),
+                "n_background": shap_config.max_background_samples,
+                "background_strategy": shap_config.background_strategy,
+                "raw_dtype": shap_config.raw_dtype,
+                "note": (
+                    "SHAP explains the uncalibrated base estimator. "
+                    "OOF importance may reflect the calibrated wrapper "
+                    "depending on calibration strategy."
+                ),
+            }
+            # Background sensitivity analysis metadata
+            if ctx.test_shap_payload and ctx.test_shap_payload.background_sensitivity_result:
+                sens = ctx.test_shap_payload.background_sensitivity_result
+                metadata["background_sensitivity"] = {
+                    "enabled": True,
+                    "n_replicates": sens["n_replicates"],
+                    "mean_rank_correlation": sens["mean_rank_correlation"],
+                    "interpretation": (
+                        "Higher correlation (closer to 1.0) = more stable "
+                        "attributions across background choices"
+                    ),
+                }
+            else:
+                metadata["background_sensitivity"] = {
+                    "enabled": False,
+                    "note": "Single background sample used (default)",
+                }
+
+            meta_path = cv_dir / f"shap_metadata__{config.model}.json"
+            meta_path.write_text(json.dumps(metadata, indent=2))
+            logger.info(f"SHAP metadata saved: {meta_path.name}")
+
+    # Test SHAP values (parquet)
+    if ctx.test_shap_payload is not None:
+        shap_dir = Path(outdirs.shap)
+        shap_dir.mkdir(parents=True, exist_ok=True)
+        test_shap_df = pd.DataFrame(
+            ctx.test_shap_payload.values,
+            columns=ctx.test_shap_payload.feature_names,
+        )
+        test_shap_path = shap_dir / f"test_shap_values__{config.model}.parquet.gz"
+        test_shap_df.to_parquet(test_shap_path, compression="gzip")
+        logger.info(f"Test SHAP values saved: {test_shap_path.name}")
+
+    # Val SHAP values (parquet, optional)
+    if ctx.val_shap_payload is not None:
+        shap_dir = Path(outdirs.shap)
+        shap_dir.mkdir(parents=True, exist_ok=True)
+        val_shap_df = pd.DataFrame(
+            ctx.val_shap_payload.values,
+            columns=ctx.val_shap_payload.feature_names,
+        )
+        val_shap_path = shap_dir / f"val_shap_values__{config.model}.parquet.gz"
+        val_shap_df.to_parquet(val_shap_path, compression="gzip")
+        logger.info(f"Val SHAP values saved: {val_shap_path.name}")
+
     # Final test panel
     if ctx.final_selected_proteins:
         writer = ResultsWriter(ctx.outdirs)

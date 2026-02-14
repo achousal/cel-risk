@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .shap_schema import SHAPConfig
+
 
 class FeatureConfig(BaseModel):
     """Configuration for feature selection methods.
@@ -167,3 +169,6 @@ class FeatureConfig(BaseModel):
             "Only used when feature_selection_strategy='fixed_panel'."
         ),
     )
+
+    # SHAP configuration (opt-in)
+    shap: SHAPConfig = Field(default_factory=SHAPConfig)

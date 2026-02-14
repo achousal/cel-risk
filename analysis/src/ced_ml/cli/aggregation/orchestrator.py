@@ -176,6 +176,65 @@ def aggregate_importance(
     return output_df
 
 
+def aggregate_shap_importance(
+    split_dirs: list[Path],
+    model_name: str,
+    output_dir: Path,
+    logger: Logger,
+) -> pd.DataFrame | None:
+    """
+    Aggregate OOF SHAP importance across splits.
+
+    Mirrors aggregate_importance() but for SHAP-based importance.
+    Reads per-split oof_shap_importance__{model}.csv files and
+    computes cross-split mean/std of mean_abs_shap.
+
+    Args:
+        split_dirs: List of split directories containing SHAP importance CSVs
+        model_name: Model name (e.g., "LR_EN")
+        output_dir: Output directory for aggregated SHAP importance
+        logger: Logger instance
+
+    Returns:
+        Aggregated SHAP importance DataFrame, or None if no SHAP importance files found
+    """
+    shap_files = []
+    for split_dir in split_dirs:
+        cv_dir = split_dir / "cv"
+        shap_file = cv_dir / f"oof_shap_importance__{model_name}.csv"
+        if shap_file.exists():
+            shap_files.append(shap_file)
+
+    if not shap_files:
+        logger.debug(f"No SHAP importance files found for {model_name}")
+        return None
+
+    logger.info(f"Aggregating SHAP importance from {len(shap_files)} splits for {model_name}...")
+
+    dfs = [pd.read_csv(f) for f in shap_files]
+
+    combined = pd.concat(dfs, ignore_index=True)
+    agg = combined.groupby("feature", as_index=False).agg(
+        mean_abs_shap=("mean_abs_shap", "mean"),
+        std_abs_shap=("mean_abs_shap", "std"),
+        n_splits_present=("mean_abs_shap", "count"),
+    )
+    agg["stability"] = agg["n_splits_present"] / len(shap_files)
+    agg = agg.sort_values("mean_abs_shap", ascending=False, ignore_index=True)
+    agg["rank"] = range(1, len(agg) + 1)
+
+    output_cols = ["feature", "mean_abs_shap", "std_abs_shap", "stability", "rank"]
+    output_df = agg[output_cols]
+
+    importance_dir = output_dir / "importance"
+    importance_dir.mkdir(parents=True, exist_ok=True)
+    out_path = importance_dir / f"oof_shap_importance__{model_name}.csv"
+    output_df.to_csv(out_path, index=False)
+    logger.info(f"Saved aggregated SHAP importance to {out_path}")
+
+    return output_df
+
+
 def compute_and_save_pooled_metrics(
     pooled_test_df: pd.DataFrame,
     pooled_val_df: pd.DataFrame,
