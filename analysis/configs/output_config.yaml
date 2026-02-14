@@ -64,3 +64,9 @@ panels:
   save_rfe_curve: true          # Save RFE elimination curve (panel size vs AUROC)
   save_stability_ranks: true    # Save feature stability rankings
   save_consensus_ranks: true    # Save cross-model consensus rankings (RRA)
+
+# --- SHAP output controls ---
+# save_shap_importance: true
+# plot_shap_summary: true
+# plot_shap_waterfall: true
+# plot_shap_dependence: true

@@ -145,10 +145,18 @@ class TrainingContext:
     cv_elapsed_sec: float = 0.0
     grid_rng: np.random.Generator | None = None
 
+    # SHAP state
+    oof_shap_df: pd.DataFrame | None = None
+    test_shap_payload: Any = None
+    val_shap_payload: Any = None
+
     # Evaluation state
     val_metrics: dict[str, float] | None = None
     test_metrics: dict[str, float] | None = None
     val_threshold: float | None = None
+    test_threshold: float | None = (
+        None  # Threshold computed on test set (fallback if no validation set)
+    )
     val_target_prev: float = 0.0
     test_target_prev: float = 0.0
 

@@ -19,6 +19,7 @@ from ced_ml.cli.aggregation.collection_phase import CollectedData
 from ced_ml.cli.aggregation.ensemble_metadata import collect_ensemble_metadata
 from ced_ml.cli.aggregation.orchestrator import (
     aggregate_importance,
+    aggregate_shap_importance,
     build_return_summary,
     collect_sample_categories_metadata,
     compute_and_save_pooled_metrics,
@@ -514,6 +515,15 @@ def run_report_phase(
     log_section(logger, "Aggregating OOF Importance")
     for model_name in collected.all_models:
         aggregate_importance(
+            split_dirs=split_dirs,
+            model_name=model_name,
+            output_dir=agg_dir,
+            logger=logger,
+        )
+
+    log_section(logger, "Aggregating OOF SHAP Importance")
+    for model_name in collected.all_models:
+        aggregate_shap_importance(
             split_dirs=split_dirs,
             model_name=model_name,
             output_dir=agg_dir,

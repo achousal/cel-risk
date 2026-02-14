@@ -53,6 +53,9 @@ dev = [
     "ruff>=0.13.0",
     "mypy>=1.11.0",
 ]
+shap = [
+    "shap>=0.46.0",
+]
 
 [project.scripts]
 ced = "ced_ml.cli.main:cli"

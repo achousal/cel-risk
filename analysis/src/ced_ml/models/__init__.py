@@ -26,6 +26,7 @@ from .hyperparams import (
     get_param_distributions,
 )
 from .nested_cv import (
+    NestedCVResult,
     get_model_n_iter,
     oof_predictions_with_nested_cv,
 )
@@ -84,6 +85,7 @@ __all__ = [
     # Hyperparams
     "get_param_distributions",
     # Nested CV (training)
+    "NestedCVResult",
     "get_model_n_iter",
     "oof_predictions_with_nested_cv",
 ]

@@ -206,15 +206,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
 
     logger.info(f"Running {total_folds} folds...")
 
-    (
-        oof_preds,
-        elapsed_sec,
-        best_params_df,
-        selected_proteins_df,
-        oof_calibrator,
-        nested_rfecv_result,
-        oof_importance_df,
-    ) = oof_predictions_with_nested_cv(
+    cv_result = oof_predictions_with_nested_cv(
         pipeline=pipeline,
         model_name=config.model,
         X=ctx.X_train,
@@ -225,7 +217,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
         grid_rng=ctx.grid_rng,
     )
 
-    logger.info(f"CV completed in {elapsed_sec:.1f}s")
+    logger.info(f"CV completed in {cv_result.elapsed_sec:.1f}s")
 
     # Step 4: Fit final model on full train set
     log_section(logger, "Training Final Model")
@@ -243,7 +235,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
     # Parse k from the JSON best_params column (fixes previous bug where
     # "sel__k" was checked as a DataFrame column name but params are stored as JSON)
     if strategy == "multi_stage":
-        k_series = _extract_k_from_best_params(best_params_df)
+        k_series = _extract_k_from_best_params(cv_result.best_params_df)
         k_grid = getattr(config.features, "k_grid", None)
 
         if k_series is not None and not k_series.empty:
@@ -261,10 +253,52 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
             logger.info(f"Final model k-best set to k={best_k}")
 
         # Save k selection summary artifact (Patch C)
-        _save_k_summary(best_params_df, ctx.outdirs.cv)
+        _save_k_summary(cv_result.best_params_df, ctx.outdirs.cv)
 
     final_pipeline.fit(ctx.X_train, ctx.y_train)
     logger.info("Final model fitted")
+
+    # --- Final-model SHAP (before calibration wrapping) ---
+    shap_config = getattr(config.features, "shap", None)
+    if shap_config and shap_config.enabled and shap_config.compute_final_shap:
+        from ced_ml.features.shap_values import compute_final_shap
+
+        log_section(logger, "Computing SHAP Values")
+        try:
+            ctx.test_shap_payload = compute_final_shap(
+                final_pipeline,
+                config.model,
+                ctx.X_test,
+                ctx.y_test,
+                ctx.X_train,
+                shap_config,
+                y_train=ctx.y_train,
+            )
+            logger.info(
+                "Test SHAP computed: %d features, scale=%s",
+                len(ctx.test_shap_payload.feature_names),
+                ctx.test_shap_payload.shap_output_scale,
+            )
+        except Exception as e:
+            logger.warning("Test SHAP failed: %s", e)
+            ctx.test_shap_payload = None
+
+        if shap_config.save_val_shap and ctx.has_validation_set:
+            try:
+                ctx.val_shap_payload = compute_final_shap(
+                    final_pipeline,
+                    config.model,
+                    ctx.X_val,
+                    ctx.y_val,
+                    ctx.X_train,
+                    shap_config,
+                    split="val",
+                    y_train=ctx.y_train,
+                )
+                logger.info("Validation SHAP computed")
+            except Exception as e:
+                logger.warning("Validation SHAP failed: %s", e)
+                ctx.val_shap_payload = None
 
     # Step 5: Apply calibration to final model
     final_pipeline = _apply_per_fold_calibration(
@@ -277,12 +311,14 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
 
     # For oof_posthoc strategy, wrap final model with the OOF calibrator
     # Use calibration strategy pattern for final model logging
-    if oof_calibrator is not None:
+    if cv_result.oof_calibrator is not None:
         final_pipeline = OOFCalibratedModel(
             base_model=final_pipeline,
-            calibrator=oof_calibrator,
+            calibrator=cv_result.oof_calibrator,
         )
-        logger.info(f"Final model wrapped with OOF calibrator (method={oof_calibrator.method})")
+        logger.info(
+            f"Final model wrapped with OOF calibrator (method={cv_result.oof_calibrator.method})"
+        )
     elif (
         calibration_strategy.requires_per_fold_calibration()
         and not calibration_strategy.should_skip_for_model(config.model)
@@ -299,7 +335,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
             X_train=ctx.X_train,
             y_train=ctx.y_train,
             random_state=seed,
-            nested_rfecv_result=nested_rfecv_result,
+            nested_rfecv_result=cv_result.nested_rfecv_result,
         )
         logger.info(f"Final test panel: {len(final_selected_proteins)} proteins selected")
     except Exception as e:
@@ -308,13 +344,14 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
 
     # Update context
     ctx.final_pipeline = final_pipeline
-    ctx.oof_preds = oof_preds
-    ctx.best_params_df = best_params_df
-    ctx.selected_proteins_df = selected_proteins_df
-    ctx.oof_calibrator = oof_calibrator
-    ctx.nested_rfecv_result = nested_rfecv_result
-    ctx.oof_importance_df = oof_importance_df
+    ctx.oof_preds = cv_result.preds
+    ctx.best_params_df = cv_result.best_params_df
+    ctx.selected_proteins_df = cv_result.selected_proteins_df
+    ctx.oof_calibrator = cv_result.oof_calibrator
+    ctx.nested_rfecv_result = cv_result.nested_rfecv_result
+    ctx.oof_importance_df = cv_result.oof_importance_df
+    ctx.oof_shap_df = cv_result.oof_shap_df
     ctx.final_selected_proteins = final_selected_proteins
-    ctx.cv_elapsed_sec = elapsed_sec
+    ctx.cv_elapsed_sec = cv_result.elapsed_sec
 
     return ctx

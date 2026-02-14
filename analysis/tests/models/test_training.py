@@ -69,7 +69,7 @@ def test_oof_predictions_basic(toy_data, simple_pipeline, minimal_config):
     """Test basic OOF prediction generation."""
     X, y, protein_cols = toy_data
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -80,22 +80,22 @@ def test_oof_predictions_basic(toy_data, simple_pipeline, minimal_config):
     )
 
     # Check shape
-    assert preds.shape == (minimal_config.cv.repeats, len(y))
+    assert result.preds.shape == (minimal_config.cv.repeats, len(y))
 
     # Check no missing predictions
-    assert not np.isnan(preds).any()
+    assert not np.isnan(result.preds).any()
 
     # Check predictions in [0, 1]
-    assert np.all((preds >= 0) & (preds <= 1))
+    assert np.all((result.preds >= 0) & (result.preds <= 1))
 
     # Check elapsed time is positive
-    assert elapsed > 0
+    assert result.elapsed_sec > 0
 
     # Check metadata DataFrames
-    assert len(best_params_df) == minimal_config.cv.folds * minimal_config.cv.repeats
-    assert "model" in best_params_df.columns
-    assert "repeat" in best_params_df.columns
-    assert "outer_split" in best_params_df.columns
+    assert len(result.best_params_df) == minimal_config.cv.folds * minimal_config.cv.repeats
+    assert "model" in result.best_params_df.columns
+    assert "repeat" in result.best_params_df.columns
+    assert "outer_split" in result.best_params_df.columns
 
 
 def test_oof_predictions_folds_less_than_2_raises(toy_data, simple_pipeline, minimal_config):
@@ -140,7 +140,7 @@ def test_oof_predictions_no_nan_after_training(toy_data, simple_pipeline, minima
     """
     X, y, protein_cols = toy_data
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -151,14 +151,15 @@ def test_oof_predictions_no_nan_after_training(toy_data, simple_pipeline, minima
     )
 
     # Validate no NaN in predictions
-    assert np.isfinite(preds).all(), (
-        f"OOF predictions contain {np.sum(~np.isfinite(preds))} non-finite values. "
+    assert np.isfinite(result.preds).all(), (
+        f"OOF predictions contain {np.sum(~np.isfinite(result.preds))} non-finite values. "
         "All predictions must be finite for metric computation."
     )
 
     # Validate predictions are in valid probability range
-    assert np.all((preds >= 0) & (preds <= 1)), (
-        f"OOF predictions outside [0,1] range. " f"Min: {preds.min():.6f}, Max: {preds.max():.6f}"
+    assert np.all((result.preds >= 0) & (result.preds <= 1)), (
+        f"OOF predictions outside [0,1] range. "
+        f"Min: {result.preds.min():.6f}, Max: {result.preds.max():.6f}"
     )
 
 
@@ -437,13 +438,13 @@ def test_oof_predictions_with_kbest(toy_data, minimal_config):
         ]
     )
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         pipeline, "LR_EN", X, y, protein_cols, minimal_config, random_state=42
     )
 
     # Check that k was tuned
-    assert len(best_params_df) > 0
-    best_params_sample = json.loads(best_params_df.iloc[0]["best_params"])
+    assert len(result.best_params_df) > 0
+    best_params_sample = json.loads(result.best_params_df.iloc[0]["best_params"])
     assert "sel__selector__k" in best_params_sample
 
 
@@ -476,20 +477,20 @@ def test_oof_predictions_tracks_selected_proteins(toy_data, minimal_config):
         ]
     )
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         pipeline, "LR_EN", X, y, protein_cols, minimal_config, random_state=42
     )
 
     # Check that selected_proteins_df is returned (may be empty if no features selected)
-    assert isinstance(selected_proteins_df, pd.DataFrame)
+    assert isinstance(result.selected_proteins_df, pd.DataFrame)
 
     # If proteins were selected, verify structure
-    if len(selected_proteins_df) > 0:
-        assert "n_selected_proteins" in selected_proteins_df.columns
-        assert "selected_proteins" in selected_proteins_df.columns
+    if len(result.selected_proteins_df) > 0:
+        assert "n_selected_proteins" in result.selected_proteins_df.columns
+        assert "selected_proteins" in result.selected_proteins_df.columns
 
         # Parse selected proteins
-        sample_proteins = json.loads(selected_proteins_df.iloc[0]["selected_proteins"])
+        sample_proteins = json.loads(result.selected_proteins_df.iloc[0]["selected_proteins"])
         assert isinstance(sample_proteins, list)
         assert all(p in protein_cols for p in sample_proteins)
 
@@ -502,7 +503,7 @@ def test_oof_predictions_single_repeat(toy_data, simple_pipeline, minimal_config
     X, y, protein_cols = toy_data
     minimal_config.cv.repeats = 1
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -512,8 +513,8 @@ def test_oof_predictions_single_repeat(toy_data, simple_pipeline, minimal_config
         random_state=42,
     )
 
-    assert preds.shape == (1, len(y))
-    assert not np.isnan(preds).any()
+    assert result.preds.shape == (1, len(y))
+    assert not np.isnan(result.preds).any()
 
 
 def test_oof_predictions_no_inner_tuning(toy_data, simple_pipeline, minimal_config):
@@ -521,7 +522,7 @@ def test_oof_predictions_no_inner_tuning(toy_data, simple_pipeline, minimal_conf
     X, y, protein_cols = toy_data
     minimal_config.cv.inner_folds = 1  # Disable tuning
 
-    preds, elapsed, best_params_df, selected_proteins_df, _, _, _ = oof_predictions_with_nested_cv(
+    result = oof_predictions_with_nested_cv(
         simple_pipeline,
         "LR_EN",
         X,
@@ -532,11 +533,11 @@ def test_oof_predictions_no_inner_tuning(toy_data, simple_pipeline, minimal_conf
     )
 
     # Should still work (no tuning, just CV)
-    assert preds.shape == (minimal_config.cv.repeats, len(y))
-    assert not np.isnan(preds).any()
+    assert result.preds.shape == (minimal_config.cv.repeats, len(y))
+    assert not np.isnan(result.preds).any()
 
     # Best params should be empty
-    best_params_sample = json.loads(best_params_df.iloc[0]["best_params"])
+    best_params_sample = json.loads(result.best_params_df.iloc[0]["best_params"])
     assert best_params_sample == {}
 
 
@@ -825,26 +826,24 @@ def test_rfecv_actually_reduces_features():
     )
 
     # Run training with RFECV
-    preds, elapsed, best_params_df, selected_proteins_df, _, rfecv_result, _ = (
-        oof_predictions_with_nested_cv(
-            pipeline, "LR_EN", X, y, protein_cols, config, random_state=42
-        )
+    result = oof_predictions_with_nested_cv(
+        pipeline, "LR_EN", X, y, protein_cols, config, random_state=42
     )
 
     # Verify RFECV results exist
-    assert rfecv_result is not None, "RFECV should return results"
-    assert len(rfecv_result.consensus_panel) > 0, "RFECV should select proteins"
+    assert result.nested_rfecv_result is not None, "RFECV should return results"
+    assert len(result.nested_rfecv_result.consensus_panel) > 0, "RFECV should select proteins"
     assert (
-        rfecv_result.mean_optimal_size < 50
-    ), f"RFECV should reduce from 50 (got {rfecv_result.mean_optimal_size})"
+        result.nested_rfecv_result.mean_optimal_size < 50
+    ), f"RFECV should reduce from 50 (got {result.nested_rfecv_result.mean_optimal_size})"
 
     # Verify predictions were generated
-    assert preds.shape == (1, len(y))
-    assert not np.isnan(preds).any(), "No missing OOF predictions"
+    assert result.preds.shape == (1, len(y))
+    assert not np.isnan(result.preds).any(), "No missing OOF predictions"
 
     # Verify selected proteins tracking
-    assert len(selected_proteins_df) > 0, "Should track selected proteins per fold"
-    for _, row in selected_proteins_df.iterrows():
+    assert len(result.selected_proteins_df) > 0, "Should track selected proteins per fold"
+    for _, row in result.selected_proteins_df.iterrows():
         n_selected = row["n_selected_proteins"]
         proteins_json = json.loads(row["selected_proteins"])
 
@@ -856,7 +855,7 @@ def test_rfecv_actually_reduces_features():
         assert len(proteins_json) == n_selected, "Protein list should match count"
 
     print(
-        f"✓ RFECV reduced to {rfecv_result.mean_optimal_size:.1f} proteins (consensus: {len(rfecv_result.consensus_panel)})"
+        f"✓ RFECV reduced to {result.nested_rfecv_result.mean_optimal_size:.1f} proteins (consensus: {len(result.nested_rfecv_result.consensus_panel)})"
     )
 
 
