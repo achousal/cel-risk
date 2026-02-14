@@ -347,6 +347,18 @@ def test_barrier_bash_uses_bjobs_and_bhist():
     assert "bhist -l" in bash
 
 
+def test_bhist_pipelines_guarded_against_pipefail():
+    """bhist pipelines in check_upstream_failures must have ``|| true`` to prevent
+    silent abort under ``set -eo pipefail`` when bhist returns non-zero for
+    purged jobs (regression for exit-code-255 orchestrator crash)."""
+    bash = _build_orchestrator_bash_functions(_LSF)
+
+    # Both bhist pipelines must be guarded
+    for line in bash.splitlines():
+        if "bhist -l" in line and "$(" in line:
+            assert "|| true)" in line, f"bhist pipeline missing '|| true' guard: {line.strip()}"
+
+
 def test_barrier_bash_no_grep_p():
     """Generated orchestrator bash must avoid grep -P for POSIX compatibility."""
     bash = _build_orchestrator_bash_functions(_LSF)

@@ -166,13 +166,13 @@ EOF
 
         if [ -z "$stat" ] || echo "$raw" | grep -qi "not found"; then
             local hist_exit
-            hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}')
+            hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}' || true)
             if [ -n "$hist_exit" ]; then
                 echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist): $hist_exit"
                 exit 1
             fi
             local hist_term
-            hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}')
+            hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}' || true)
             if [ -n "$hist_term" ]; then
                 echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist): $hist_term"
                 exit 1
