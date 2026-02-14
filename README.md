@@ -3,13 +3,11 @@
 **Production-grade ML pipeline for disease risk prediction from high-dimensional biomarker data**
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
-![Tests](https://img.shields.io/badge/tests-1422%20passing-success)
-![Coverage](https://img.shields.io/badge/coverage-14%25-red)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
-**Methods:**
+**Highlights:**
 - Feature selection: stability filter + OOF importance ranking -> cross-model consensus via rank aggregation
 - Nested cross-validation with Bayesian hyperparameter optimization
 - Multi-model stacking ensemble with OOF-based calibration
@@ -68,18 +66,17 @@ cd CeliacRisks/
 ced run-pipeline --hpc
 
 # Monitor jobs
-bjobs -w | grep CeD_
+bjobs #lsf
+squeue -u $USER #slurm
 ```
 
 **Configure resources** in `analysis/configs/pipeline_hpc.yaml` (cores, memory, walltime, queue).
 
 **What happens:**
 1. Generates splits locally
-2. Submits per-model training jobs to LSF
-3. Chains aggregation, ensemble, and panel optimization as dependent jobs
-4. Auto-detects everything from run-id
-
-**No manual post-processing needed** - all steps are chained automatically.
+2. Submits per-model training jobs to scheduler
+3. Chains all stages as dependent jobs to run sequentially
+4. Auto-detects directories from run-id
 
 ### 3. CLI Commands
 
@@ -125,7 +122,7 @@ All commands use YAML configs in `analysis/configs/`:
 
 ---
 
-## Example Results: Celiac Disease
+## Results: Celiac Disease
 
 **Dataset:** 43,960 subjects (148 incident cases, 150 prevalent cases), 2,920 proteins, plus demographics (age, BMI, sex, genetic ancestry)
 
