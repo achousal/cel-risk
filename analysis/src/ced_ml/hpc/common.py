@@ -338,6 +338,7 @@ def _build_training_command(
     model: str,
     split_seed: int,
     run_id: str,
+    split_index: int = 0,
 ) -> str:
     """Build ced train command for a single (model, split_seed) pair.
 
@@ -355,6 +356,7 @@ def _build_training_command(
         f'--outdir "{outdir}"',
         f"--model {model}",
         f"--split-seed {split_seed}",
+        f"--split-index {split_index}",
         f"--run-id {run_id}",
     ]
     return " \\\n  ".join(parts)
@@ -395,10 +397,10 @@ def _build_postprocessing_command(
     # seeds and ENSEMBLE aggregation can still proceed)
     if enable_ensemble:
         lines.append("ENSEMBLE_FAILURES=0")
-        for seed in split_seeds:
+        for split_index, seed in enumerate(split_seeds):
             lines.append(f'echo "Training ensemble seed {seed}..."')
             lines.append(
-                f"ced train-ensemble --run-id {run_id} --split-seed {seed}"
+                f"ced train-ensemble --run-id {run_id} --split-seed {seed} --split-index {split_index}"
                 f" || {{ echo 'WARNING: ensemble seed {seed} failed'; ENSEMBLE_FAILURES=$((ENSEMBLE_FAILURES+1)); }}"
             )
         lines.append("")
@@ -961,7 +963,7 @@ def _submit_orchestrator_pipeline(
     )
 
     for model in models:
-        for seed in split_seeds:
+        for split_index, seed in enumerate(split_seeds):
             job_name = f"CeD_{run_id}_{model}_s{seed}"
             training_job_names.append(job_name)
             training_command = _build_training_command(
@@ -972,6 +974,7 @@ def _submit_orchestrator_pipeline(
                 model=model,
                 split_seed=seed,
                 run_id=run_id,
+                split_index=split_index,
             )
 
             wrapped_command = _build_wrapped_command(

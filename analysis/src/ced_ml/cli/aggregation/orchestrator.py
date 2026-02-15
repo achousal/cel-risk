@@ -235,6 +235,153 @@ def aggregate_shap_importance(
     return output_df
 
 
+def aggregate_shap_values(
+    split_dirs: list[Path],
+    model_name: str,
+    output_dir: Path,
+    logger: Logger,
+) -> pd.DataFrame | None:
+    """
+    Pool per-split test (and optionally val) SHAP value matrices across splits.
+
+    Reads per-split test_shap_values__{model}.parquet.gz files, appends a
+    split_seed column, concatenates, and writes a pooled parquet to
+    {output_dir}/shap/. Repeats for val_shap_values if any exist.
+
+    Args:
+        split_dirs: List of split directories containing shap/ subdirectories
+        model_name: Model name (e.g., "LR_EN")
+        output_dir: Aggregation output directory (aggregated/)
+        logger: Logger instance
+
+    Returns:
+        Pooled test SHAP DataFrame, or None if no files found
+    """
+    shap_dir_out = output_dir / "shap"
+
+    def _pool_parquets(filename_pattern: str, out_name: str) -> pd.DataFrame | None:
+        dfs = []
+        for split_dir in split_dirs:
+            parquet_path = split_dir / "shap" / filename_pattern
+            if parquet_path.exists():
+                df = pd.read_parquet(parquet_path)
+                seed_str = split_dir.name.replace("split_seed", "")
+                # Walk up to find split_seed dir when split_dir is model-level
+                if not seed_str.isdigit():
+                    seed_str = split_dir.parent.name.replace("split_seed", "")
+                df["split_seed"] = int(seed_str)
+                dfs.append(df)
+
+        if not dfs:
+            return None
+
+        shap_dir_out.mkdir(parents=True, exist_ok=True)
+        pooled = pd.concat(dfs, ignore_index=True)
+        out_path = shap_dir_out / out_name
+        pooled.to_parquet(out_path, compression="gzip")
+        logger.info(
+            f"Pooled {len(dfs)} splits -> {out_path.name} "
+            f"({len(pooled)} samples, {len(pooled.columns) - 1} features)"
+        )
+        return pooled
+
+    # Pool test SHAP values
+    test_pooled = _pool_parquets(
+        f"test_shap_values__{model_name}.parquet.gz",
+        f"test_shap_values_pooled__{model_name}.parquet.gz",
+    )
+
+    # Pool val SHAP values (optional -- only if save_val_shap was enabled)
+    _pool_parquets(
+        f"val_shap_values__{model_name}.parquet.gz",
+        f"val_shap_values_pooled__{model_name}.parquet.gz",
+    )
+
+    return test_pooled
+
+
+def aggregate_shap_metadata(
+    split_dirs: list[Path],
+    model_name: str,
+    output_dir: Path,
+    logger: Logger,
+) -> dict | None:
+    """
+    Collect per-split SHAP metadata and write an aggregated summary.
+
+    Reads per-split shap_metadata__{model}.json files, checks consistency
+    of output scale and explainer type, and writes a summary JSON to
+    {output_dir}/shap/.
+
+    Args:
+        split_dirs: List of split directories containing cv/ subdirectories
+        model_name: Model name (e.g., "LR_EN")
+        output_dir: Aggregation output directory (aggregated/)
+        logger: Logger instance
+
+    Returns:
+        Aggregated metadata dict, or None if no metadata files found
+    """
+    meta_entries: list[dict] = []
+    for split_dir in split_dirs:
+        meta_path = split_dir / "cv" / f"shap_metadata__{model_name}.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta_entries.append(json.load(f))
+
+    if not meta_entries:
+        logger.debug(f"No SHAP metadata files found for {model_name}")
+        return None
+
+    # Check consistency
+    scales = {m.get("shap_output_scale", "unknown") for m in meta_entries}
+    explainers = {m.get("explainer_type", "unknown") for m in meta_entries}
+    model_states = {m.get("explained_model_state", "unknown") for m in meta_entries}
+
+    scale_consistent = len(scales) == 1
+    explainer_consistent = len(explainers) == 1
+
+    if not scale_consistent:
+        logger.warning(
+            f"SHAP output scale inconsistent across splits for {model_name}: {scales}. "
+            "Aggregated plots may have misleading axis labels."
+        )
+    if not explainer_consistent:
+        logger.warning(
+            f"SHAP explainer type inconsistent across splits for {model_name}: {explainers}"
+        )
+
+    # Use first entry as reference for consistent fields
+    ref = meta_entries[0]
+
+    summary = {
+        "model": model_name,
+        "n_splits_total": len(split_dirs),
+        "n_splits_with_shap": len(meta_entries),
+        "shap_output_scale": ref.get("shap_output_scale", "unknown"),
+        "scale_consistent": scale_consistent,
+        "scales_observed": sorted(scales),
+        "explainer_type": ref.get("explainer_type", "unknown"),
+        "explainer_consistent": explainer_consistent,
+        "explainers_observed": sorted(explainers),
+        "explained_model_state": ref.get("explained_model_state", "unknown"),
+        "model_states_observed": sorted(model_states),
+        "n_features": ref.get("n_features"),
+        "n_background": ref.get("n_background"),
+        "background_strategy": ref.get("background_strategy"),
+        "raw_dtype": ref.get("raw_dtype"),
+    }
+
+    shap_dir_out = output_dir / "shap"
+    shap_dir_out.mkdir(parents=True, exist_ok=True)
+    out_path = shap_dir_out / f"shap_metadata_summary__{model_name}.json"
+    with open(out_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    logger.info(f"Saved aggregated SHAP metadata to {out_path.name}")
+
+    return summary
+
+
 def compute_and_save_pooled_metrics(
     pooled_test_df: pd.DataFrame,
     pooled_val_df: pd.DataFrame,

@@ -37,6 +37,8 @@ def run_aggregate_splits(
     plot_dca: bool = True,
     plot_oof_combined: bool = True,
     plot_learning_curve: bool = True,
+    plot_shap_summary: bool = True,
+    plot_shap_dependence: bool = True,
     control_spec_targets: list[float] | None = None,
 ) -> dict[str, Any]:
     """
@@ -119,12 +121,11 @@ def run_aggregate_splits(
 
                 if max_plot_splits > 0:
                     original_count = len(ensemble_dirs)
-                    # Filter by split seed number (extracted from directory name)
-                    ensemble_dirs = [
-                        ed
-                        for ed in ensemble_dirs
-                        if int(ed.name.replace("split_seed", "")) < max_plot_splits
-                    ]
+                    # Keep only the first N directories (by sorted order)
+                    ensemble_dirs = sorted(
+                        ensemble_dirs,
+                        key=lambda ed: int(ed.name.replace("split_seed", "")),
+                    )[:max_plot_splits]
                     filtered_count = len(ensemble_dirs)
 
                     if filtered_count < original_count:
@@ -169,5 +170,7 @@ def run_aggregate_splits(
         plot_dca=plot_dca,
         plot_oof_combined=plot_oof_combined,
         plot_learning_curve=plot_learning_curve,
+        plot_shap_summary=plot_shap_summary,
+        plot_shap_dependence=plot_shap_dependence,
         logger=logger,
     )

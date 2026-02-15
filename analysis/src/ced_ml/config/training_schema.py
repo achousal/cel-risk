@@ -23,6 +23,7 @@ class TrainingConfig(BaseModel):
     split_dir: Path | None = None
     scenario: str | None = None  # Auto-detect from split files
     split_seed: int = 0
+    split_index: int = 0  # Ordinal position among seeds (0-based); used for max_plot_splits gate
 
     # Model selection
     model: str = ModelName.LR_EN

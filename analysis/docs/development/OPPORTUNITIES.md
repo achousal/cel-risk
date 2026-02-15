@@ -21,58 +21,9 @@ This document catalogs high-value implementation opportunities for the CeD-ML pi
 | Priority | Effort | Items |
 |----------|--------|-------|
 | P0 (Critical) | < 4 hours | Test suite for new utils, integrate style.py, commit refactoring |
-| P1 (High Impact) | 1-3 days | Clinical deployment module, SHAP explainability, panel size curves |
 | P2 (Performance) | 2-5 days | RFE parallelization, pipeline profiling |
 | P3 (Scientific) | 3-7 days | Cross-cohort validation, temporal validation, uncertainty quantification |
 | P4 (Infrastructure) | 2-5 days | Pre-commit hooks, CI/CD pipeline |
-
----
-
-
-## P1: HIGH-IMPACT FEATURES
-
-### 5. Model Explainability Suite (SHAP)
-
-**Status**: Clinical ML requires interpretability. Current pipeline has metrics but no local/global explanations.
-
-**Motivation**:
-- Clinicians need to understand **why** a patient is high-risk (which proteins drive prediction)
-- Regulatory requirements for "explainable AI" in healthcare
-- Scientific discovery: identify novel biomarker interactions
-
-**Outputs**:
-1. **Waterfall plots** (`waterfall_patient_{id}.png`): Per-patient feature contributions
-   - Show top 20 proteins pushing risk up/down
-   - Annotate base rate, feature effects, final prediction
-2. **Beeswarm summary** (`summary_cohort.png`): Cohort-level feature importance
-   - Rank proteins by |SHAP value|
-   - Show distribution of effects (positive/negative)
-3. **Dependence plots** (`dependence_{protein}.png`): Marginal effect of each top-10 protein
-   - X-axis: protein level, Y-axis: SHAP value
-   - Color by interaction feature (auto-detected)
-4. **Interaction matrix** (`interactions_heatmap.png`): Protein-protein interactions (top 20 × 20)
-
-**Implementation notes**:
-- Use `shap.TreeExplainer` for tree models (XGBoost, RF) - fast, exact
-- Use `shap.KernelExplainer` for linear models (LR_EN) - slower, sampling-based
-- For ensemble: compute SHAP for each base model, aggregate weighted by stacking coefficients
-- Cache SHAP values to avoid recomputation
-
-**Testing requirements**:
-- Unit tests: SHAP values sum to (prediction - base_rate)
-- Integration test: Generate all plot types on toy data
-- Validate: Top features from SHAP match feature importance from model
-
-**Acceptance criteria**:
-- Works for all model types (LR_EN, RF, XGBoost, ensemble)
-- Generates publication-ready plots
-- Execution time: < 5 min for 100 samples on XGBoost
-
-**Effort**: 2-3 days
-
-**Dependencies**: `shap>=0.43.0`, `matplotlib>=3.7.0`
-
-**References**: Lundberg & Lee (2017), SHAP documentation
 
 ---
 

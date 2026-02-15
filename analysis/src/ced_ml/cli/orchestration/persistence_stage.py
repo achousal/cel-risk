@@ -739,8 +739,9 @@ def _save_learning_curve(ctx: TrainingContext) -> None:
         if not (lc_enabled and plot_lc):
             return
 
+        split_index = getattr(config, "split_index", 0)
         should_plot = config.output.save_plots and (
-            config.output.max_plot_splits == 0 or seed < config.output.max_plot_splits
+            config.output.max_plot_splits == 0 or split_index < config.output.max_plot_splits
         )
 
         lc_csv_path = Path(outdirs.diag_learning) / f"{config.model}__learning_curve.csv"

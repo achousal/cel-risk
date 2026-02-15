@@ -15,6 +15,8 @@ from ced_ml.cli.aggregation.collection import (
     collect_predictions,
 )
 from ced_ml.cli.aggregation.orchestrator import (
+    aggregate_shap_metadata,
+    aggregate_shap_values,
     build_aggregation_metadata,
     build_return_summary,
     compute_and_save_pooled_metrics,
@@ -23,6 +25,7 @@ from ced_ml.cli.aggregation.orchestrator import (
 )
 from ced_ml.cli.aggregation.plot_generator import (
     generate_aggregated_plots,
+    generate_aggregated_shap_plots,
     generate_model_comparison_report,
 )
 from ced_ml.cli.aggregation.reporting import (
@@ -57,8 +60,11 @@ __all__ = [
     "build_consensus_panels",
     # Plot Generation
     "generate_aggregated_plots",
+    "generate_aggregated_shap_plots",
     "generate_model_comparison_report",
     # Orchestration
+    "aggregate_shap_metadata",
+    "aggregate_shap_values",
     "build_aggregation_metadata",
     "build_return_summary",
     "compute_and_save_pooled_metrics",

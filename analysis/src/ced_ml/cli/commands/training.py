@@ -51,6 +51,12 @@ from ced_ml.data.schema import ModelName
     help="Comma-separated list of split seeds (e.g., '0,1,2'). Mutually exclusive with --split-seed.",
 )
 @click.option(
+    "--split-index",
+    type=int,
+    default=None,
+    help="Ordinal position of this seed among all seeds (0-based). Used for max_plot_splits gate.",
+)
+@click.option(
     "--outdir",
     type=click.Path(),
     default="results",
@@ -179,6 +185,9 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
     # Local mode: run training directly
     from ced_ml.cli.train import run_train
 
+    # If --split-index was explicitly provided via CLI (e.g. HPC), use it; otherwise derive from loop
+    cli_split_index = kwargs.pop("split_index", None)
+
     # For local mode with multiple seeds, run sequentially
     for i, seed in enumerate(seed_list):
         if len(seed_list) > 1:
@@ -189,6 +198,7 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
         # Collect CLI args
         cli_args = {k: v for k, v in kwargs.items() if k != "override"}
         cli_args["split_seed"] = seed
+        cli_args["split_index"] = cli_split_index if cli_split_index is not None else i
         overrides = list(kwargs.get("override", []))
 
         # Run training
@@ -251,6 +261,12 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
     type=float,
     default=None,
     help="Meta-learner regularization strength (inverse)",
+)
+@click.option(
+    "--split-index",
+    type=int,
+    default=None,
+    help="Ordinal position of this seed among all seeds (0-based). Used for max_plot_splits gate.",
 )
 @click.pass_context
 def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
@@ -338,17 +354,22 @@ def train_ensemble(ctx, config, base_models, split_seed, split_seeds, **kwargs):
 
     # Train ensemble for each split seed
     n_seeds = len(seeds_to_train)
+    cli_split_index = kwargs.pop("split_index", None)
     for i, seed in enumerate(seeds_to_train, 1):
         if n_seeds > 1:
             click.echo(f"\n{'=' * 70}")
             click.echo(f"Training ensemble for split_seed={seed} ({i}/{n_seeds})")
             click.echo(f"{'=' * 70}\n")
 
+        # Use CLI --split-index if provided (HPC single-seed calls), otherwise derive from loop
+        effective_split_index = cli_split_index if cli_split_index is not None else (i - 1)
+
         try:
             run_train_ensemble(
                 config_file=config,
                 base_models=base_model_list,
                 split_seed=seed,
+                split_index=effective_split_index,
                 **kwargs,
                 log_level=ctx.obj.get("log_level"),
             )

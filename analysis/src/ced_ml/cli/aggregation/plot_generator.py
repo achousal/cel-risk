@@ -334,6 +334,187 @@ def generate_aggregated_plots(
                                 )
 
 
+def generate_aggregated_shap_plots(
+    pooled_shap_df: pd.DataFrame | None,
+    oof_shap_importance_df: pd.DataFrame | None,
+    shap_metadata: dict | None,
+    model_name: str,
+    out_dir: Path,
+    plot_formats: list[str],
+    plot_shap_summary: bool = True,
+    plot_shap_dependence: bool = True,
+    logger: logging.Logger | None = None,
+) -> None:
+    """
+    Generate aggregated SHAP plots from pooled SHAP values across splits.
+
+    Produces bar importance, beeswarm (if pooled values available), and
+    dependence plots (top 5 features). Falls back to OOF importance CSV
+    for the bar plot when pooled SHAP values are not available.
+
+    Args:
+        pooled_shap_df: Pooled test SHAP values (samples x features + split_seed)
+        oof_shap_importance_df: OOF SHAP importance CSV (feature, mean_abs_shap, ...)
+        shap_metadata: Aggregated SHAP metadata dict (scale, explainer, etc.)
+        model_name: Model name (e.g., "LR_EN")
+        out_dir: Aggregation output directory (aggregated/)
+        plot_formats: List of plot formats (e.g., ["png", "pdf"])
+        plot_shap_summary: Whether to generate bar and beeswarm plots
+        plot_shap_dependence: Whether to generate dependence plots
+        logger: Optional logger instance
+    """
+    try:
+        from ced_ml.plotting.shap_plots import (
+            plot_bar_importance,
+            plot_beeswarm,
+            plot_dependence,
+        )
+    except ImportError as e:
+        if logger:
+            logger.warning(f"SHAP plotting not available: {e}")
+        return
+
+    has_pooled = pooled_shap_df is not None and not pooled_shap_df.empty
+    has_oof_importance = oof_shap_importance_df is not None and not oof_shap_importance_df.empty
+
+    if not has_pooled and not has_oof_importance:
+        if logger:
+            logger.debug(f"No SHAP data available for {model_name}, skipping SHAP plots")
+        return
+
+    shap_plots_dir = out_dir / "plots" / "shap"
+    shap_plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve SHAP output scale from metadata for axis labels
+    shap_output_scale = "raw"
+    if shap_metadata:
+        shap_output_scale = shap_metadata.get("shap_output_scale", "raw")
+
+    if logger:
+        logger.info(f"Generating aggregated SHAP plots for {model_name}")
+
+    if has_pooled:
+        # Extract feature columns (everything except split_seed)
+        feature_cols = [c for c in pooled_shap_df.columns if c != "split_seed"]
+        shap_values = pooled_shap_df[feature_cols].values
+        feature_names = feature_cols
+
+        summary_plot_failed = False
+        if plot_shap_summary:
+            try:
+                for fmt in plot_formats:
+                    # Bar plot from pooled values
+                    plot_bar_importance(
+                        shap_values,
+                        feature_names,
+                        outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
+                        shap_output_scale=shap_output_scale,
+                    )
+
+                    # Beeswarm plot (uses SHAP values as feature values for color
+                    # since X_transformed is not available at aggregation time)
+                    plot_beeswarm(
+                        shap_values,
+                        shap_values,
+                        feature_names,
+                        outpath=shap_plots_dir / f"{model_name}__shap_beeswarm.{fmt}",
+                        shap_output_scale=shap_output_scale,
+                    )
+            except ImportError as e:
+                summary_plot_failed = True
+                if logger:
+                    logger.warning(
+                        f"SHAP summary plotting unavailable for {model_name}: {e}. "
+                        "Continuing without pooled SHAP summary plots."
+                    )
+
+        if plot_shap_dependence:
+            # Top 5 features by mean |SHAP|
+            mean_abs = np.mean(np.abs(shap_values), axis=0)
+            top_indices = np.argsort(mean_abs)[::-1][:5]
+
+            try:
+                for fmt in plot_formats:
+                    for feat_idx in top_indices:
+                        feat_name = feature_names[feat_idx]
+                        safe_name = feat_name.replace("/", "_").replace(" ", "_")
+                        plot_dependence(
+                            shap_values,
+                            feat_idx,
+                            shap_values,
+                            feature_names,
+                            outpath=shap_plots_dir / f"{model_name}__dependence_{safe_name}.{fmt}",
+                            shap_output_scale=shap_output_scale,
+                        )
+            except ImportError as e:
+                if logger:
+                    logger.warning(
+                        f"SHAP dependence plotting unavailable for {model_name}: {e}. "
+                        "Continuing without dependence plots."
+                    )
+
+        if summary_plot_failed and has_oof_importance:
+            top_n = min(20, len(oof_shap_importance_df))
+            top_df = oof_shap_importance_df.head(top_n)
+            for fmt in plot_formats:
+                _plot_bar_from_importance_csv(
+                    top_df,
+                    outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
+                    shap_output_scale=shap_output_scale,
+                    model_name=model_name,
+                )
+
+    elif has_oof_importance and plot_shap_summary:
+        # Fallback: bar plot from OOF importance CSV (no beeswarm/dependence possible)
+        top_n = min(20, len(oof_shap_importance_df))
+        top_df = oof_shap_importance_df.head(top_n)
+
+        for fmt in plot_formats:
+            _plot_bar_from_importance_csv(
+                top_df,
+                outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
+                shap_output_scale=shap_output_scale,
+                model_name=model_name,
+            )
+
+    if logger:
+        logger.info(f"Aggregated SHAP plots saved to {shap_plots_dir}")
+
+
+def _plot_bar_from_importance_csv(
+    importance_df: pd.DataFrame,
+    outpath: Path,
+    shap_output_scale: str = "raw",
+    model_name: str = "",
+) -> None:
+    """Simple horizontal bar chart from pre-aggregated OOF SHAP importance."""
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    matplotlib.use("Agg")
+
+    fig, ax = plt.subplots(figsize=(8, max(4, len(importance_df) * 0.3)))
+    y_pos = range(len(importance_df) - 1, -1, -1)
+    ax.barh(
+        list(y_pos),
+        importance_df["mean_abs_shap"].values,
+        xerr=(
+            importance_df["std_abs_shap"].values
+            if "std_abs_shap" in importance_df.columns
+            else None
+        ),
+        align="center",
+        color="#1f77b4",
+        edgecolor="none",
+    )
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(importance_df["feature"].values)
+    ax.set_xlabel(f"mean |SHAP value| ({shap_output_scale})")
+    ax.set_title(f"SHAP Feature Importance - {model_name}")
+    fig.savefig(str(outpath), dpi=300, bbox_inches="tight")
+    plt.close("all")
+
+
 def generate_model_comparison_report(
     pooled_test_metrics: dict[str, dict[str, float]],
     pooled_val_metrics: dict[str, dict[str, float]],

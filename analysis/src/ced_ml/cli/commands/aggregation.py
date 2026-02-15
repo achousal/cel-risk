@@ -2,6 +2,8 @@
 Aggregation command for collecting and summarizing results across split seeds.
 """
 
+from pathlib import Path
+
 import click
 
 from ced_ml.cli.options import results_dir_option, run_id_option
@@ -146,6 +148,23 @@ def aggregate_splits(ctx, **kwargs):
                     click.echo(f"  - {model_name}")
                 click.echo("")
 
+            # Load SHAP plot flags from saved config when available
+            shap_plot_flags = {}
+            try:
+                from ced_ml.config.loader import load_training_config
+
+                config_path = run_path / "config.yaml"
+                if config_path.exists():
+                    cfg = load_training_config(str(config_path))
+                    shap_plot_flags["plot_shap_summary"] = getattr(
+                        cfg.output, "plot_shap_summary", True
+                    )
+                    shap_plot_flags["plot_shap_dependence"] = getattr(
+                        cfg.output, "plot_shap_dependence", True
+                    )
+            except Exception:
+                pass  # defaults to True via function signature
+
             # Process each model
             for model_name, results_dir in model_dirs.items():
                 if len(model_dirs) > 1:
@@ -158,6 +177,7 @@ def aggregate_splits(ctx, **kwargs):
                 model_kwargs["results_dir"] = results_dir
                 model_kwargs.pop("run_id", None)
                 model_kwargs.pop("model", None)
+                model_kwargs.update(shap_plot_flags)
 
                 run_aggregate_splits(**model_kwargs, log_level=ctx.obj.get("log_level"))
 
@@ -178,5 +198,24 @@ def aggregate_splits(ctx, **kwargs):
     # Single explicit results_dir provided
     kwargs.pop("run_id", None)
     kwargs.pop("model", None)
+
+    # Try loading SHAP plot flags from saved config
+    try:
+        from ced_ml.config.loader import load_training_config
+
+        results_path = Path(results_dir)
+        for parent in [results_path] + list(results_path.parents):
+            config_path = parent / "config.yaml"
+            if config_path.exists():
+                cfg = load_training_config(str(config_path))
+                kwargs.setdefault(
+                    "plot_shap_summary", getattr(cfg.output, "plot_shap_summary", True)
+                )
+                kwargs.setdefault(
+                    "plot_shap_dependence", getattr(cfg.output, "plot_shap_dependence", True)
+                )
+                break
+    except Exception:
+        pass
 
     run_aggregate_splits(**kwargs, log_level=ctx.obj.get("log_level"))

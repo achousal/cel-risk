@@ -66,7 +66,7 @@ panels:
   save_consensus_ranks: true    # Save cross-model consensus rankings (RRA)
 
 # --- SHAP output controls ---
-# save_shap_importance: true
-# plot_shap_summary: true
-# plot_shap_waterfall: true
-# plot_shap_dependence: true
+save_shap_importance: true
+plot_shap_summary: true
+plot_shap_waterfall: true
+plot_shap_dependence: true

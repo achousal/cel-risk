@@ -330,6 +330,7 @@ def generate_all_plots(
     meta_penalty: str,
     meta_c: float,
     run_id: str | None = None,
+    split_index: int = 0,
 ) -> None:
     """Generate all ensemble plots.
 
@@ -355,10 +356,10 @@ def generate_all_plots(
     plot_format = "png"
 
     max_plot_splits = getattr(config.output, "max_plot_splits", 0) if config else 0
-    should_plot = max_plot_splits == 0 or split_seed < max_plot_splits
+    should_plot = max_plot_splits == 0 or split_index < max_plot_splits
     if not should_plot:
         logger.info(
-            f"Skipping plots for split_seed={split_seed} (max_plot_splits={max_plot_splits})"
+            f"Skipping plots for split_seed={split_seed} (split_index={split_index}, max_plot_splits={max_plot_splits})"
         )
         return
 
@@ -418,6 +419,7 @@ def run_train_ensemble(
     meta_penalty: str | None = None,
     meta_c: float | None = None,
     log_level: int | None = None,
+    split_index: int = 0,
 ) -> dict[str, Any]:
     """Run ensemble training from base model outputs.
 
@@ -550,6 +552,7 @@ def run_train_ensemble(
         meta_penalty,
         meta_c,
         run_id=run_id,
+        split_index=split_index,
     )
 
     log_section(logger, "Ensemble Training Complete")

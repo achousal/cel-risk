@@ -318,6 +318,9 @@ def run_drop_column_validation_for_panels(
         corr_threshold: Correlation threshold for clustering
         corr_method: Correlation method
     """
+    from sklearn.base import clone
+
+    from ced_ml.cli.consensus_panel import _configure_screen_step_for_panel_refit
     from ced_ml.cli.panel_optimization_helpers import load_split_indices
     from ced_ml.data.io import read_proteomics_file
     from ced_ml.data.schema import TARGET_COL, get_positive_label
@@ -330,6 +333,7 @@ def run_drop_column_validation_for_panels(
         aggregate_drop_column_results,
         compute_drop_column_importance,
     )
+    from ced_ml.models.calibration import OOFCalibratedModel
 
     if not result.recommended_panels:
         logger.warning("No recommended panels found, skipping drop-column validation")
@@ -388,14 +392,29 @@ def run_drop_column_validation_for_panels(
             X_val = X_all.iloc[val_idx]
             y_val = y_all[val_idx]
 
-            # Load model
-            bundle = joblib.load(model_path)
-            estimator = bundle["model"]
-
-            # Run drop-column for this seed
+            # Load model, clone, reconfigure, and refit on panel features
             try:
+                bundle = joblib.load(model_path)
+                original_pipeline = bundle.get("model")
+
+                if original_pipeline is None:
+                    logger.warning(f"  Seed {seed}: model bundle missing 'model' key, skipping")
+                    continue
+
+                # Unwrap OOFCalibratedModel to get the fittable base model
+                if isinstance(original_pipeline, OOFCalibratedModel):
+                    original_pipeline = original_pipeline.base_model
+
+                # Clone preserves tuned hyperparameters but produces unfitted estimator
+                panel_pipeline = clone(original_pipeline)
+                _configure_screen_step_for_panel_refit(panel_pipeline, panel_proteins)
+
+                # Refit on panel features only
+                logger.debug(f"  Seed {seed}: refitting on {len(panel_proteins)} panel proteins")
+                panel_pipeline.fit(X_train, y_train)
+
                 seed_results = compute_drop_column_importance(
-                    estimator=estimator,
+                    estimator=panel_pipeline,
                     X_train=X_train,
                     y_train=y_train,
                     X_val=X_val,

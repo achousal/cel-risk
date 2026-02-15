@@ -27,7 +27,4 @@ pipeline:
   consensus: true
   optimize_panel: true
   permutation_test: false  # Disabled by default (computationally expensive)
-  # Note: Scientific parameters are defined in their respective configs:
-  #   - n_boot: training_config*.yaml (evaluation.n_boot)
-  #   - permutation_n_perms, n_jobs: permutation_test.yaml
   dry_run: false

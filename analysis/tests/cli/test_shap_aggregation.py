@@ -1,28 +1,29 @@
 """
-Tests for SHAP importance aggregation.
-
-This module tests that OOF SHAP importance is correctly aggregated across splits
-by the aggregate_shap_importance function.
+Tests for SHAP aggregation (importance, values, metadata, and plots).
 
 Coverage:
-- Multi-split aggregation with numerical correctness
-- Empty splits (no SHAP files)
-- Single split (stability = 1.0, std = NaN)
-- Different features across splits (union handling)
-- Filename contract with persistence stage
-- Sorting by mean_abs_shap descending
-- Stability calculation (n_splits_present / total_splits)
+- OOF SHAP importance: multi-split, empty, single, different features, filename, sorting, stability
+- SHAP values: multi-split pooling, no files, val included
+- SHAP metadata: consistent scales, inconsistent scales
+- Aggregated SHAP plots: from pooled data, fallback to OOF importance
 """
 
+import json
 import logging
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from ced_ml.cli.aggregation.orchestrator import aggregate_shap_importance
+from ced_ml.cli.aggregation.orchestrator import (
+    aggregate_shap_importance,
+    aggregate_shap_metadata,
+    aggregate_shap_values,
+)
+from ced_ml.cli.aggregation.plot_generator import generate_aggregated_shap_plots
 
 
 @pytest.fixture
@@ -380,3 +381,313 @@ def test_aggregate_shap_preserves_n_splits_present(logger):
 
         protein_c = result[result["feature"] == "protein_C"].iloc[0]
         assert protein_c["stability"] == 0.25  # 1/4
+
+
+# ---------------------------------------------------------------------------
+# aggregate_shap_values tests
+# ---------------------------------------------------------------------------
+
+
+def _make_shap_parquet(split_dir: Path, model: str, n_samples: int, features: list[str]):
+    """Helper: create a mock test SHAP parquet file."""
+    shap_dir = split_dir / "shap"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(42)
+    data = {feat: rng.standard_normal(n_samples) for feat in features}
+    df = pd.DataFrame(data)
+    df.to_parquet(shap_dir / f"test_shap_values__{model}.parquet.gz", compression="gzip")
+    return df
+
+
+def test_aggregate_shap_values_multi_split(logger):
+    """Test pooling test SHAP parquets across multiple splits."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        features = ["feat_A", "feat_B", "feat_C"]
+        split_dirs = []
+        total_samples = 0
+
+        for i in range(3):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            split_dir.mkdir(parents=True)
+            n = 10 + i
+            _make_shap_parquet(split_dir, "LR_EN", n, features)
+            split_dirs.append(split_dir)
+            total_samples += n
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_values(split_dirs, "LR_EN", output_dir, logger)
+
+        assert result is not None
+        assert len(result) == total_samples
+        assert "split_seed" in result.columns
+        assert set(result["split_seed"].unique()) == {0, 1, 2}
+        for feat in features:
+            assert feat in result.columns
+
+        # Verify output file
+        out_path = output_dir / "shap" / "test_shap_values_pooled__LR_EN.parquet.gz"
+        assert out_path.exists()
+
+
+def test_aggregate_shap_values_no_files(logger):
+    """Test graceful return when no SHAP parquets exist."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        split_dirs = []
+        for i in range(2):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            split_dir.mkdir(parents=True)
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_values(split_dirs, "LR_EN", output_dir, logger)
+        assert result is None
+        assert not (output_dir / "shap").exists()
+
+
+def test_aggregate_shap_values_val_included(logger):
+    """Test that val SHAP parquets are pooled when present."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        features = ["feat_X", "feat_Y"]
+        split_dirs = []
+
+        for i in range(2):
+            split_dir = tmpdir_path / f"split_seed{i}" / "RF"
+            split_dir.mkdir(parents=True)
+            shap_dir = split_dir / "shap"
+            shap_dir.mkdir(parents=True)
+
+            # Test parquet
+            _make_shap_parquet(split_dir, "RF", 5, features)
+
+            # Val parquet
+            rng = np.random.default_rng(i)
+            val_df = pd.DataFrame({feat: rng.standard_normal(3) for feat in features})
+            val_df.to_parquet(shap_dir / "val_shap_values__RF.parquet.gz", compression="gzip")
+
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_values(split_dirs, "RF", output_dir, logger)
+
+        assert result is not None
+        # Test pooled exists
+        assert (output_dir / "shap" / "test_shap_values_pooled__RF.parquet.gz").exists()
+        # Val pooled exists
+        assert (output_dir / "shap" / "val_shap_values_pooled__RF.parquet.gz").exists()
+
+        val_pooled = pd.read_parquet(output_dir / "shap" / "val_shap_values_pooled__RF.parquet.gz")
+        assert len(val_pooled) == 6  # 3 per split x 2 splits
+        assert "split_seed" in val_pooled.columns
+
+
+# ---------------------------------------------------------------------------
+# aggregate_shap_metadata tests
+# ---------------------------------------------------------------------------
+
+
+def _write_shap_metadata(split_dir: Path, model: str, meta: dict):
+    """Helper: write a mock SHAP metadata JSON."""
+    cv_dir = split_dir / "cv"
+    cv_dir.mkdir(parents=True, exist_ok=True)
+    with open(cv_dir / f"shap_metadata__{model}.json", "w") as f:
+        json.dump(meta, f)
+
+
+def test_aggregate_shap_metadata_consistent(logger):
+    """Test metadata aggregation when all splits have the same scale."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        split_dirs = []
+
+        for i in range(3):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            _write_shap_metadata(
+                split_dir,
+                "LR_EN",
+                {
+                    "shap_output_scale": "log_odds",
+                    "explainer_type": "LinearExplainer",
+                    "explained_model_state": "calibrated",
+                    "n_features": 50,
+                    "n_background": 100,
+                    "background_strategy": "kmeans",
+                    "raw_dtype": "float64",
+                },
+            )
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_metadata(split_dirs, "LR_EN", output_dir, logger)
+
+        assert result is not None
+        assert result["scale_consistent"] is True
+        assert result["explainer_consistent"] is True
+        assert result["shap_output_scale"] == "log_odds"
+        assert result["explainer_type"] == "LinearExplainer"
+        assert result["n_splits_with_shap"] == 3
+        assert result["n_splits_total"] == 3
+
+        # Verify output file
+        out_path = output_dir / "shap" / "shap_metadata_summary__LR_EN.json"
+        assert out_path.exists()
+        with open(out_path) as f:
+            saved = json.load(f)
+        assert saved["scale_consistent"] is True
+
+
+def test_aggregate_shap_metadata_inconsistent(logger, caplog):
+    """Test metadata aggregation warns when scales differ."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        split_dirs = []
+
+        for i, scale in enumerate(["log_odds", "probability"]):
+            split_dir = tmpdir_path / f"split_seed{i}" / "XGBoost"
+            _write_shap_metadata(
+                split_dir,
+                "XGBoost",
+                {
+                    "shap_output_scale": scale,
+                    "explainer_type": "TreeExplainer",
+                    "explained_model_state": "raw",
+                },
+            )
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        with caplog.at_level(logging.WARNING):
+            result = aggregate_shap_metadata(split_dirs, "XGBoost", output_dir, logger)
+
+        assert result is not None
+        assert result["scale_consistent"] is False
+        assert set(result["scales_observed"]) == {"log_odds", "probability"}
+        assert "inconsistent" in caplog.text.lower()
+
+
+def test_aggregate_shap_metadata_no_files(logger):
+    """Test metadata aggregation returns None when no metadata files exist."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        split_dirs = []
+        for i in range(2):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            split_dir.mkdir(parents=True)
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_metadata(split_dirs, "LR_EN", output_dir, logger)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# generate_aggregated_shap_plots tests
+# ---------------------------------------------------------------------------
+
+
+def test_generate_aggregated_shap_plots_from_pooled(logger):
+    """Test that bar, beeswarm, and dependence plots are created from pooled SHAP."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        # Create a mock pooled SHAP DataFrame (20 samples x 6 features + split_seed)
+        rng = np.random.default_rng(42)
+        features = [f"feat_{i}" for i in range(6)]
+        data = {feat: rng.standard_normal(20) for feat in features}
+        data["split_seed"] = [0] * 10 + [1] * 10
+        pooled_df = pd.DataFrame(data)
+
+        metadata = {"shap_output_scale": "log_odds"}
+
+        with (
+            patch("ced_ml.plotting.shap_plots.plot_bar_importance") as mock_bar,
+            patch("ced_ml.plotting.shap_plots.plot_beeswarm") as mock_bee,
+            patch("ced_ml.plotting.shap_plots.plot_dependence") as mock_dep,
+        ):
+
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=None,
+                shap_metadata=metadata,
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                logger=logger,
+            )
+
+            # Bar and beeswarm called once each (1 format)
+            assert mock_bar.call_count == 1
+            assert mock_bee.call_count == 1
+            # Dependence called for top 5 features (we have 6, so 5)
+            assert mock_dep.call_count == 5
+
+            # Verify scale passed correctly
+            bar_kwargs = mock_bar.call_args
+            assert (
+                bar_kwargs.kwargs.get("shap_output_scale") == "log_odds"
+                or bar_kwargs[1].get("shap_output_scale") == "log_odds"
+            )
+
+
+def test_generate_aggregated_shap_plots_fallback(logger):
+    """Test fallback to OOF importance bar when no pooled data."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["feat_A", "feat_B", "feat_C"],
+                "mean_abs_shap": [0.5, 0.3, 0.1],
+                "std_abs_shap": [0.05, 0.03, 0.01],
+                "stability": [1.0, 1.0, 0.75],
+                "rank": [1, 2, 3],
+            }
+        )
+
+        with patch(
+            "ced_ml.cli.aggregation.plot_generator._plot_bar_from_importance_csv"
+        ) as mock_fallback:
+            generate_aggregated_shap_plots(
+                pooled_shap_df=None,
+                oof_shap_importance_df=oof_df,
+                shap_metadata=None,
+                model_name="RF",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                logger=logger,
+            )
+
+            assert mock_fallback.call_count == 1
+
+
+def test_generate_aggregated_shap_plots_no_data(logger):
+    """Test that nothing happens when no SHAP data is available."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        generate_aggregated_shap_plots(
+            pooled_shap_df=None,
+            oof_shap_importance_df=None,
+            shap_metadata=None,
+            model_name="LR_EN",
+            out_dir=out_dir,
+            plot_formats=["png"],
+            logger=logger,
+        )
+
+        # No shap plots dir should be created
+        assert not (out_dir / "plots" / "shap").exists()

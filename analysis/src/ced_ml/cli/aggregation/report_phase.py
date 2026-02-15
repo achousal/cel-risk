@@ -20,6 +20,8 @@ from ced_ml.cli.aggregation.ensemble_metadata import collect_ensemble_metadata
 from ced_ml.cli.aggregation.orchestrator import (
     aggregate_importance,
     aggregate_shap_importance,
+    aggregate_shap_metadata,
+    aggregate_shap_values,
     build_return_summary,
     collect_sample_categories_metadata,
     compute_and_save_pooled_metrics,
@@ -31,6 +33,7 @@ from ced_ml.cli.aggregation.orchestrator import (
 )
 from ced_ml.cli.aggregation.plot_generator import (
     generate_aggregated_plots,
+    generate_aggregated_shap_plots,
     generate_model_comparison_report,
 )
 from ced_ml.cli.aggregation.reporting import (
@@ -399,7 +402,9 @@ def run_report_phase(
     plot_dca: bool,
     plot_oof_combined: bool,
     plot_learning_curve: bool,
-    logger: logging.Logger,
+    plot_shap_summary: bool = True,
+    plot_shap_dependence: bool = True,
+    logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     """
     Run the complete report phase, writing all outputs to disk.
@@ -422,6 +427,8 @@ def run_report_phase(
         plot_dca: Whether to generate DCA plots
         plot_oof_combined: Whether to generate OOF combined plots
         plot_learning_curve: Whether to generate learning curve plots
+        plot_shap_summary: Whether to generate SHAP bar and beeswarm plots
+        plot_shap_dependence: Whether to generate SHAP dependence plots
         logger: Logger instance
 
     Returns:
@@ -522,13 +529,21 @@ def run_report_phase(
         )
 
     log_section(logger, "Aggregating OOF SHAP Importance")
+    oof_shap_dfs: dict[str, pd.DataFrame | None] = {}
     for model_name in collected.all_models:
-        aggregate_shap_importance(
+        oof_shap_dfs[model_name] = aggregate_shap_importance(
             split_dirs=split_dirs,
             model_name=model_name,
             output_dir=agg_dir,
             logger=logger,
         )
+
+    log_section(logger, "Aggregating SHAP Values and Metadata")
+    shap_payloads: dict[str, tuple[pd.DataFrame | None, dict | None]] = {}
+    for model_name in collected.all_models:
+        pooled_shap = aggregate_shap_values(split_dirs, model_name, agg_dir, logger)
+        shap_meta = aggregate_shap_metadata(split_dirs, model_name, agg_dir, logger)
+        shap_payloads[model_name] = (pooled_shap, shap_meta)
 
     log_section(logger, "Building Consensus Panels")
     consensus_panels = build_consensus_panels(
@@ -571,6 +586,22 @@ def run_report_phase(
             plot_oof_combined=plot_oof_combined,
             target_specificity=target_specificity,
         )
+
+        # Aggregated SHAP plots
+        for model_name in collected.all_models:
+            pooled_shap, shap_meta = shap_payloads.get(model_name, (None, None))
+            oof_shap_df = oof_shap_dfs.get(model_name)
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_shap,
+                oof_shap_importance_df=oof_shap_df,
+                shap_metadata=shap_meta,
+                model_name=model_name,
+                out_dir=agg_dir,
+                plot_formats=plot_formats,
+                plot_shap_summary=plot_shap_summary,
+                plot_shap_dependence=plot_shap_dependence,
+                logger=logger,
+            )
 
     log_section(logger, "Generating Additional Artifacts")
     generate_additional_artifacts(

@@ -65,8 +65,10 @@ def generate_plots(ctx: TrainingContext) -> TrainingContext:
     ctx.test_breakdown = test_breakdown
 
     # Check if we should generate plots
+    # Use split_index (ordinal position, 0-based) not raw seed value for the gate
+    split_index = getattr(config, "split_index", 0)
     should_plot = config.output.save_plots and (
-        config.output.max_plot_splits == 0 or seed < config.output.max_plot_splits
+        config.output.max_plot_splits == 0 or split_index < config.output.max_plot_splits
     )
 
     if not should_plot:

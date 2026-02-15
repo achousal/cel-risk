@@ -862,7 +862,7 @@ def run_pipeline(
 
     t0 = time.monotonic()
     for model_name in models:
-        for split_seed in split_seeds:
+        for split_index, split_seed in enumerate(split_seeds):
             logger.info(f"\nTraining {model_name} with split_seed={split_seed}")
 
             train_cli_args = {
@@ -870,6 +870,7 @@ def run_pipeline(
                 "split_dir": str(split_dir),
                 "model": model_name,
                 "split_seed": split_seed,
+                "split_index": split_index,
                 "outdir": str(outdir),
                 "run_id": shared_run_id,
                 **cli_args,
@@ -896,12 +897,23 @@ def run_pipeline(
 
         model_dir = outdir / f"run_{shared_run_id}" / model_name
 
+        out_cfg = training_config.output
         run_aggregate_splits(
             results_dir=str(model_dir),
             stability_threshold=0.75,
             target_specificity=0.95,
             plot_formats=["png"],
             n_boot=n_boot,
+            save_plots=out_cfg.save_plots,
+            plot_roc=out_cfg.plot_roc,
+            plot_pr=out_cfg.plot_pr,
+            plot_calibration=out_cfg.plot_calibration,
+            plot_risk_distribution=out_cfg.plot_risk_distribution,
+            plot_dca=out_cfg.plot_dca,
+            plot_oof_combined=out_cfg.plot_oof_combined,
+            plot_learning_curve=out_cfg.plot_learning_curve,
+            plot_shap_summary=out_cfg.plot_shap_summary,
+            plot_shap_dependence=out_cfg.plot_shap_dependence,
             log_level=log_level,
         )
     step_timings.append(("Aggregation", time.monotonic() - t0))
@@ -921,7 +933,7 @@ def run_pipeline(
         logger.info("=" * 70)
 
         t0 = time.monotonic()
-        for split_seed in split_seeds:
+        for split_index, split_seed in enumerate(split_seeds):
             logger.info(f"\nTraining ensemble with split_seed={split_seed}")
 
             run_train_ensemble(
@@ -934,6 +946,7 @@ def run_pipeline(
                 meta_penalty=None,
                 meta_c=None,
                 log_level=log_level,
+                split_index=split_index,
             )
 
         # Step 5: Aggregate ensemble
@@ -949,6 +962,8 @@ def run_pipeline(
             target_specificity=0.95,
             plot_formats=["png"],
             n_boot=n_boot,
+            plot_shap_summary=getattr(training_config.output, "plot_shap_summary", True),
+            plot_shap_dependence=getattr(training_config.output, "plot_shap_dependence", True),
             log_level=log_level,
         )
         step_timings.append(("Ensemble", time.monotonic() - t0))
