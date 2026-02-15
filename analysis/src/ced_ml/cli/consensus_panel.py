@@ -334,6 +334,7 @@ def load_model_essentiality(
 def _run_multimodel_essentiality_validation(
     model_dirs: dict[str, Path],
     split_dirs: list[Path],
+    split_indices_dir: Path,
     df: pd.DataFrame,
     df_train: pd.DataFrame,
     y_all: pd.Series | None,
@@ -354,7 +355,8 @@ def _run_multimodel_essentiality_validation(
 
     Args:
         model_dirs: Dict of model_name -> aggregated_dir_path
-        split_dirs: List of split directories
+        split_dirs: List of split directories (from first model, for reference)
+        split_indices_dir: Directory containing shared train_idx_*.csv and val_idx_*.csv files
         df: Full data
         df_train: Training subset
         y_all: Binary target vector
@@ -404,16 +406,31 @@ def _run_multimodel_essentiality_validation(
     # Store results: model_name -> {seed: drop_column_df}
     per_model_results = {}
 
+    logger.debug(f"Split indices directory: {split_indices_dir}")
+
     # Loop through each model
     for model_name, _aggregated_dir in model_dirs.items():
         logger.info(f"\nProcessing model: {model_name}")
+
+        # Discover splits for this specific model
+        model_root = _aggregated_dir.parent  # e.g., results/run_ID/ModelName/
+        model_splits_dir = model_root / "splits"
+
+        if not model_splits_dir.exists():
+            logger.warning(f"  {model_name}: No splits directory found at {model_splits_dir}")
+            continue
+
+        model_split_dirs = sorted(model_splits_dir.glob("split_seed*"))
+        if not model_split_dirs:
+            logger.warning(f"  {model_name}: No split_seed* subdirectories found")
+            continue
 
         drop_column_results_per_fold = []
         brier_deltas_per_fold = []
         pr_auc_deltas_per_fold = []
 
         # For each seed, find and refit the model
-        for split_dir_path in split_dirs:
+        for split_dir_path in model_split_dirs:
             seed = int(split_dir_path.name.replace("split_seed", ""))
 
             # Try to find this model for this seed
@@ -423,13 +440,14 @@ def _run_multimodel_essentiality_validation(
                 logger.debug(f"  Seed {seed}: {model_name} not found, skipping")
                 continue
 
-            # Load split indices
-            split_path = Path(split_dirs[0]).parent.parent
-            train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
-            val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+            # Load split indices from shared location
+            train_file = split_indices_dir / f"train_idx_{scenario}_seed{seed}.csv"
+            val_file = split_indices_dir / f"val_idx_{scenario}_seed{seed}.csv"
 
             if not train_file.exists() or not val_file.exists():
-                logger.debug(f"  Seed {seed}: split indices not found, skipping")
+                logger.debug(
+                    f"  Seed {seed}: split indices not found ({train_file.name}, {val_file.name}), skipping"
+                )
                 continue
 
             train_idx = pd.read_csv(train_file).squeeze().values
@@ -978,6 +996,7 @@ def run_consensus_panel(
             essentiality_summary = _run_multimodel_essentiality_validation(
                 model_dirs=model_dirs,
                 split_dirs=split_dirs,
+                split_indices_dir=Path(split_dir),
                 df=df,
                 df_train=df_train,
                 y_all=y_all,
