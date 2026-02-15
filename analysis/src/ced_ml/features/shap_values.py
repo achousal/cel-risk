@@ -137,6 +137,11 @@ def _normalize_shap_values(
         idx = _positive_class_index(classes, positive_label)
         return values[:, :, idx]
 
+    if values.ndim == 3 and values.shape[2] == 1:
+        # Single-output model (e.g. CalibratedClassifierCV wrapping LinearSVC):
+        # squeeze the trailing dimension to get (n_samples, n_features)
+        return values[:, :, 0]
+
     # Unexpected shape -- return as-is with warning
     logger.warning("Unexpected SHAP values shape: %s, returning as-is", values.shape)
     return values

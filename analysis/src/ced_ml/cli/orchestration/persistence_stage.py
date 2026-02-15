@@ -280,8 +280,11 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
     if ctx.test_shap_payload is not None:
         shap_dir = Path(outdirs.shap)
         shap_dir.mkdir(parents=True, exist_ok=True)
+        shap_vals = np.asarray(ctx.test_shap_payload.values)
+        if shap_vals.ndim == 3:
+            shap_vals = shap_vals.squeeze(axis=-1)
         test_shap_df = pd.DataFrame(
-            ctx.test_shap_payload.values,
+            shap_vals,
             columns=ctx.test_shap_payload.feature_names,
         )
         test_shap_path = shap_dir / f"test_shap_values__{config.model}.parquet.gz"
@@ -292,8 +295,11 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
     if ctx.val_shap_payload is not None:
         shap_dir = Path(outdirs.shap)
         shap_dir.mkdir(parents=True, exist_ok=True)
+        shap_vals = np.asarray(ctx.val_shap_payload.values)
+        if shap_vals.ndim == 3:
+            shap_vals = shap_vals.squeeze(axis=-1)
         val_shap_df = pd.DataFrame(
-            ctx.val_shap_payload.values,
+            shap_vals,
             columns=ctx.val_shap_payload.feature_names,
         )
         val_shap_path = shap_dir / f"val_shap_values__{config.model}.parquet.gz"
