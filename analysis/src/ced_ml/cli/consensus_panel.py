@@ -239,6 +239,60 @@ def load_model_oof_importance(
         return None
 
 
+def load_model_oof_shap_importance(
+    aggregated_dir: Path,
+    model_name: str = "",
+) -> pd.DataFrame | None:
+    """Load aggregated OOF SHAP importance from aggregated results (if available).
+
+    Args:
+        aggregated_dir: Path to model's aggregated directory.
+        model_name: Model name used to locate
+            ``importance/oof_shap_importance__{model_name}.csv``.
+
+    Returns:
+        DataFrame with standardized columns ``feature`` and ``mean_importance``,
+        or None if SHAP importance is unavailable.
+    """
+    shap_file = None
+
+    if model_name:
+        candidate = aggregated_dir / "importance" / f"oof_shap_importance__{model_name}.csv"
+        if candidate.exists():
+            shap_file = candidate
+
+    if shap_file is None:
+        candidate = aggregated_dir / "importance" / "aggregated_oof_shap_importance.csv"
+        if candidate.exists():
+            shap_file = candidate
+
+    if shap_file is None:
+        return None
+
+    try:
+        df = pd.read_csv(shap_file)
+
+        # Standardize feature name
+        if "feature" not in df.columns and "protein" in df.columns:
+            df = df.rename(columns={"protein": "feature"})
+
+        # Standardize score column expected by compute_per_model_ranking
+        if "mean_importance" not in df.columns:
+            if "mean_abs_shap" in df.columns:
+                df = df.rename(columns={"mean_abs_shap": "mean_importance"})
+            elif "importance" in df.columns:
+                df = df.rename(columns={"importance": "mean_importance"})
+
+        if "feature" not in df.columns or "mean_importance" not in df.columns:
+            logger.warning("SHAP importance file missing required columns: %s", shap_file)
+            return None
+
+        return df
+    except Exception as e:
+        logger.warning(f"Failed to load OOF SHAP importance from {shap_file}: {e}")
+        return None
+
+
 def load_model_essentiality(
     aggregated_dir: Path,
     threshold: str = "95pct",
@@ -589,6 +643,8 @@ def run_consensus_panel(
     corr_threshold: float = 0.85,
     target_size: int = 25,
     rra_method: str = "geometric_mean",
+    ranking_signal: str = "oof_importance",
+    shap_explicit_normalization: bool = False,
     outdir: str | None = None,
     log_level: int | None = None,
     require_significance: bool = False,
@@ -614,6 +670,9 @@ def run_consensus_panel(
         corr_threshold: Correlation threshold for clustering.
         target_size: Target panel size.
         rra_method: RRA aggregation method.
+        ranking_signal: Signal used for per-model ranking ("oof_importance" or "oof_shap").
+        shap_explicit_normalization: Apply explicit SHAP normalization for cross-model
+            aggregation when ranking_signal is "oof_shap".
         outdir: Output directory (default: results/consensus_panel/run_<RUN_ID>).
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
         require_significance: Whether to filter models by permutation test significance.
@@ -636,6 +695,14 @@ def run_consensus_panel(
     """
     # Setup logging
     from ced_ml.utils.logging import setup_command_logger
+
+    if ranking_signal not in {"oof_importance", "oof_shap"}:
+        raise ValueError(
+            f"ranking_signal must be 'oof_importance' or 'oof_shap', got '{ranking_signal}'"
+        )
+
+    if ranking_signal != "oof_shap":
+        shap_explicit_normalization = False
 
     if log_level is None:
         log_level = logging.INFO
@@ -751,24 +818,44 @@ def run_consensus_panel(
     model_oof_importance = {}
 
     for model_name, aggregated_dir in model_dirs.items():
-        # Load stability (always needed)
+        # Load ranking signal first when SHAP is required.
+        if ranking_signal == "oof_shap":
+            oof_df = load_model_oof_shap_importance(aggregated_dir, model_name)
+        else:
+            oof_df = load_model_oof_importance(aggregated_dir, model_name)
+
+        if ranking_signal == "oof_shap" and oof_df is None:
+            logger.warning(
+                f"  {model_name}: SHAP ranking requested but no OOF SHAP importance file found. "
+                "Model excluded from consensus."
+            )
+            continue
+
+        # Load stability (always needed for models retained in consensus)
         stability_df = load_model_stability(aggregated_dir, stability_threshold=0.0)
         model_stability[model_name] = stability_df
 
         n_stable = (stability_df["selection_fraction"] >= stability_threshold).sum()
 
-        # Load OOF importance
-        has_oof = False
-        oof_df = load_model_oof_importance(aggregated_dir, model_name)
-        if oof_df is not None:
+        has_signal = oof_df is not None
+        if has_signal:
             model_oof_importance[model_name] = oof_df
-            has_oof = True
 
         logger.info(
             f"  {model_name}: {len(stability_df)} total proteins, "
             f"{n_stable} stable (>={stability_threshold}), "
-            f"OOF={'yes' if has_oof else 'no'}"
+            f"{ranking_signal}={'yes' if has_signal else 'no'}"
         )
+
+    if ranking_signal == "oof_shap" and len(model_stability) < 2:
+        raise ValueError(
+            "SHAP cross-model aggregation requires at least 2 models with "
+            "aggregated OOF SHAP importance files. Run 'ced aggregate-splits' "
+            "after SHAP-enabled training."
+        )
+
+    # Keep only models that contributed ranking inputs.
+    model_dirs = {m: p for m, p in model_dirs.items() if m in model_stability}
 
     # Load training data for correlation computation
     logger.info(f"Loading training data from {infile}...")
@@ -844,6 +931,8 @@ def run_consensus_panel(
         corr_threshold=corr_threshold,
         target_size=target_size,
         rra_method=rra_method,
+        ranking_signal=ranking_signal,
+        shap_explicit_normalization=shap_explicit_normalization,
         model_oof_importance=model_oof_importance,
     )
 
@@ -912,7 +1001,11 @@ def run_consensus_panel(
     print(f"Run ID: {run_id}")
     print(f"Models: {', '.join(model_dirs.keys())}")
     print("\nParameters:")
-    print("  Ranking: stability filter + OOF importance")
+    print(f"  Ranking signal: {ranking_signal}")
+    print(
+        "  SHAP explicit normalization: "
+        f"{'on' if ranking_signal == 'oof_shap' and shap_explicit_normalization else 'off'}"
+    )
     print(f"  Stability threshold: {stability_threshold}")
     print(f"  Correlation threshold: {corr_threshold}")
     print(f"  Target size: {target_size}")

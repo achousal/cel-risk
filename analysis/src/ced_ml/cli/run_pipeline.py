@@ -1035,6 +1035,8 @@ def run_pipeline(
             corr_threshold=consensus_cfg.get("corr_threshold", 0.85),
             target_size=consensus_cfg.get("target_size", 25),
             rra_method=consensus_cfg.get("rra_method", "geometric_mean"),
+            ranking_signal=consensus_cfg.get("ranking_signal", "oof_importance"),
+            shap_explicit_normalization=consensus_cfg.get("shap_explicit_normalization", True),
             run_essentiality=essentiality_cfg.get("enabled", True),
             essentiality_corr_threshold=essentiality_cfg.get("corr_threshold", 0.75),
             include_brier=essentiality_cfg.get("include_brier", True),
