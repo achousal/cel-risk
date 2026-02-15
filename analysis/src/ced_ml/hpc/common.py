@@ -641,6 +641,7 @@ barrier_wait() {
     local total=${#job_names[@]}
     local elapsed=0
 
+    printf '{"stage":"%s","status":"started","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
     echo "[$(date '+%F %T')] Waiting for $label ($total jobs, timeout=${timeout}s)..."
 
     if [ "$total" -eq 0 ]; then
