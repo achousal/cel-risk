@@ -725,6 +725,20 @@ def optimize_panel(ctx, config, **kwargs):
     help="RRA aggregation method (default: geometric_mean)",
 )
 @click.option(
+    "--ranking-signal",
+    type=click.Choice(["oof_importance", "oof_shap"]),
+    default=None,
+    help="Per-model ranking signal for consensus (default: oof_importance)",
+)
+@click.option(
+    "--shap-explicit-normalization/--no-shap-explicit-normalization",
+    default=None,
+    help=(
+        "Apply explicit SHAP normalization for cross-model aggregation "
+        "(only when --ranking-signal=oof_shap)"
+    ),
+)
+@click.option(
     "--require-significance/--no-require-significance",
     default=None,
     help="Only include statistically significant models in consensus (requires prior permutation testing)",
@@ -833,6 +847,8 @@ def consensus_panel(ctx, config, **kwargs):
         "corr_threshold",
         "target_size",
         "rra_method",
+        "ranking_signal",
+        "shap_explicit_normalization",
         "outdir",
         "require_significance",
         "significance_alpha",
@@ -856,6 +872,12 @@ def consensus_panel(ctx, config, **kwargs):
         corr_threshold=kwargs.get("corr_threshold") or 0.85,
         target_size=kwargs.get("target_size") or 25,
         rra_method=kwargs.get("rra_method") or "geometric_mean",
+        ranking_signal=kwargs.get("ranking_signal") or "oof_importance",
+        shap_explicit_normalization=_resolve_cli_or_config(
+            kwargs.get("shap_explicit_normalization"),
+            config_params.get("shap_explicit_normalization"),
+            True,
+        ),
         outdir=kwargs.get("outdir"),
         log_level=ctx.obj.get("log_level"),
         require_significance=_resolve_cli_or_config(

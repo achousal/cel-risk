@@ -25,7 +25,7 @@ Design rationale:
 - Output compatible with --fixed-panel training
 """
 
-from .aggregation import geometric_mean_rank_aggregate
+from .aggregation import explicit_shap_normalized_aggregate, geometric_mean_rank_aggregate
 from .builder import ConsensusResult, build_consensus_panel, save_consensus_results
 from .clustering import cluster_and_select_representatives
 from .ranking import compute_per_model_ranking
@@ -35,6 +35,7 @@ __all__ = [
     "build_consensus_panel",
     "cluster_and_select_representatives",
     "compute_per_model_ranking",
+    "explicit_shap_normalized_aggregate",
     "geometric_mean_rank_aggregate",
     "save_consensus_results",
 ]

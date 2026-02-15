@@ -239,6 +239,60 @@ def load_model_oof_importance(
         return None
 
 
+def load_model_oof_shap_importance(
+    aggregated_dir: Path,
+    model_name: str = "",
+) -> pd.DataFrame | None:
+    """Load aggregated OOF SHAP importance from aggregated results (if available).
+
+    Args:
+        aggregated_dir: Path to model's aggregated directory.
+        model_name: Model name used to locate
+            ``importance/oof_shap_importance__{model_name}.csv``.
+
+    Returns:
+        DataFrame with standardized columns ``feature`` and ``mean_importance``,
+        or None if SHAP importance is unavailable.
+    """
+    shap_file = None
+
+    if model_name:
+        candidate = aggregated_dir / "importance" / f"oof_shap_importance__{model_name}.csv"
+        if candidate.exists():
+            shap_file = candidate
+
+    if shap_file is None:
+        candidate = aggregated_dir / "importance" / "aggregated_oof_shap_importance.csv"
+        if candidate.exists():
+            shap_file = candidate
+
+    if shap_file is None:
+        return None
+
+    try:
+        df = pd.read_csv(shap_file)
+
+        # Standardize feature name
+        if "feature" not in df.columns and "protein" in df.columns:
+            df = df.rename(columns={"protein": "feature"})
+
+        # Standardize score column expected by compute_per_model_ranking
+        if "mean_importance" not in df.columns:
+            if "mean_abs_shap" in df.columns:
+                df = df.rename(columns={"mean_abs_shap": "mean_importance"})
+            elif "importance" in df.columns:
+                df = df.rename(columns={"importance": "mean_importance"})
+
+        if "feature" not in df.columns or "mean_importance" not in df.columns:
+            logger.warning("SHAP importance file missing required columns: %s", shap_file)
+            return None
+
+        return df
+    except Exception as e:
+        logger.warning(f"Failed to load OOF SHAP importance from {shap_file}: {e}")
+        return None
+
+
 def load_model_essentiality(
     aggregated_dir: Path,
     threshold: str = "95pct",
@@ -277,6 +331,310 @@ def load_model_essentiality(
         return None
 
 
+def _run_multimodel_essentiality_validation(
+    model_dirs: dict[str, Path],
+    split_dirs: list[Path],
+    df: pd.DataFrame,
+    df_train: pd.DataFrame,
+    y_all: pd.Series | None,
+    panel_features: list[str],
+    resolved_cols: dict,
+    scenario: str,
+    essentiality_dir: Path,
+    essentiality_corr_threshold: float,
+    include_brier: bool = True,
+    include_pr_auc: bool = True,
+) -> dict:
+    """Run drop-column essentiality validation for all models and aggregate.
+
+    Model-specific cluster importance reveals:
+    - Universally essential clusters (important in all/most models) - highest confidence
+    - Model-specific clusters (important in some models only) - model architecture differences
+    - Uncertainty estimates (std dev across models)
+
+    Args:
+        model_dirs: Dict of model_name -> aggregated_dir_path
+        split_dirs: List of split directories
+        df: Full data
+        df_train: Training subset
+        y_all: Binary target vector
+        panel_features: Panel protein features
+        resolved_cols: Resolved column metadata
+        scenario: Scenario name (e.g., 'IncidentPlusPrevalent')
+        essentiality_dir: Output directory for essentiality results
+        essentiality_corr_threshold: Correlation threshold for clustering
+        include_brier: Whether to compute delta-Brier
+        include_pr_auc: Whether to compute delta-PR-AUC
+
+    Returns:
+        Dict with essentiality summary including per-model and cross-model statistics
+    """
+    import json
+
+    import joblib
+    import numpy as np
+
+    from ced_ml.features.drop_column import (
+        _compute_brier_deltas,
+        _compute_pr_auc_deltas,
+    )
+
+    logger.info(f"Running within-panel essentiality validation for {len(model_dirs)} models...")
+
+    # Keep resolved metadata columns in refits
+    metadata_features = resolved_cols.get("numeric_metadata", []) + resolved_cols.get(
+        "categorical_metadata", []
+    )
+    metadata_features = [
+        c for c in metadata_features if c in df.columns and c not in panel_features
+    ]
+    refit_features = panel_features + metadata_features
+    logger.info(
+        f"Refit features: {len(panel_features)} panel proteins + "
+        f"{len(metadata_features)} metadata covariates"
+    )
+
+    # Build correlation clusters for the consensus panel
+    X_corr = df_train[panel_features]
+    corr_matrix = compute_correlation_matrix(X_corr, panel_features, method="spearman")
+    adj_graph = build_correlation_graph(corr_matrix, threshold=essentiality_corr_threshold)
+    clusters = find_connected_components(adj_graph)
+    logger.info(f"Found {len(clusters)} correlation clusters for essentiality validation")
+
+    # Store results: model_name -> {seed: drop_column_df}
+    per_model_results = {}
+
+    # Loop through each model
+    for model_name, _aggregated_dir in model_dirs.items():
+        logger.info(f"\nProcessing model: {model_name}")
+
+        drop_column_results_per_fold = []
+        brier_deltas_per_fold = []
+        pr_auc_deltas_per_fold = []
+
+        # For each seed, find and refit the model
+        for split_dir_path in split_dirs:
+            seed = int(split_dir_path.name.replace("split_seed", ""))
+
+            # Try to find this model for this seed
+            model_path = split_dir_path / "core" / f"{model_name}__final_model.joblib"
+
+            if not model_path.exists():
+                logger.debug(f"  Seed {seed}: {model_name} not found, skipping")
+                continue
+
+            # Load split indices
+            split_path = Path(split_dirs[0]).parent.parent
+            train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
+            val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
+
+            if not train_file.exists() or not val_file.exists():
+                logger.debug(f"  Seed {seed}: split indices not found, skipping")
+                continue
+
+            train_idx = pd.read_csv(train_file).squeeze().values
+            val_idx = pd.read_csv(val_file).squeeze().values
+
+            # Load model pipeline
+            try:
+                seed_bundle = joblib.load(model_path)
+                original_pipeline = seed_bundle.get("model")
+
+                if original_pipeline is None:
+                    logger.warning(f"  Seed {seed}: model bundle missing 'model' key, skipping")
+                    continue
+
+                # Unwrap OOFCalibratedModel to get the fittable base model
+                if isinstance(original_pipeline, OOFCalibratedModel):
+                    original_pipeline = original_pipeline.base_model
+
+                # Clone preserves tuned hyperparameters but produces unfitted estimator
+                panel_pipeline = clone(original_pipeline)
+                _configure_screen_step_for_panel_refit(panel_pipeline, panel_features)
+
+                X_train_seed = df.iloc[train_idx][refit_features]
+                y_train_seed = y_all[train_idx]
+                X_val_seed = df.iloc[val_idx][refit_features]
+                y_val_seed = y_all[val_idx]
+
+                # Fit the cloned model on panel proteins
+                logger.debug(
+                    f"  Seed {seed}: refitting {model_name} on "
+                    f"{len(panel_features)} panel proteins"
+                )
+                panel_pipeline.fit(X_train_seed, y_train_seed)
+
+                # Primary: delta-AUROC via drop-column
+                fold_results = compute_drop_column_importance(
+                    estimator=panel_pipeline,
+                    X_train=X_train_seed,
+                    y_train=y_train_seed,
+                    X_val=X_val_seed,
+                    y_val=y_val_seed,
+                    feature_clusters=clusters,
+                    random_state=seed,
+                )
+                drop_column_results_per_fold.append(fold_results)
+
+                # Secondary: delta-Brier
+                if include_brier:
+                    brier_deltas = _compute_brier_deltas(
+                        model=panel_pipeline,
+                        X_train=X_train_seed,
+                        y_train=y_train_seed,
+                        X_val=X_val_seed,
+                        y_val=y_val_seed,
+                        feature_clusters=clusters,
+                        random_state=seed,
+                    )
+                    brier_deltas_per_fold.append(brier_deltas)
+
+                # Secondary: delta-PR-AUC
+                if include_pr_auc:
+                    pr_auc_deltas = _compute_pr_auc_deltas(
+                        model=panel_pipeline,
+                        X_train=X_train_seed,
+                        y_train=y_train_seed,
+                        X_val=X_val_seed,
+                        y_val=y_val_seed,
+                        feature_clusters=clusters,
+                        random_state=seed,
+                    )
+                    pr_auc_deltas_per_fold.append(pr_auc_deltas)
+
+                logger.debug(f"  Seed {seed}: completed essentiality for {model_name}")
+
+            except Exception as e:
+                logger.warning(f"  Seed {seed}: error processing {model_name}: {e}")
+                continue
+
+        # Aggregate results for this model across folds
+        if drop_column_results_per_fold:
+            model_df = aggregate_drop_column_results(drop_column_results_per_fold)
+
+            # Add Brier deltas
+            if include_brier and brier_deltas_per_fold:
+                brier_arr = np.array(brier_deltas_per_fold)
+                model_df["mean_delta_brier"] = brier_arr.mean(axis=0)
+                model_df["std_delta_brier"] = brier_arr.std(axis=0)
+
+            # Add PR-AUC deltas
+            if include_pr_auc and pr_auc_deltas_per_fold:
+                pr_auc_arr = np.array(pr_auc_deltas_per_fold)
+                model_df["mean_delta_pr_auc"] = pr_auc_arr.mean(axis=0)
+                model_df["std_delta_pr_auc"] = pr_auc_arr.std(axis=0)
+
+            per_model_results[model_name] = model_df
+
+            # Save per-model results
+            model_ess_dir = essentiality_dir / "per_model"
+            model_ess_dir.mkdir(parents=True, exist_ok=True)
+            per_model_path = model_ess_dir / f"essentiality_{model_name}.csv"
+            model_df.to_csv(per_model_path, index=False)
+            logger.info(f"  Saved {model_name} essentiality to {per_model_path}")
+
+        else:
+            logger.warning(f"  {model_name}: No folds completed")
+
+    if not per_model_results:
+        logger.warning("No models completed essentiality validation")
+        return {}
+
+    # Cross-model aggregation
+    logger.info(f"\nAggregating essentiality across {len(per_model_results)} models...")
+
+    # Merge all model results on cluster_id
+    merged_df = None
+    for model_name, model_df in per_model_results.items():
+        if merged_df is None:
+            merged_df = model_df[["cluster_id", "n_features", "mean_delta_auroc"]].copy()
+            merged_df = merged_df.rename(columns={"mean_delta_auroc": f"delta_auroc_{model_name}"})
+        else:
+            # Right join to keep all clusters
+            merged_df = merged_df.merge(
+                model_df[["cluster_id", "mean_delta_auroc"]].rename(
+                    columns={"mean_delta_auroc": f"delta_auroc_{model_name}"}
+                ),
+                on="cluster_id",
+                how="left",
+            )
+
+    # Compute cross-model statistics
+    delta_auroc_cols = [c for c in merged_df.columns if c.startswith("delta_auroc_")]
+
+    merged_df["n_models_with_importance"] = merged_df[delta_auroc_cols].notna().sum(axis=1)
+    merged_df["mean_delta_auroc_cross_model"] = merged_df[delta_auroc_cols].mean(axis=1)
+    merged_df["std_delta_auroc_cross_model"] = merged_df[delta_auroc_cols].std(axis=1)
+    merged_df["max_delta_auroc_cross_model"] = merged_df[delta_auroc_cols].max(axis=1)
+    merged_df["min_delta_auroc_cross_model"] = merged_df[delta_auroc_cols].min(axis=1)
+
+    # Identify universally essential clusters (high importance in most models)
+    n_models = len(per_model_results)
+    majority_threshold = np.ceil(n_models * 0.5)  # At least 50% of models
+    merged_df["is_universal"] = merged_df["n_models_with_importance"] >= majority_threshold
+
+    # Sort by cross-model importance
+    merged_df = merged_df.sort_values(
+        "mean_delta_auroc_cross_model", ascending=False, na_position="last"
+    ).reset_index(drop=True)
+
+    # Save cross-model essentiality
+    cross_model_path = essentiality_dir / "cross_model_essentiality.csv"
+    merged_df.to_csv(cross_model_path, index=False)
+    logger.info(f"Saved cross-model essentiality to {cross_model_path}")
+
+    # Create summary
+    universal_clusters = merged_df[merged_df["is_universal"]]
+    model_specific = merged_df[~merged_df["is_universal"]]
+
+    summary = {
+        "validation_type": "multimodel_within_panel",
+        "n_models": n_models,
+        "models_used": list(per_model_results.keys()),
+        "panel_size": len(panel_features),
+        "n_clusters": len(merged_df),
+        "n_universal_clusters": len(universal_clusters),
+        "n_model_specific_clusters": len(model_specific),
+        "mean_delta_auroc_cross_model": float(merged_df["mean_delta_auroc_cross_model"].mean()),
+        "max_delta_auroc_cross_model": float(merged_df["mean_delta_auroc_cross_model"].max()),
+        "cross_model_std": float(merged_df["std_delta_auroc_cross_model"].mean()),
+        "top_cluster_id": str(merged_df.iloc[0]["cluster_id"]),
+        "top_cluster_delta_auroc": float(merged_df.iloc[0]["mean_delta_auroc_cross_model"]),
+        "top_cluster_n_models": int(merged_df.iloc[0]["n_models_with_importance"]),
+        "top_cluster_is_universal": bool(merged_df.iloc[0]["is_universal"]),
+    }
+
+    # Per-model summary statistics
+    model_summary = {}
+    for model_name in per_model_results.keys():
+        col = f"delta_auroc_{model_name}"
+        if col in merged_df.columns:
+            model_data = merged_df[col].dropna()
+            model_summary[model_name] = {
+                "mean_delta_auroc": float(model_data.mean()),
+                "max_delta_auroc": float(model_data.max()),
+                "n_clusters_evaluated": int(len(model_data)),
+            }
+
+    summary["per_model_summary"] = model_summary
+
+    # Save summary
+    summary_path = essentiality_dir / "multimodel_essentiality_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    logger.info(f"Saved cross-model essentiality summary to {summary_path}")
+
+    # Print key findings
+    logger.info(
+        f"  Universal clusters (>={majority_threshold:.0f}/{n_models} models): {len(universal_clusters)}"
+    )
+    logger.info(f"  Model-specific clusters: {len(model_specific)}")
+    logger.info(f"  Mean cross-model delta AUROC: {summary['mean_delta_auroc_cross_model']:+.4f}")
+    logger.info(f"  Cross-model std dev: {summary['cross_model_std']:.4f}")
+
+    return summary
+
+
 def run_consensus_panel(
     run_id: str,
     infile: str | None = None,
@@ -285,6 +643,8 @@ def run_consensus_panel(
     corr_threshold: float = 0.85,
     target_size: int = 25,
     rra_method: str = "geometric_mean",
+    ranking_signal: str = "oof_importance",
+    shap_explicit_normalization: bool = False,
     outdir: str | None = None,
     log_level: int | None = None,
     require_significance: bool = False,
@@ -310,6 +670,9 @@ def run_consensus_panel(
         corr_threshold: Correlation threshold for clustering.
         target_size: Target panel size.
         rra_method: RRA aggregation method.
+        ranking_signal: Signal used for per-model ranking ("oof_importance" or "oof_shap").
+        shap_explicit_normalization: Apply explicit SHAP normalization for cross-model
+            aggregation when ranking_signal is "oof_shap".
         outdir: Output directory (default: results/consensus_panel/run_<RUN_ID>).
         log_level: Logging level constant (logging.DEBUG, logging.INFO, etc.)
         require_significance: Whether to filter models by permutation test significance.
@@ -332,6 +695,14 @@ def run_consensus_panel(
     """
     # Setup logging
     from ced_ml.utils.logging import setup_command_logger
+
+    if ranking_signal not in {"oof_importance", "oof_shap"}:
+        raise ValueError(
+            f"ranking_signal must be 'oof_importance' or 'oof_shap', got '{ranking_signal}'"
+        )
+
+    if ranking_signal != "oof_shap":
+        shap_explicit_normalization = False
 
     if log_level is None:
         log_level = logging.INFO
@@ -447,24 +818,44 @@ def run_consensus_panel(
     model_oof_importance = {}
 
     for model_name, aggregated_dir in model_dirs.items():
-        # Load stability (always needed)
+        # Load ranking signal first when SHAP is required.
+        if ranking_signal == "oof_shap":
+            oof_df = load_model_oof_shap_importance(aggregated_dir, model_name)
+        else:
+            oof_df = load_model_oof_importance(aggregated_dir, model_name)
+
+        if ranking_signal == "oof_shap" and oof_df is None:
+            logger.warning(
+                f"  {model_name}: SHAP ranking requested but no OOF SHAP importance file found. "
+                "Model excluded from consensus."
+            )
+            continue
+
+        # Load stability (always needed for models retained in consensus)
         stability_df = load_model_stability(aggregated_dir, stability_threshold=0.0)
         model_stability[model_name] = stability_df
 
         n_stable = (stability_df["selection_fraction"] >= stability_threshold).sum()
 
-        # Load OOF importance
-        has_oof = False
-        oof_df = load_model_oof_importance(aggregated_dir, model_name)
-        if oof_df is not None:
+        has_signal = oof_df is not None
+        if has_signal:
             model_oof_importance[model_name] = oof_df
-            has_oof = True
 
         logger.info(
             f"  {model_name}: {len(stability_df)} total proteins, "
             f"{n_stable} stable (>={stability_threshold}), "
-            f"OOF={'yes' if has_oof else 'no'}"
+            f"{ranking_signal}={'yes' if has_signal else 'no'}"
         )
+
+    if ranking_signal == "oof_shap" and len(model_stability) < 2:
+        raise ValueError(
+            "SHAP cross-model aggregation requires at least 2 models with "
+            "aggregated OOF SHAP importance files. Run 'ced aggregate-splits' "
+            "after SHAP-enabled training."
+        )
+
+    # Keep only models that contributed ranking inputs.
+    model_dirs = {m: p for m, p in model_dirs.items() if m in model_stability}
 
     # Load training data for correlation computation
     logger.info(f"Loading training data from {infile}...")
@@ -540,6 +931,8 @@ def run_consensus_panel(
         corr_threshold=corr_threshold,
         target_size=target_size,
         rra_method=rra_method,
+        ranking_signal=ranking_signal,
+        shap_explicit_normalization=shap_explicit_normalization,
         model_oof_importance=model_oof_importance,
     )
 
@@ -552,15 +945,17 @@ def run_consensus_panel(
     _paths = save_consensus_results(result, outdir)  # noqa: F841
 
     # --- Within-panel essentiality validation (post-hoc interpretation) ---
-    # After the consensus panel is built, refit a model on the panel proteins
+    # After the consensus panel is built, refit all models on the panel proteins
     # (plus resolved metadata covariates) and run drop-column to measure each
-    # cluster's contribution.
+    # cluster's contribution. Aggregate across models to identify:
+    # - Universally essential clusters (important in all/most models)
+    # - Model-specific clusters (important in some models only)
     # This is a validation/interpretation artifact, NOT an input to selection.
     essentiality_summary = None
     if run_essentiality and len(result.final_panel) > 0:
         try:
             logger.info("\n" + "=" * 60)
-            logger.info("Running within-panel essentiality validation on consensus panel...")
+            logger.info("Running within-panel essentiality validation for all models...")
             logger.info("=" * 60)
 
             # Create binary target vector
@@ -579,188 +974,21 @@ def run_consensus_panel(
             panel_features = [p for p in result.final_panel if p in df.columns]
             logger.info(f"Validating {len(panel_features)} panel features")
 
-            # Keep resolved metadata columns in refits so the original preprocessing
-            # graph (covariate scaling / categorical encoding) remains valid.
-            metadata_features = resolved_cols.get("numeric_metadata", []) + resolved_cols.get(
-                "categorical_metadata", []
+            # Run multi-model essentiality validation
+            essentiality_summary = _run_multimodel_essentiality_validation(
+                model_dirs=model_dirs,
+                split_dirs=split_dirs,
+                df=df,
+                df_train=df_train,
+                y_all=y_all,
+                panel_features=panel_features,
+                resolved_cols=resolved_cols,
+                scenario=scenario,
+                essentiality_dir=essentiality_dir,
+                essentiality_corr_threshold=essentiality_corr_threshold,
+                include_brier=include_brier,
+                include_pr_auc=include_pr_auc,
             )
-            metadata_features = [
-                c for c in metadata_features if c in df.columns and c not in panel_features
-            ]
-            refit_features = panel_features + metadata_features
-            logger.info(
-                f"Refit features: {len(panel_features)} panel proteins + "
-                f"{len(metadata_features)} metadata covariates"
-            )
-
-            # Build correlation clusters for the consensus panel
-            X_corr = df_train[panel_features]
-            corr_matrix = compute_correlation_matrix(X_corr, panel_features, method="spearman")
-            adj_graph = build_correlation_graph(corr_matrix, threshold=essentiality_corr_threshold)
-            clusters = find_connected_components(adj_graph)
-            logger.info(f"Found {len(clusters)} correlation clusters for essentiality validation")
-
-            # Run drop-column across all available splits.
-            # For each seed we clone the original model architecture (preserving
-            # tuned hyperparameters) and refit on the panel proteins plus
-            # resolved metadata covariates.
-            drop_column_results_per_fold = []
-            brier_deltas_per_fold = []
-            pr_auc_deltas_per_fold = []
-
-            for split_dir_path in split_dirs:
-                seed = int(split_dir_path.name.replace("split_seed", ""))
-
-                # Try to find a model for this seed (use first available model)
-                model_path = split_dir_path / "core" / f"{first_model}__final_model.joblib"
-
-                if not model_path.exists():
-                    logger.warning(f"Seed {seed}: model not found at {model_path}, skipping")
-                    continue
-
-                # Load split indices
-                split_path = Path(split_dir)
-                train_file = split_path / f"train_idx_{scenario}_seed{seed}.csv"
-                val_file = split_path / f"val_idx_{scenario}_seed{seed}.csv"
-
-                if not train_file.exists() or not val_file.exists():
-                    logger.warning(f"Seed {seed}: split indices not found, skipping")
-                    continue
-
-                train_idx = pd.read_csv(train_file).squeeze().values
-                val_idx = pd.read_csv(val_file).squeeze().values
-
-                # Load model pipeline and clone its architecture (unfitted)
-                seed_bundle = joblib.load(model_path)
-                original_pipeline = seed_bundle.get("model")
-
-                if original_pipeline is None:
-                    logger.warning(f"Seed {seed}: model bundle missing 'model' key, skipping")
-                    continue
-
-                # Unwrap OOFCalibratedModel to get the fittable base model
-                if isinstance(original_pipeline, OOFCalibratedModel):
-                    original_pipeline = original_pipeline.base_model
-                    logger.debug(f"  Seed {seed}: unwrapped OOFCalibratedModel for refitting")
-
-                # Clone preserves tuned hyperparameters but produces an
-                # unfitted estimator that can be trained on the panel subset.
-                panel_pipeline = clone(original_pipeline)
-                _configure_screen_step_for_panel_refit(panel_pipeline, panel_features)
-
-                X_train_seed = df.iloc[train_idx][refit_features]
-                y_train_seed = y_all[train_idx]
-                X_val_seed = df.iloc[val_idx][refit_features]
-                y_val_seed = y_all[val_idx]
-
-                # Fit the cloned model on panel proteins (+ metadata covariates)
-                logger.info(
-                    f"  Seed {seed}: refitting {first_model} on "
-                    f"{len(panel_features)} panel proteins (+{len(metadata_features)} covariates)"
-                )
-                panel_pipeline.fit(X_train_seed, y_train_seed)
-
-                # Primary: delta-AUROC via drop-column
-                fold_results = compute_drop_column_importance(
-                    estimator=panel_pipeline,
-                    X_train=X_train_seed,
-                    y_train=y_train_seed,
-                    X_val=X_val_seed,
-                    y_val=y_val_seed,
-                    feature_clusters=clusters,
-                    random_state=seed,
-                )
-                drop_column_results_per_fold.append(fold_results)
-
-                # Secondary: delta-Brier (calibration impact)
-                if include_brier:
-                    from ced_ml.features.drop_column import _compute_brier_deltas
-
-                    brier_deltas = _compute_brier_deltas(
-                        model=panel_pipeline,
-                        X_train=X_train_seed,
-                        y_train=y_train_seed,
-                        X_val=X_val_seed,
-                        y_val=y_val_seed,
-                        feature_clusters=clusters,
-                        random_state=seed,
-                    )
-                    brier_deltas_per_fold.append(brier_deltas)
-
-                # Secondary: delta-PR-AUC (precision-recall impact)
-                if include_pr_auc:
-                    from ced_ml.features.drop_column import _compute_pr_auc_deltas
-
-                    pr_auc_deltas = _compute_pr_auc_deltas(
-                        model=panel_pipeline,
-                        X_train=X_train_seed,
-                        y_train=y_train_seed,
-                        X_val=X_val_seed,
-                        y_val=y_val_seed,
-                        feature_clusters=clusters,
-                        random_state=seed,
-                    )
-                    pr_auc_deltas_per_fold.append(pr_auc_deltas)
-
-                logger.info(f"  Seed {seed}: completed within-panel essentiality validation")
-
-            if drop_column_results_per_fold:
-                # Aggregate primary AUROC results across folds
-                drop_column_df = aggregate_drop_column_results(drop_column_results_per_fold)
-
-                # Aggregate Brier deltas and join by cluster_id
-                if include_brier and brier_deltas_per_fold:
-                    import numpy as np
-
-                    brier_arr = np.array(brier_deltas_per_fold)  # (n_folds, n_clusters)
-                    drop_column_df["mean_delta_brier"] = brier_arr.mean(axis=0)
-                    drop_column_df["std_delta_brier"] = brier_arr.std(axis=0)
-
-                # Aggregate PR-AUC deltas and join by cluster_id
-                if include_pr_auc and pr_auc_deltas_per_fold:
-                    import numpy as np
-
-                    pr_auc_arr = np.array(pr_auc_deltas_per_fold)
-                    drop_column_df["mean_delta_pr_auc"] = pr_auc_arr.mean(axis=0)
-                    drop_column_df["std_delta_pr_auc"] = pr_auc_arr.std(axis=0)
-
-                # Save essentiality results
-                ess_path = essentiality_dir / "within_panel_essentiality.csv"
-                drop_column_df.to_csv(ess_path, index=False)
-                logger.info(f"Saved within-panel essentiality results to {ess_path}")
-
-                # Create summary
-                essentiality_summary = {
-                    "validation_type": "within_panel",
-                    "model_used": first_model,
-                    "panel_size": len(panel_features),
-                    "n_clusters": len(clusters),
-                    "n_folds_validated": len(drop_column_results_per_fold),
-                    "mean_delta_auroc": float(drop_column_df["mean_delta_auroc"].mean()),
-                    "max_delta_auroc": float(drop_column_df["mean_delta_auroc"].max()),
-                    "top_cluster_id": str(drop_column_df.iloc[0]["cluster_id"]),
-                    "top_cluster_delta_auroc": float(drop_column_df.iloc[0]["mean_delta_auroc"]),
-                }
-
-                if "mean_delta_brier" in drop_column_df.columns:
-                    essentiality_summary["mean_delta_brier"] = float(
-                        drop_column_df["mean_delta_brier"].mean()
-                    )
-                if "mean_delta_pr_auc" in drop_column_df.columns:
-                    essentiality_summary["mean_delta_pr_auc"] = float(
-                        drop_column_df["mean_delta_pr_auc"].mean()
-                    )
-
-                # Save summary
-                import json
-
-                summary_path = essentiality_dir / "essentiality_summary.json"
-                with open(summary_path, "w") as f:
-                    json.dump(essentiality_summary, f, indent=2)
-                logger.info(f"Saved essentiality summary to {summary_path}")
-
-            else:
-                logger.warning("No folds completed within-panel essentiality validation")
 
         except Exception as e:
             logger.warning(f"Within-panel essentiality validation failed: {e}", exc_info=True)
@@ -773,7 +1001,11 @@ def run_consensus_panel(
     print(f"Run ID: {run_id}")
     print(f"Models: {', '.join(model_dirs.keys())}")
     print("\nParameters:")
-    print("  Ranking: stability filter + OOF importance")
+    print(f"  Ranking signal: {ranking_signal}")
+    print(
+        "  SHAP explicit normalization: "
+        f"{'on' if ranking_signal == 'oof_shap' and shap_explicit_normalization else 'off'}"
+    )
     print(f"  Stability threshold: {stability_threshold}")
     print(f"  Correlation threshold: {corr_threshold}")
     print(f"  Target size: {target_size}")
@@ -817,21 +1049,47 @@ def run_consensus_panel(
 
     # Print essentiality summary if available
     if essentiality_summary:
-        print(
-            f"\nWithin-Panel Essentiality Validation (model: {essentiality_summary['model_used']}):"
-        )
-        print(f"  Clusters validated: {essentiality_summary['n_clusters']}")
-        print(f"  Folds validated: {essentiality_summary['n_folds_validated']}")
-        print(f"  Mean delta AUROC: {essentiality_summary['mean_delta_auroc']:+.4f}")
-        print(f"  Max delta AUROC: {essentiality_summary['max_delta_auroc']:+.4f}")
-        if "mean_delta_pr_auc" in essentiality_summary:
-            print(f"  Mean delta PR-AUC: {essentiality_summary['mean_delta_pr_auc']:+.4f}")
-        if "mean_delta_brier" in essentiality_summary:
-            print(f"  Mean delta Brier: {essentiality_summary['mean_delta_brier']:+.4f}")
-        print(
-            f"  Top cluster: {essentiality_summary['top_cluster_id']} "
-            f"(delta AUROC={essentiality_summary['top_cluster_delta_auroc']:+.4f})"
-        )
+        if essentiality_summary.get("validation_type") == "multimodel_within_panel":
+            print("\nWithin-Panel Essentiality Validation (Multi-Model):")
+            print(f"  Models evaluated: {', '.join(essentiality_summary['models_used'])}")
+            print(f"  Clusters validated: {essentiality_summary['n_clusters']}")
+            print(
+                f"  Universal clusters (>50% models): {essentiality_summary['n_universal_clusters']}"
+            )
+            print(f"  Model-specific clusters: {essentiality_summary['n_model_specific_clusters']}")
+            print(
+                f"  Mean delta AUROC (cross-model): {essentiality_summary['mean_delta_auroc_cross_model']:+.4f}"
+            )
+            print(f"  Cross-model std dev: {essentiality_summary['cross_model_std']:.4f}")
+            print(
+                f"  Max delta AUROC (cross-model): {essentiality_summary['max_delta_auroc_cross_model']:+.4f}"
+            )
+            print(
+                f"  Top cluster: {essentiality_summary['top_cluster_id']} (delta AUROC={essentiality_summary['top_cluster_delta_auroc']:+.4f}, found in {essentiality_summary['top_cluster_n_models']}/{essentiality_summary['n_models']} models)"
+            )
+            if essentiality_summary["top_cluster_is_universal"]:
+                print("    -> Universal cluster (found in >50% of models)")
+            print("\n  Per-model summary:")
+            for model, stats in essentiality_summary.get("per_model_summary", {}).items():
+                print(
+                    f"    {model}: mean delta AUROC={stats['mean_delta_auroc']:+.4f}, max={stats['max_delta_auroc']:+.4f}"
+                )
+        else:
+            print(
+                f"\nWithin-Panel Essentiality Validation (model: {essentiality_summary['model_used']}):"
+            )
+            print(f"  Clusters validated: {essentiality_summary['n_clusters']}")
+            print(f"  Folds validated: {essentiality_summary['n_folds_validated']}")
+            print(f"  Mean delta AUROC: {essentiality_summary['mean_delta_auroc']:+.4f}")
+            print(f"  Max delta AUROC: {essentiality_summary['max_delta_auroc']:+.4f}")
+            if "mean_delta_pr_auc" in essentiality_summary:
+                print(f"  Mean delta PR-AUC: {essentiality_summary['mean_delta_pr_auc']:+.4f}")
+            if "mean_delta_brier" in essentiality_summary:
+                print(f"  Mean delta Brier: {essentiality_summary['mean_delta_brier']:+.4f}")
+            print(
+                f"  Top cluster: {essentiality_summary['top_cluster_id']} "
+                f"(delta AUROC={essentiality_summary['top_cluster_delta_auroc']:+.4f})"
+            )
 
     print(f"\nOutput saved to: {outdir}")
     print("  - final_panel.txt (for --fixed-panel)")
@@ -842,8 +1100,13 @@ def run_consensus_panel(
     print("  - correlation_clusters.csv")
     print("  - consensus_metadata.json")
     if essentiality_summary:
-        print("  - essentiality/within_panel_essentiality.csv")
-        print("  - essentiality/essentiality_summary.json")
+        if essentiality_summary.get("validation_type") == "multimodel_within_panel":
+            print("  - essentiality/per_model/essentiality_*.csv (per-model results)")
+            print("  - essentiality/cross_model_essentiality.csv (aggregated)")
+            print("  - essentiality/multimodel_essentiality_summary.json")
+        else:
+            print("  - essentiality/within_panel_essentiality.csv")
+            print("  - essentiality/essentiality_summary.json")
 
     print("\nNext step: Validate with new split seed:")
     print(f"  ced train --model LR_EN --fixed-panel {outdir}/final_panel.txt --split-seed 10")

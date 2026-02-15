@@ -20,9 +20,8 @@ Shows the average magnitude (|SHAP|) of each feature's contribution across all t
 
 **What to look for**:
 - Features at the top have the strongest overall influence on predictions
-- Red bars indicate positive contributions (risk factors)
-- Blue bars indicate negative contributions (protective factors)
-- The bar length (SHAP magnitude) indicates consistency and strength
+- Bar length shows mean |SHAP| (absolute magnitude) across all samples
+- This is an unsigned ranking -- it does not distinguish risk factors from protective factors (use the beeswarm for directionality)
 
 **Clinical interpretation**:
 - Proteins with large bars are candidates for focused experimental validation
@@ -34,7 +33,7 @@ Shows the distribution of SHAP values for each feature across all test samples. 
 
 **What to look for**:
 - Horizontal spread: How much does this feature's contribution vary between samples?
-- Color gradient (blue → red): From negative contribution → positive contribution
+- Color gradient (blue to red): Low feature value to high feature value (not SHAP sign)
 - Clustering: Do samples cluster into distinct groups?
 
 **Clinical interpretation**:
@@ -56,11 +55,11 @@ Explains a single patient's prediction step-by-step.
 2. Features pushed in order of descending impact
 3. Final bar shows where you end up
 
-**Categories**:
-- **TP (True Positive)**: High-risk prediction, patient later diagnosed with CeD
-- **FP (False Positive)**: High-risk prediction, patient remained disease-free
-- **FN (False Negative)**: Low-risk prediction, patient later diagnosed with CeD
-- **TN (True Negative)**: Low-risk prediction, patient remained disease-free
+**Sample selection** (automated, one per category):
+- **TP (highest risk)**: True positive with the highest predicted probability
+- **FP (highest risk)**: False positive with the highest predicted probability
+- **FN (highest risk missed)**: False negative with the highest predicted probability -- clinically critical missed case
+- **TN (near threshold)**: True negative closest to the decision boundary -- shows what almost triggered a positive
 
 **Clinical interpretation**:
 - Study FP and FN waterfall plots to understand misclassifications
@@ -89,10 +88,12 @@ SHAP values are computed in the base model's native output scale. **This is NOT 
 
 | Model | Output Scale | SHAP Units | Interpretation |
 |-------|--------------|-----------|---|
-| Logistic Regression | log-odds | $\ln(\text{odds})$ | Log probability ratio |
-| XGBoost | log-odds | $\ln(\text{odds})$ | Log probability ratio |
-| Random Forest | raw (log-odds equivalent) | Model-specific | Feature influence magnitude |
-| SVM | margin | Distance from decision boundary | Geometric units |
+| LR_EN / LR_L1 | log-odds | ln(odds) | Log probability ratio |
+| XGBoost | log-odds (raw) | ln(odds) | Log probability ratio (tree_path_dependent default) |
+| Random Forest | raw or probability | Model-specific | `raw` = internal tree scale (NOT log-odds); `probability` when using interventional perturbation |
+| LinSVM_cal | margin | Distance from hyperplane | Linear decision function units |
+
+**Note**: RF output scale depends on config (`tree_model_output`). With the default `auto`, RF resolves to `probability` (interventional). XGBoost with `auto` resolves to `raw` (log-odds with tree_path_dependent). See `shap_schema.py` for details.
 
 **Important**: SHAP log-odds values can be transformed back to probability, but the clinical decision uses `y_prob_adjusted` (prevalence-adjusted on validation set). The SHAP explanation is *independent* of this adjustment - it explains the raw signal.
 
@@ -129,17 +130,19 @@ Random Forest uses "interventional" SHAP (perturbing features independently), wh
 
 ### 4. Background Strategy
 
-SHAP compares samples to a "background" (reference distribution). Our strategy:
+SHAP compares samples to a "background" (reference distribution). Available strategies (configured via `background_strategy` in `shap_schema.py`):
 
-- **Default (`controls_only`)**: Background is healthy controls. SHAP values show deviation from healthy baseline.
-- **Interpretation**: "How does this patient differ from a typical healthy person?"
-- **Not comparable to**: Different background strategies (e.g., all patients) - results will differ significantly.
+- **`random_train` (default)**: Random sample from the full training set (cases + controls). Neutral baseline.
+- **`controls_only`**: Background is healthy controls only. SHAP values show deviation from healthy baseline. Interpretation: "How does this patient differ from a typical healthy person?"
+- **`stratified`**: Class-proportional sampling from training set.
+
+**Important**: Results are NOT comparable across different background strategies. If you switch strategies, all SHAP values and rankings change.
 
 ### 5. Waterfall Classification
 
-Waterfall categories use the operating threshold (0.95 specificity on validation set). If no validation set exists, the test set threshold is used.
+Waterfall TP/FP/FN/TN classification uses the operating threshold from the validation set (`val_threshold`). If no validation set exists, the test set threshold is used as fallback. The threshold value depends on the configured operating point (e.g., 0.95 specificity) and is computed during the evaluation stage.
 
-**Important**: Test-set thresholds can be optimistic. Review waterfall plots with awareness of potential overfitting on the test set.
+**Important**: Test-set thresholds can be optimistic. Review waterfall plots with awareness of potential overfitting when the fallback is used.
 
 ---
 
@@ -175,7 +178,7 @@ Waterfall categories use the operating threshold (0.95 specificity on validation
 
 ## Common Pitfalls
 
-1. **Comparing SHAP values across different models**: Different output scales make direct comparison invalid. Use feature *rankings*, not absolute values.
+1. **Comparing SHAP values across different models without normalization**: Different output scales make raw comparison invalid. If you need cross-model aggregation, use explicit per-model normalization (enabled in `ced consensus-panel` with `--ranking-signal oof_shap --shap-explicit-normalization`) before averaging.
 
 2. **Over-interpreting individual SHAP values**: One patient's SHAP values don't prove anything - patterns across many patients matter.
 
@@ -202,7 +205,6 @@ Waterfall categories use the operating threshold (0.95 specificity on validation
 
 - Lundberg, S. M., & Lee, S. I. (2017). A Unified Approach to Interpreting Model Predictions. *NeurIPS*.
 - Aas, K., Jøsund, O. H., & Lundberg, S. M. (2021). Explaining individual predictions when features are dependent. arXiv:2104.14560.
-- Merz, B., Blöschl, G., & Parajka, J. (2020). Flood frequency regionalization. In *Handbook of Flood Risk Assessment and Management* (pp. 109-138). Routledge.
 - Tonekaboni, S., Joshi, S., McCradden, M. D., & Goldenberg, A. (2019). What Clinicians Want: Contextualizing Explainable Machine Learning for Clinical End Use. In *Machine Learning for Healthcare Conference* (pp. 359-380). PMLR.
 
 ---

@@ -63,8 +63,8 @@ def plot_beeswarm(
         feature_names=feature_names,
     )
 
-    fig, ax = plt.subplots(figsize=(10, max(6, max_display * 0.4)))
     shap.plots.beeswarm(explanation, max_display=max_display, show=False)
+    ax = plt.gca()
     ax.set_ylabel(_format_shap_ylabel(shap_output_scale))
 
     if outpath is not None:
@@ -90,7 +90,6 @@ def plot_bar_importance(
         feature_names=feature_names,
     )
 
-    fig, ax = plt.subplots(figsize=(10, max(6, max_display * 0.4)))
     shap.plots.bar(explanation, max_display=max_display, show=False)
     ax = plt.gca()
     ax.set_xlabel(_format_shap_ylabel(shap_output_scale))
@@ -121,7 +120,6 @@ def plot_waterfall(
         feature_names=feature_names,
     )
 
-    fig, ax = plt.subplots(figsize=(10, 8))
     shap.plots.waterfall(explanation, show=False)
     ax = plt.gca()
     ax.set_ylabel(_format_shap_ylabel(shap_output_scale))

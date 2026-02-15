@@ -13,6 +13,7 @@ from ced_ml.features.consensus import (
     build_consensus_panel,
     cluster_and_select_representatives,
     compute_per_model_ranking,
+    explicit_shap_normalized_aggregate,
     geometric_mean_rank_aggregate,
     save_consensus_results,
 )
@@ -363,6 +364,63 @@ class TestGeometricMeanRankAggregate:
             geometric_mean_rank_aggregate({})
 
 
+class TestExplicitShapNormalizedAggregate:
+    """Tests for explicit SHAP cross-model normalization aggregation."""
+
+    def test_minmax_normalization_with_scale_mismatch(self):
+        """Per-model min-max normalization prevents model scale dominance."""
+        per_model_rankings = {
+            "model_A": pd.DataFrame(
+                {
+                    "protein": ["P1", "P2"],
+                    "oof_importance": [100.0, 50.0],
+                }
+            ),
+            "model_B": pd.DataFrame(
+                {
+                    "protein": ["P1", "P2"],
+                    "oof_importance": [0.2, 0.4],
+                }
+            ),
+        }
+
+        result = explicit_shap_normalized_aggregate(per_model_rankings)
+        p1 = result[result["protein"] == "P1"].iloc[0]
+        p2 = result[result["protein"] == "P2"].iloc[0]
+
+        # model_A normalized: P1=1.0, P2=0.0
+        # model_B normalized: P1=0.0, P2=1.0
+        # cross-model mean magnitude: both 0.5
+        np.testing.assert_allclose(p1["shap_magnitude_score"], 0.5, atol=1e-8)
+        np.testing.assert_allclose(p2["shap_magnitude_score"], 0.5, atol=1e-8)
+
+    def test_missing_protein_gets_zero_contribution(self):
+        """Protein missing in a model is penalized with 0.0 contribution."""
+        per_model_rankings = {
+            "model_A": pd.DataFrame(
+                {
+                    "protein": ["P1", "P2"],
+                    "oof_importance": [2.0, 1.0],
+                }
+            ),
+            "model_B": pd.DataFrame(
+                {
+                    "protein": ["P1"],
+                    "oof_importance": [1.0],
+                }
+            ),
+        }
+
+        result = explicit_shap_normalized_aggregate(per_model_rankings)
+        p1 = result[result["protein"] == "P1"].iloc[0]
+        p2 = result[result["protein"] == "P2"].iloc[0]
+
+        assert p1["shap_n_models_present"] == 2
+        assert p2["shap_n_models_present"] == 1
+        # P2 should be explicitly penalized by the missing model contribution.
+        assert p1["shap_magnitude_score"] >= p2["shap_magnitude_score"]
+
+
 class TestClusterAndSelectRepresentatives:
     """Tests for cluster_and_select_representatives function."""
 
@@ -630,6 +688,28 @@ class TestBuildConsensusPanel:
         for col in ["composite_score", "essentiality", "essentiality_rank", "stability_rank"]:
             assert col not in result.per_model_rankings.columns
 
+    def test_shap_ranking_with_explicit_normalization_metadata(self, mock_data):
+        """SHAP ranking path records explicit normalization metadata."""
+        df_train, model_stability, model_oof = mock_data
+
+        # Reuse mock OOF payload as SHAP-like signal for path coverage.
+        result = build_consensus_panel(
+            model_stability=model_stability,
+            df_train=df_train,
+            model_oof_importance=model_oof,
+            stability_threshold=0.75,
+            ranking_signal="oof_shap",
+            shap_explicit_normalization=True,
+        )
+
+        assert (
+            result.metadata["parameters"]["ranking_method"]
+            == "oof_shap_with_explicit_normalization"
+        )
+        assert result.metadata["parameters"]["ranking_signal"] == "oof_shap"
+        assert result.metadata["parameters"]["shap_explicit_normalization"] is True
+        assert "consensus_signed_score" in result.consensus_ranking.columns
+
 
 class TestSaveConsensusResults:
     """Tests for save_consensus_results function."""
@@ -793,6 +873,31 @@ class TestLoadModelOofImportance:
         assert result is not None
         assert "feature" in result.columns
         assert "mean_importance" in result.columns
+
+
+class TestLoadModelOofShapImportance:
+    """Tests for load_model_oof_shap_importance filename resolution."""
+
+    def test_finds_model_specific_filename(self, tmp_path):
+        from ced_ml.cli.consensus_panel import load_model_oof_shap_importance
+
+        importance_dir = tmp_path / "importance"
+        importance_dir.mkdir()
+
+        shap_df = pd.DataFrame({"feature": ["P1", "P2"], "mean_abs_shap": [0.6, 0.2]})
+        shap_df.to_csv(importance_dir / "oof_shap_importance__LR_EN.csv", index=False)
+
+        result = load_model_oof_shap_importance(tmp_path, model_name="LR_EN")
+        assert result is not None
+        assert "feature" in result.columns
+        assert "mean_importance" in result.columns
+        np.testing.assert_allclose(result["mean_importance"].values, [0.6, 0.2])
+
+    def test_returns_none_when_missing(self, tmp_path):
+        from ced_ml.cli.consensus_panel import load_model_oof_shap_importance
+
+        (tmp_path / "importance").mkdir()
+        assert load_model_oof_shap_importance(tmp_path, model_name="LR_EN") is None
 
 
 class TestOofDeterminesRanking:

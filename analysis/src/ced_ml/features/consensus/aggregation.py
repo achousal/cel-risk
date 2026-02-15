@@ -99,6 +99,98 @@ def geometric_mean_rank_aggregate(
     return result
 
 
+def explicit_shap_normalized_aggregate(
+    per_model_rankings: dict[str, pd.DataFrame],
+    score_col: str = "oof_importance",
+) -> pd.DataFrame:
+    """Aggregate SHAP scores across models with explicit per-model normalization.
+
+    Implements the core normalization used in Nature Medicine
+    (s41591-024-03398-5) for cross-model SHAP aggregation:
+    1) Normalize each model's SHAP magnitude to [0, 1] via min-max on ``|score|``.
+    2) Restore sign after magnitude normalization.
+    3) Average normalized signed SHAP across models.
+
+    Missing proteins in a model receive a contribution of 0.0 (explicit penalty
+    for model absence).
+
+    Args:
+        per_model_rankings: Dict mapping model_name -> DataFrame with columns:
+            ``protein`` and ``score_col``.
+        score_col: Column containing SHAP-derived per-protein scores.
+
+    Returns:
+        DataFrame with columns:
+            - protein: Protein name
+            - shap_signed_score: Mean normalized signed SHAP across models
+            - shap_magnitude_score: Mean normalized magnitude (absolute value)
+            - shap_n_models_present: Number of models with a non-null SHAP score
+            - shap_presence_fraction: Fraction of models where protein is present
+    """
+    if not per_model_rankings:
+        raise ValueError("per_model_rankings cannot be empty")
+
+    all_proteins = _collect_all_proteins(per_model_rankings)
+    model_names = list(per_model_rankings.keys())
+    n_models = len(model_names)
+
+    # Initialize dense matrix with explicit 0.0 penalty for missing proteins.
+    norm_signed = pd.DataFrame(0.0, index=sorted(all_proteins), columns=model_names, dtype=float)
+    presence = pd.DataFrame(False, index=sorted(all_proteins), columns=model_names, dtype=bool)
+
+    for model_name, df in per_model_rankings.items():
+        if "protein" not in df.columns:
+            raise ValueError(f"Model '{model_name}' is missing required column 'protein'")
+        if score_col not in df.columns:
+            raise ValueError(
+                f"Model '{model_name}' is missing required SHAP score column '{score_col}'"
+            )
+
+        model_scores = (
+            df[["protein", score_col]]
+            .dropna(subset=[score_col])
+            .drop_duplicates(subset=["protein"])
+            .set_index("protein")[score_col]
+            .astype(float)
+        )
+        if model_scores.empty:
+            continue
+
+        abs_scores = model_scores.abs()
+        min_abs = float(abs_scores.min())
+        max_abs = float(abs_scores.max())
+
+        if np.isclose(max_abs, min_abs):
+            # Degenerate case: all proteins have same magnitude in this model.
+            # Keep them equally weighted.
+            norm_abs = pd.Series(1.0, index=model_scores.index, dtype=float)
+        else:
+            norm_abs = (abs_scores - min_abs) / (max_abs - min_abs)
+
+        signed_norm = np.sign(model_scores) * norm_abs
+
+        common_idx = norm_signed.index.intersection(signed_norm.index)
+        norm_signed.loc[common_idx, model_name] = signed_norm.loc[common_idx]
+        presence.loc[common_idx, model_name] = True
+
+    signed_mean = norm_signed.mean(axis=1)
+    magnitude_mean = signed_mean.abs()
+    n_present = presence.sum(axis=1).astype(int)
+    presence_fraction = n_present / n_models
+
+    out = pd.DataFrame(
+        {
+            "protein": signed_mean.index,
+            "shap_signed_score": signed_mean.values,
+            "shap_magnitude_score": magnitude_mean.values,
+            "shap_n_models_present": n_present.values,
+            "shap_presence_fraction": presence_fraction.values,
+        }
+    )
+    out = out.sort_values("shap_magnitude_score", ascending=False, ignore_index=True)
+    return out
+
+
 def _validate_aggregation_method(method: str) -> None:
     """Validate aggregation method."""
     valid_methods = {"geometric_mean", "borda", "median"}

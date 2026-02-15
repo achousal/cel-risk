@@ -15,7 +15,7 @@ from typing import Any
 
 import pandas as pd
 
-from .aggregation import geometric_mean_rank_aggregate
+from .aggregation import explicit_shap_normalized_aggregate, geometric_mean_rank_aggregate
 from .clustering import cluster_and_select_representatives
 from .ranking import compute_per_model_ranking
 
@@ -50,6 +50,8 @@ def build_consensus_panel(
     rra_method: str = "geometric_mean",
     corr_method: str = "spearman",
     model_oof_importance: dict[str, pd.DataFrame] | None = None,
+    ranking_signal: str = "oof_importance",
+    shap_explicit_normalization: bool = False,
 ) -> ConsensusResult:
     """Build consensus panel from multiple models.
 
@@ -74,6 +76,9 @@ def build_consensus_panel(
         corr_method: Correlation method for clustering.
         model_oof_importance: Dict mapping model_name -> OOF importance DataFrame
             (columns: feature/protein, importance/mean_importance).
+        ranking_signal: Per-model ranking signal ("oof_importance" or "oof_shap").
+        shap_explicit_normalization: If True and ranking_signal is "oof_shap",
+            apply explicit SHAP normalization for cross-model consensus scoring.
 
     Returns:
         ConsensusResult with final panel and intermediate data.
@@ -82,7 +87,8 @@ def build_consensus_panel(
     logger.info(
         f"Parameters: stability_threshold={stability_threshold}, "
         f"corr_threshold={corr_threshold}, target_size={target_size}, "
-        f"ranking=oof_importance_with_stability_filter"
+        f"ranking_signal={ranking_signal}, "
+        f"shap_explicit_normalization={shap_explicit_normalization}"
     )
 
     # Step 1: Compute per-model rankings (stability filter + OOF importance)
@@ -90,6 +96,7 @@ def build_consensus_panel(
         model_stability=model_stability,
         stability_threshold=stability_threshold,
         model_oof_importance=model_oof_importance,
+        ranking_signal=ranking_signal,
     )
 
     if len(per_model_rankings) < 2:
@@ -101,6 +108,11 @@ def build_consensus_panel(
     # Step 2: Cross-model rank aggregation
     logger.info(f"Running rank aggregation method={rra_method}...")
     consensus_df = geometric_mean_rank_aggregate(per_model_rankings, method=rra_method)
+
+    if ranking_signal == "oof_shap" and shap_explicit_normalization:
+        logger.info("Applying explicit SHAP normalization for cross-model aggregation...")
+        consensus_df = _apply_explicit_shap_normalization(consensus_df, per_model_rankings)
+
     logger.info(f"Consensus ranking: {len(consensus_df)} total proteins")
 
     _check_degenerate_consensus(consensus_df)
@@ -154,6 +166,8 @@ def build_consensus_panel(
         target_size=target_size,
         rra_method=rra_method,
         corr_method=corr_method,
+        ranking_signal=ranking_signal,
+        shap_explicit_normalization=shap_explicit_normalization,
     )
 
     return ConsensusResult(
@@ -207,11 +221,17 @@ def _compute_all_model_rankings(
     model_stability: dict[str, pd.DataFrame],
     stability_threshold: float,
     model_oof_importance: dict[str, pd.DataFrame] | None,
+    ranking_signal: str = "oof_importance",
 ) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     """Compute per-model rankings for all models.
 
-    For each model: filter by stability threshold, then rank by OOF importance.
+    For each model: filter by stability threshold, then rank by selected signal.
     """
+    if ranking_signal not in {"oof_importance", "oof_shap"}:
+        raise ValueError(
+            f"ranking_signal must be 'oof_importance' or 'oof_shap', got '{ranking_signal}'"
+        )
+
     per_model_rankings = {}
     model_stats = {}
 
@@ -225,13 +245,13 @@ def _compute_all_model_rankings(
             )
             continue
 
-        # Get OOF importance if available
+        # Get selected ranking signal if available
         oof_importance_df = None
-        has_oof = False
+        has_signal = False
 
         if model_oof_importance:
             oof_importance_df = model_oof_importance.get(model_name)
-            has_oof = oof_importance_df is not None and len(oof_importance_df) > 0
+            has_signal = oof_importance_df is not None and len(oof_importance_df) > 0
 
         # Rank by OOF importance (stability already filtered)
         ranking_df = compute_per_model_ranking(
@@ -243,15 +263,35 @@ def _compute_all_model_rankings(
         per_model_rankings[model_name] = ranking_df
         model_stats[model_name] = {
             "n_stable_proteins": len(stable_df),
-            "has_oof_importance": has_oof,
+            "has_oof_importance": has_signal,
+            "ranking_signal": ranking_signal,
         }
 
         logger.info(
             f"Model {model_name}: {len(stable_df)} stable proteins, "
-            f"OOF={'yes' if has_oof else 'no'}"
+            f"{ranking_signal}={'yes' if has_signal else 'no'}"
         )
 
     return per_model_rankings, model_stats
+
+
+def _apply_explicit_shap_normalization(
+    consensus_df: pd.DataFrame,
+    per_model_rankings: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """Override consensus score with explicit SHAP-normalized cross-model score."""
+    shap_norm = explicit_shap_normalized_aggregate(
+        per_model_rankings=per_model_rankings,
+        score_col="oof_importance",
+    )
+
+    merged = consensus_df.merge(shap_norm, on="protein", how="left")
+    merged["rank_aggregation_score"] = merged["consensus_score"]
+    merged["consensus_score"] = merged["shap_magnitude_score"].fillna(0.0)
+    merged["consensus_signed_score"] = merged["shap_signed_score"].fillna(0.0)
+    merged = merged.sort_values("consensus_score", ascending=False, ignore_index=True)
+    merged["consensus_rank"] = range(1, len(merged) + 1)
+    return merged
 
 
 def _check_degenerate_consensus(consensus_df: pd.DataFrame) -> None:
@@ -300,8 +340,18 @@ def _build_metadata(
     target_size: int,
     rra_method: str,
     corr_method: str,
+    ranking_signal: str,
+    shap_explicit_normalization: bool,
 ) -> dict:
     """Build metadata dictionary."""
+    ranking_method = "oof_importance_with_stability_filter"
+    if ranking_signal == "oof_shap":
+        ranking_method = (
+            "oof_shap_with_explicit_normalization"
+            if shap_explicit_normalization
+            else "oof_shap_with_stability_filter"
+        )
+
     return {
         "timestamp": datetime.now().isoformat(),
         "n_models": len(per_model_rankings),
@@ -311,7 +361,9 @@ def _build_metadata(
             "stability_threshold": stability_threshold,
             "corr_threshold": corr_threshold,
             "target_size": target_size,
-            "ranking_method": "oof_importance_with_stability_filter",
+            "ranking_method": ranking_method,
+            "ranking_signal": ranking_signal,
+            "shap_explicit_normalization": shap_explicit_normalization,
             "rra_method": rra_method,
             "corr_method": corr_method,
         },

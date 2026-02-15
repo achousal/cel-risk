@@ -27,6 +27,18 @@ target_size: 25
 #   - median: Median rank across models
 rra_method: geometric_mean
 
+# Per-model ranking signal
+#   - oof_importance: grouped permutation/coef importance (default)
+#   - oof_shap: SHAP mean|value| from oof_shap_importance__{model}.csv
+ranking_signal: oof_importance
+
+# Explicit SHAP normalization for cross-model aggregation
+# When ranking_signal=oof_shap, applies explicit min-max normalization per model
+# (on |SHAP|, with sign restoration) before cross-model averaging.
+# This follows the normalization strategy used in Nature Medicine 2024
+# (s41591-024-03398-5) for multi-model SHAP comparability.
+shap_explicit_normalization: true
+
 # Significance Gating
 significance:
   require_significance: true    # Only include significant models
