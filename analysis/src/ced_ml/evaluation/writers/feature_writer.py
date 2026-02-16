@@ -63,27 +63,6 @@ class FeatureWriter:
         logger.info(f"Saved stable panel report: {path}")
         return str(path)
 
-    def save_panel_manifest(self, manifest: dict[str, Any], model: str, panel_size: int) -> str:
-        """
-        Save panel manifest to panels/{model}__N{size}__panel_manifest.json.
-
-        Args:
-            manifest: Panel metadata dictionary
-            model: Model name
-            panel_size: Panel size (N)
-
-        Returns:
-            Path to saved file
-        """
-        filename = f"{model}__N{panel_size}__panel_manifest.json"
-        path = self.dirs.get_path("panels_sizes", filename)
-        if Path(path).exists():
-            logger.warning(f"Overwriting existing file: {path}")
-        with open(path, "w") as f:
-            json.dump(manifest, f, indent=2, sort_keys=True)
-        logger.info(f"Saved panel manifest: {path}")
-        return str(path)
-
     def save_final_test_panel(
         self,
         panel_proteins: list[str],

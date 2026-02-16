@@ -1,10 +1,9 @@
-"""Tests for features/panels.py - biomarker panel building.
+"""Tests for panel-building utilities from corr_prune.py.
 
 Test coverage:
 - compute_univariate_strength: Mann-Whitney testing and tie-breaking
 - prune_correlated_proteins: Component detection, representative selection
 - prune_and_refill_panel: Full workflow with backfill
-- build_multi_size_panels: Multiple panel sizes
 """
 
 import numpy as np
@@ -15,7 +14,6 @@ from ced_ml.features.corr_prune import (
     prune_and_refill_panel,
     prune_correlated_proteins,
 )
-from ced_ml.features.panels import build_multi_size_panels
 
 
 class TestComputeUnivariateStrength:
@@ -124,8 +122,8 @@ class TestPruneCorrelatedProteins:
         df = pd.DataFrame(
             {
                 "A": [1, 2, 3, 4, 5],
-                "B": [1.1, 2.1, 3.1, 4.1, 5.1],  # Positively correlated with A (r≈1.0)
-                "C": [5, 4, 3, 2, 1],  # Negatively correlated with A/B (r≈-1.0)
+                "B": [1.1, 2.1, 3.1, 4.1, 5.1],  # Positively correlated with A (r~1.0)
+                "C": [5, 4, 3, 2, 1],  # Negatively correlated with A/B (r~-1.0)
                 "D": [2.5, 2.6, 2.4, 2.7, 2.5],  # Independent (low variance)
             }
         )
@@ -357,188 +355,3 @@ class TestPruneAndRefillPanel:
         c_row = component_map[component_map["protein"] == "C"]
         assert not c_row.empty
         assert c_row["kept"].iloc[0]
-
-
-class TestBuildMultiSizePanels:
-    """Tests for build_multi_size_panels."""
-
-    def test_multiple_panel_sizes(self):
-        """Build panels of different sizes."""
-        rng = np.random.default_rng(42)
-        n_proteins = 50
-        df = pd.DataFrame({f"P{i}": rng.normal(0, 1, 100) for i in range(n_proteins)})
-        freqs = {f"P{i}": 1.0 - i * 0.01 for i in range(n_proteins)}
-
-        panels = build_multi_size_panels(
-            df,
-            None,
-            freqs,
-            panel_sizes=[10, 25, 50],
-            corr_threshold=0.99,  # Minimal pruning
-            pool_limit=50,
-        )
-
-        assert len(panels) == 3
-        assert 10 in panels
-        assert 25 in panels
-        assert 50 in panels
-
-        # Check sizes
-        assert len(panels[10][1]) == 10
-        assert len(panels[25][1]) == 25
-        assert len(panels[50][1]) <= 50  # May be fewer if correlation pruning
-
-    def test_nested_panels(self):
-        """Smaller panels should be subsets of larger panels (in ranked order)."""
-        rng = np.random.default_rng(42)
-        df = pd.DataFrame({f"P{i}": rng.normal(0, 1, 100) for i in range(30)})
-        freqs = {f"P{i}": 1.0 - i * 0.01 for i in range(30)}
-
-        panels = build_multi_size_panels(
-            df,
-            None,
-            freqs,
-            panel_sizes=[5, 10, 20],
-            corr_threshold=0.99,  # Minimal pruning
-            pool_limit=30,
-        )
-
-        panel_5 = set(panels[5][1])
-        panel_10 = set(panels[10][1])
-        panel_20 = set(panels[20][1])
-
-        # Note: Due to correlation pruning and backfill, strict nesting not guaranteed
-        # But top proteins should generally appear in all panels
-        assert "P0" in panel_5  # Highest frequency
-        assert "P0" in panel_10
-        assert "P0" in panel_20
-
-    def test_correlation_pruning_across_sizes(self):
-        """Correlation pruning should be applied to each panel size."""
-        df = pd.DataFrame(
-            {
-                "A": [1, 2, 3, 4, 5],
-                "B": [1.1, 2.1, 3.1, 4.1, 5.1],  # Correlated with A
-                "C": [5, 4, 3, 2, 1],
-                "D": [2, 3, 1, 4, 5],
-                "E": [3, 1, 4, 2, 5],
-            }
-        )
-        freqs = {"A": 0.95, "B": 0.90, "C": 0.80, "D": 0.70, "E": 0.60}
-
-        panels = build_multi_size_panels(
-            df, None, freqs, panel_sizes=[2, 3], corr_threshold=0.95, pool_limit=5
-        )
-
-        # B should be pruned in both sizes
-        assert "B" not in panels[2][1]
-        assert "B" not in panels[3][1]
-
-    def test_empty_panel_sizes(self):
-        """Handle empty panel sizes list."""
-        df = pd.DataFrame({"A": [1, 2, 3]})
-        freqs = {"A": 0.9}
-
-        panels = build_multi_size_panels(df, None, freqs, panel_sizes=[], corr_threshold=0.80)
-
-        assert len(panels) == 0
-
-    def test_panel_sizes_sorted(self):
-        """Panel sizes should be processed in sorted order."""
-        rng = np.random.default_rng(42)
-        df = pd.DataFrame({f"P{i}": rng.normal(0, 1, 50) for i in range(20)})
-        freqs = {f"P{i}": 1.0 - i * 0.01 for i in range(20)}
-
-        panels = build_multi_size_panels(
-            df,
-            None,
-            freqs,
-            panel_sizes=[10, 5, 15],
-            corr_threshold=0.99,
-            pool_limit=20,  # Unsorted
-        )
-
-        # Should handle all sizes despite unsorted input
-        assert len(panels) == 3
-        assert set(panels.keys()) == {5, 10, 15}
-
-
-class TestIntegration:
-    """Integration tests combining multiple panel functions."""
-
-    def test_full_workflow(self):
-        """Complete workflow: frequencies -> multi-size panels."""
-        rng = np.random.default_rng(42)
-
-        # Simulate TRAIN data
-        df = pd.DataFrame(
-            {
-                "PROT_A": rng.normal(0, 1, 100),
-                "PROT_B": rng.normal(0, 1, 100),
-                "PROT_C": rng.normal(0, 1, 100),
-                "PROT_D": rng.normal(0, 1, 100),
-                "PROT_E": rng.normal(0, 1, 100),
-            }
-        )
-        # Add correlation between A and B
-        df["PROT_B"] = df["PROT_A"] + rng.normal(0, 0.1, 100)
-
-        y = rng.binomial(1, 0.3, 100)
-
-        # Simulate selection frequencies from CV
-        freqs = {
-            "PROT_A": 0.95,
-            "PROT_B": 0.90,  # Correlated with A, should be pruned
-            "PROT_C": 0.80,
-            "PROT_D": 0.70,
-            "PROT_E": 0.60,
-        }
-
-        # Build multi-size panels
-        panels = build_multi_size_panels(
-            df,
-            y,
-            freqs,
-            panel_sizes=[2, 3],
-            corr_threshold=0.80,
-            pool_limit=5,
-            tiebreak_method="freq",
-        )
-
-        # Verify results
-        assert len(panels) == 2
-        panel_2 = panels[2][1]
-        panel_3 = panels[3][1]
-
-        assert len(panel_2) == 2
-        assert len(panel_3) == 3
-
-        # A should be kept over B (higher frequency)
-        assert "PROT_A" in panel_2
-        assert "PROT_B" not in panel_2  # Pruned due to correlation
-
-        # Both panels should have component maps
-        assert not panels[2][0].empty
-        assert not panels[3][0].empty
-
-    def test_realistic_sizes(self):
-        """Test with realistic panel sizes (10, 25, 50, 100, 200)."""
-        rng = np.random.default_rng(42)
-        n_proteins = 500
-
-        df = pd.DataFrame({f"PROT_{i:03d}": rng.normal(0, 1, 200) for i in range(n_proteins)})
-        freqs = {f"PROT_{i:03d}": 1.0 - i * 0.001 for i in range(n_proteins)}
-
-        panels = build_multi_size_panels(
-            df,
-            None,
-            freqs,
-            panel_sizes=[10, 25, 50, 100, 200],
-            corr_threshold=0.80,
-            pool_limit=1000,
-        )
-
-        assert len(panels) == 5
-        for size in [10, 25, 50, 100, 200]:
-            assert size in panels
-            assert len(panels[size][1]) == size

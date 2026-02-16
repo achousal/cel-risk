@@ -31,7 +31,6 @@ from ced_ml.cli.aggregation.plot_generator import (
 from ced_ml.cli.aggregation.reporting import (
     aggregate_feature_reports,
     aggregate_feature_stability,
-    build_consensus_panels,
 )
 from ced_ml.cli.discovery import (
     discover_ensemble_dirs,
@@ -57,7 +56,6 @@ __all__ = [
     # Reporting
     "aggregate_feature_reports",
     "aggregate_feature_stability",
-    "build_consensus_panels",
     # Plot Generation
     "generate_aggregated_plots",
     "generate_aggregated_shap_plots",

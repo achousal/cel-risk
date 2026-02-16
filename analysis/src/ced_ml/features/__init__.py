@@ -16,9 +16,6 @@ from .kbest import (
     compute_f_classif_scores,
     rank_features_by_score,
 )
-from .panels import (
-    build_multi_size_panels,
-)
 from .screening import (
     f_statistic_screen,
     mann_whitney_screen,
@@ -46,8 +43,6 @@ __all__ = [
     "ScreeningTransformer",
     "compute_f_classif_scores",
     "rank_features_by_score",
-    # Panels
-    "build_multi_size_panels",
     # Screening
     "f_statistic_screen",
     "mann_whitney_screen",

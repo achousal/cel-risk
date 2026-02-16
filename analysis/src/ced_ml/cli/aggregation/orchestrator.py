@@ -655,7 +655,6 @@ def build_aggregation_metadata(
     stable_features_df: pd.DataFrame,
     agg_feature_report: pd.DataFrame,
     all_feature_reports: pd.DataFrame,
-    consensus_panels: dict[int, dict[str, Any]],
     ensemble_metadata: dict[str, Any],
     agg_dir: Path,
 ) -> dict[str, Any]:
@@ -677,7 +676,6 @@ def build_aggregation_metadata(
         stable_features_df: Stable features dataframe
         agg_feature_report: Aggregated feature report
         all_feature_reports: All feature reports
-        consensus_panels: Consensus panel manifests
         ensemble_metadata: Ensemble-specific metadata
         agg_dir: Aggregation directory
 
@@ -723,13 +721,6 @@ def build_aggregation_metadata(
                 if not agg_feature_report.empty
                 else []
             ),
-        },
-        "consensus_panels": {
-            str(k): {
-                "n_proteins": v["n_consensus_proteins"],
-                "n_splits_with_panel": v["n_splits_with_panel"],
-            }
-            for k, v in consensus_panels.items()
         },
         "files_generated": [f.name for f in agg_dir.rglob("*") if f.is_file()],
     }

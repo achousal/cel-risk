@@ -350,6 +350,7 @@ def train_models(ctx: TrainingContext) -> TrainingContext:
     ctx.oof_calibrator = cv_result.oof_calibrator
     ctx.nested_rfecv_result = cv_result.nested_rfecv_result
     ctx.oof_importance_df = cv_result.oof_importance_df
+    ctx.oof_importance_clustered_df = cv_result.oof_importance_clustered_df
     ctx.oof_shap_df = cv_result.oof_shap_df
     ctx.final_selected_proteins = final_selected_proteins
     ctx.cv_elapsed_sec = cv_result.elapsed_sec

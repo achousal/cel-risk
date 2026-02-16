@@ -6,11 +6,12 @@ from pathlib import Path
 
 import click
 
-from ced_ml.cli.options import results_dir_option, run_id_option
+from ced_ml.cli.options import config_option, results_dir_option, run_id_option
 from ced_ml.cli.utils.validation import validate_mutually_exclusive
 
 
 @click.command("aggregate-splits")
+@config_option
 @results_dir_option
 @run_id_option(
     required=False,
@@ -25,23 +26,23 @@ from ced_ml.cli.utils.validation import validate_mutually_exclusive
 @click.option(
     "--stability-threshold",
     type=float,
-    default=0.75,
+    default=None,
     help="Fraction of splits a feature must appear in to be 'stable' (default: 0.75)",
 )
 @click.option(
     "--target-specificity",
     type=float,
-    default=0.95,
+    default=None,
     help="Target specificity for alpha threshold (default: 0.95)",
 )
 @click.option(
     "--plot-formats",
     multiple=True,
-    default=["png"],
+    default=(),
     help="Plot output formats (can be repeated, e.g., --plot-formats png --plot-formats pdf)",
 )
 @click.pass_context
-def aggregate_splits(ctx, **kwargs):
+def aggregate_splits(ctx, config, **kwargs):
     """
     Aggregate results across multiple split seeds.
 
@@ -82,6 +83,45 @@ def aggregate_splits(ctx, **kwargs):
         get_run_path,
         resolve_run_id,
     )
+    from ced_ml.cli.utils.config_merge import merge_config_with_cli
+    from ced_ml.utils.paths import get_analysis_dir
+
+    # Normalize click multi-option defaults for config merge.
+    if kwargs.get("plot_formats") == ():
+        kwargs["plot_formats"] = None
+
+    # Load config file if provided or auto-detect.
+    try:
+        default_config = get_analysis_dir() / "configs" / "aggregate_config.yaml"
+    except RuntimeError:
+        default_config = Path("configs/aggregate_config.yaml")
+    config_path = config or (default_config if default_config.exists() else None)
+    if config_path:
+        kwargs.update(
+            merge_config_with_cli(
+                Path(config_path),
+                kwargs,
+                [
+                    "stability_threshold",
+                    "target_specificity",
+                    "plot_formats",
+                    "n_boot",
+                    "save_plots",
+                    "plot_roc",
+                    "plot_pr",
+                    "plot_calibration",
+                    "plot_risk_distribution",
+                    "plot_dca",
+                    "plot_oof_combined",
+                    "plot_learning_curve",
+                    "plot_shap_summary",
+                    "plot_shap_dependence",
+                    "plot_shap_heatmap",
+                    "control_spec_targets",
+                ],
+                verbose=False,
+            )
+        )
 
     # Validate mutually exclusive options
     results_dir = kwargs.get("results_dir")
@@ -109,8 +149,51 @@ def aggregate_splits(ctx, **kwargs):
     except ValueError as e:
         raise click.UsageError(str(e)) from e
 
-    # Convert tuple to list for plot_formats
-    kwargs["plot_formats"] = list(kwargs["plot_formats"]) if kwargs["plot_formats"] else ["png"]
+    # Fill defaults (CLI > config > defaults).
+    kwargs["stability_threshold"] = (
+        kwargs["stability_threshold"] if kwargs.get("stability_threshold") is not None else 0.75
+    )
+    kwargs["target_specificity"] = (
+        kwargs["target_specificity"] if kwargs.get("target_specificity") is not None else 0.95
+    )
+    kwargs["n_boot"] = kwargs["n_boot"] if kwargs.get("n_boot") is not None else 500
+    kwargs["save_plots"] = kwargs["save_plots"] if kwargs.get("save_plots") is not None else True
+    kwargs["plot_roc"] = kwargs["plot_roc"] if kwargs.get("plot_roc") is not None else True
+    kwargs["plot_pr"] = kwargs["plot_pr"] if kwargs.get("plot_pr") is not None else True
+    kwargs["plot_calibration"] = (
+        kwargs["plot_calibration"] if kwargs.get("plot_calibration") is not None else True
+    )
+    kwargs["plot_risk_distribution"] = (
+        kwargs["plot_risk_distribution"]
+        if kwargs.get("plot_risk_distribution") is not None
+        else True
+    )
+    kwargs["plot_dca"] = kwargs["plot_dca"] if kwargs.get("plot_dca") is not None else True
+    kwargs["plot_oof_combined"] = (
+        kwargs["plot_oof_combined"] if kwargs.get("plot_oof_combined") is not None else True
+    )
+    kwargs["plot_learning_curve"] = (
+        kwargs["plot_learning_curve"] if kwargs.get("plot_learning_curve") is not None else True
+    )
+    kwargs["plot_shap_summary"] = (
+        kwargs["plot_shap_summary"] if kwargs.get("plot_shap_summary") is not None else True
+    )
+    kwargs["plot_shap_dependence"] = (
+        kwargs["plot_shap_dependence"] if kwargs.get("plot_shap_dependence") is not None else True
+    )
+    kwargs["plot_shap_heatmap"] = (
+        kwargs["plot_shap_heatmap"] if kwargs.get("plot_shap_heatmap") is not None else True
+    )
+    kwargs["control_spec_targets"] = (
+        kwargs["control_spec_targets"]
+        if kwargs.get("control_spec_targets") is not None
+        else [0.90, 0.95, 0.99]
+    )
+    kwargs["plot_formats"] = kwargs["plot_formats"] or ["png"]
+    if isinstance(kwargs["plot_formats"], tuple):
+        kwargs["plot_formats"] = list(kwargs["plot_formats"])
+    elif isinstance(kwargs["plot_formats"], str):
+        kwargs["plot_formats"] = [kwargs["plot_formats"]]
 
     # Auto-detect results_dir from run_id
     if run_id:

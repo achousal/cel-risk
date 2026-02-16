@@ -66,6 +66,7 @@ class NestedCVResult:
     oof_calibrator: OOFCalibrator | None
     nested_rfecv_result: NestedRFECVResult | None
     oof_importance_df: pd.DataFrame | None
+    oof_importance_clustered_df: pd.DataFrame | None = None
     oof_shap_df: pd.DataFrame | None = None
 
 
@@ -335,15 +336,15 @@ def oof_predictions_with_nested_cv(
         )
 
         # --- OOF Importance computation (if enabled) ---
-        if getattr(config.features, "compute_oof_importance", False):
+        if config.features.compute_oof_importance:
             from ced_ml.features.importance import extract_importance_from_model
 
             try:
                 # Use grouped (cluster-aware) importance to handle correlated features
                 # Trees: OOF grouped permutation importance on held-out fold
                 # Linear: Standardized |coef| aggregated by correlation clusters
-                oof_grouped = getattr(config.features, "oof_importance_grouped", True)
-                oof_corr_threshold = getattr(config.features, "oof_corr_threshold", 0.85)
+                oof_grouped = config.features.oof_importance_grouped
+                oof_corr_threshold = config.features.grouped_threshold
 
                 # Prepare validation data for grouped permutation importance (trees)
                 # Note: Must include ALL features (proteins + demographics) that model was trained on
@@ -363,6 +364,7 @@ def oof_predictions_with_nested_cv(
                     X_train=X_train_fold,
                     grouped=oof_grouped,
                     corr_threshold=oof_corr_threshold,
+                    n_repeats=config.features.pfi_n_repeats,
                 )
                 if not fold_importance.empty:
                     fold_importance["repeat"] = repeat_num
@@ -589,11 +591,22 @@ def oof_predictions_with_nested_cv(
 
     # Aggregate OOF importance across folds
     oof_importance_df = None
-    if fold_importances and getattr(config.features, "compute_oof_importance", False):
-        from ced_ml.features.importance import aggregate_fold_importances
+    oof_importance_clustered_df = None
+    if fold_importances and config.features.compute_oof_importance:
+        from ced_ml.features.importance import (
+            aggregate_fold_importances,
+            aggregate_fold_importances_clustered,
+        )
 
         oof_importance_df = aggregate_fold_importances(fold_importances)
         logger.info(f"OOF importance computed for {len(oof_importance_df)} features")
+
+        oof_importance_clustered_df = aggregate_fold_importances_clustered(fold_importances)
+        if not oof_importance_clustered_df.empty:
+            logger.info(
+                f"OOF clustered importance computed for "
+                f"{len(oof_importance_clustered_df)} clusters"
+            )
 
     # Aggregate OOF SHAP across folds
     oof_shap_df = None
@@ -615,6 +628,7 @@ def oof_predictions_with_nested_cv(
         oof_calibrator=oof_calibrator,
         nested_rfecv_result=nested_rfecv_result,
         oof_importance_df=oof_importance_df,
+        oof_importance_clustered_df=oof_importance_clustered_df,
         oof_shap_df=oof_shap_df,
     )
 

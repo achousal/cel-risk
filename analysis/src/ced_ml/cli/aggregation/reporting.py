@@ -1,16 +1,13 @@
 """
 Feature reporting aggregation for aggregate-splits.
 
-Handles feature stability analysis, feature report aggregation,
-and consensus panel building across splits.
+Handles feature stability analysis and feature report aggregation across splits.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pandas as pd
 
 
@@ -164,78 +161,3 @@ def aggregate_feature_reports(
     agg_df = agg_df[[c for c in col_order if c in agg_df.columns]]
 
     return agg_df
-
-
-def build_consensus_panels(
-    split_dirs: list[Path],
-    panel_sizes: list[int] | None = None,
-    threshold: float = 0.75,
-    logger: logging.Logger | None = None,
-) -> dict[int, dict[str, Any]]:
-    """
-    Build consensus panels from per-split panels.
-
-    Args:
-        split_dirs: List of split subdirectory paths
-        panel_sizes: List of panel sizes to build (e.g., [10, 25, 50])
-        threshold: Fraction of splits a protein must appear in
-        logger: Optional logger instance
-
-    Returns:
-        Dictionary mapping panel_size -> panel manifest dict
-    """
-    if panel_sizes is None:
-        panel_sizes = [10, 25, 50]
-
-    results = {}
-
-    for panel_size in panel_sizes:
-        panel_proteins_per_split = []
-
-        for split_dir in split_dirs:
-            panel_dir = split_dir / "reports" / "panels"
-            if not panel_dir.exists():
-                continue
-
-            manifest_files = list(panel_dir.glob(f"*__N{panel_size}__panel_manifest.json"))
-            if not manifest_files:
-                continue
-
-            try:
-                with open(manifest_files[0]) as f:
-                    manifest = json.load(f)
-                    proteins = manifest.get("proteins", [])
-                    if proteins:
-                        panel_proteins_per_split.append(set(proteins))
-            except Exception as e:
-                if logger:
-                    logger.warning(f"Failed to read panel manifest: {e}")
-
-        if not panel_proteins_per_split:
-            continue
-
-        protein_counts: dict[str, int] = {}
-        for protein_set in panel_proteins_per_split:
-            for protein in protein_set:
-                protein_counts[protein] = protein_counts.get(protein, 0) + 1
-
-        n_splits = len(panel_proteins_per_split)
-        min_count = int(np.ceil(threshold * n_splits))
-
-        consensus_proteins = [
-            protein
-            for protein, count in sorted(protein_counts.items(), key=lambda x: (-x[1], x[0]))
-            if count >= min_count
-        ]
-
-        results[panel_size] = {
-            "panel_size": panel_size,
-            "n_splits_with_panel": n_splits,
-            "consensus_threshold": threshold,
-            "min_splits_required": min_count,
-            "n_consensus_proteins": len(consensus_proteins),
-            "consensus_proteins": consensus_proteins,
-            "protein_counts": {p: c for p, c in protein_counts.items() if c >= min_count},
-        }
-
-    return results

@@ -6,7 +6,6 @@ Generates aggregated outputs, plots, and writes all results to disk.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -39,7 +38,6 @@ from ced_ml.cli.aggregation.plot_generator import (
 from ced_ml.cli.aggregation.reporting import (
     aggregate_feature_reports,
     aggregate_feature_stability,
-    build_consensus_panels,
 )
 from ced_ml.data import io_helpers
 from ced_ml.utils.metadata import build_aggregated_metadata
@@ -295,29 +293,6 @@ def save_feature_analysis(
             )
 
 
-def save_consensus_panels(
-    consensus_panels: dict[int, dict[str, Any]],
-    panels_dir: Path,
-    logger: logging.Logger,
-) -> None:
-    """
-    Save consensus panels to disk.
-
-    Args:
-        consensus_panels: Consensus panel manifests
-        panels_dir: Panels subdirectory
-        logger: Logger instance
-    """
-    for panel_size, manifest in consensus_panels.items():
-        manifest_path = panels_dir / f"consensus_panel_N{panel_size}.json"
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        logger.info(
-            f"Consensus panel N={panel_size}: {manifest['n_consensus_proteins']} proteins "
-            f"(from {manifest['n_splits_with_panel']} splits)"
-        )
-
-
 def generate_ensemble_plots(
     ensemble_dirs: list[Path],
     ensemble_metadata_raw: dict[str, Any],
@@ -547,12 +522,6 @@ def run_report_phase(
         shap_meta = aggregate_shap_metadata(split_dirs, model_name, agg_dir, logger)
         shap_payloads[model_name] = (pooled_shap, shap_meta)
 
-    log_section(logger, "Building Consensus Panels")
-    consensus_panels = build_consensus_panels(
-        split_dirs, threshold=stability_threshold, logger=logger
-    )
-    save_consensus_panels(consensus_panels, panels_dir, logger)
-
     log_section(logger, "Saving Aggregation Metadata")
     sample_categories_metadata = collect_sample_categories_metadata(
         pooled_test_df=collected.pooled_test_df,
@@ -641,7 +610,6 @@ def run_report_phase(
         stable_features_df=stable_features_df,
         agg_feature_report=agg_feature_report,
         all_feature_reports=collected.all_feature_reports,
-        consensus_panels=consensus_panels,
         ensemble_metadata=ensemble_metadata,
         agg_dir=agg_dir,
     )

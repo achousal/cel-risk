@@ -654,6 +654,106 @@ def test_generate_aggregated_shap_plots_from_pooled(logger):
             )
 
 
+def test_generate_aggregated_shap_plots_low_overlap_uses_oof_bar(logger):
+    """Low overlap pooled SHAP skips unstable distribution plots and uses OOF bar fallback."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        # Two split seeds with largely disjoint feature coverage
+        pooled_df = pd.DataFrame(
+            {
+                "feat_a": [1.0, 2.0, np.nan, np.nan],
+                "feat_b": [0.1, 0.2, np.nan, np.nan],
+                "feat_c": [np.nan, np.nan, 1.5, 1.8],
+                "feat_d": [np.nan, np.nan, 0.4, 0.3],
+                "split_seed": [0, 0, 1, 1],
+            }
+        )
+
+        oof_df = pd.DataFrame(
+            {
+                "feature": ["feat_a", "feat_b", "feat_c"],
+                "mean_abs_shap": [0.5, 0.3, 0.2],
+                "std_abs_shap": [0.05, 0.03, 0.02],
+                "stability": [0.5, 0.5, 0.5],
+                "rank": [1, 2, 3],
+            }
+        )
+
+        with (
+            patch("ced_ml.plotting.shap_plots.plot_bar_importance") as mock_bar,
+            patch("ced_ml.plotting.shap_plots.plot_beeswarm") as mock_bee,
+            patch("ced_ml.plotting.shap_plots.plot_dependence") as mock_dep,
+            patch("ced_ml.plotting.shap_plots.plot_heatmap") as mock_hm,
+            patch(
+                "ced_ml.cli.aggregation.plot_generator._plot_bar_from_importance_csv"
+            ) as mock_fallback,
+        ):
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=oof_df,
+                shap_metadata={"shap_output_scale": "log_odds"},
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                plot_shap_waterfall=False,
+                logger=logger,
+            )
+
+            # Stable OOF bar fallback used; unstable pooled summary/distribution skipped.
+            assert mock_fallback.call_count == 1
+            assert mock_bar.call_count == 0
+            assert mock_bee.call_count == 0
+            assert mock_dep.call_count == 0
+            assert mock_hm.call_count == 0
+
+
+def test_generate_aggregated_shap_plots_filters_sparse_nan_features(logger):
+    """Sparse features are filtered before pooled SHAP plotting."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        pooled_df = pd.DataFrame(
+            {
+                "feat_dense": [0.1, -0.2, 0.3, -0.4, 0.2],
+                "feat_sparse": [np.nan, np.nan, np.nan, np.nan, 0.9],
+                "split_seed": [0, 0, 0, 0, 0],
+            }
+        )
+
+        with (
+            patch("ced_ml.plotting.shap_plots.plot_bar_importance") as mock_bar,
+            patch("ced_ml.plotting.shap_plots.plot_beeswarm") as mock_bee,
+            patch("ced_ml.plotting.shap_plots.plot_dependence") as mock_dep,
+            patch("ced_ml.plotting.shap_plots.plot_heatmap") as mock_hm,
+        ):
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=None,
+                shap_metadata={"shap_output_scale": "log_odds"},
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                plot_shap_waterfall=False,
+                logger=logger,
+            )
+
+            # feat_sparse has 20% coverage, below distribution threshold (80%),
+            # so only feat_dense should appear in beeswarm/scatter/heatmap.
+            assert mock_bar.call_count == 1
+            assert mock_bee.call_count == 1
+            assert mock_dep.call_count == 1
+            assert mock_hm.call_count == 1
+
+            bar_values, bar_features = mock_bar.call_args[0][:2]
+            assert bar_features == ["feat_dense", "feat_sparse"]
+            assert not np.isnan(bar_values).any()
+
+            bee_values, _, bee_features = mock_bee.call_args[0][:3]
+            assert bee_features == ["feat_dense"]
+            assert not np.isnan(bee_values).any()
+
+
 def test_generate_aggregated_shap_plots_fallback(logger):
     """Test fallback to OOF importance bar when no pooled data."""
     with tempfile.TemporaryDirectory() as tmpdir:

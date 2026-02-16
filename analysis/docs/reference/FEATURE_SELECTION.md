@@ -63,7 +63,7 @@ Four complementary importance measures per model (ranked independently):
 
 **Method:**
 - **Trees:** OOF grouped permutation importance on held-out folds
-- **Linear:** Standardized |coef| on standardized inputs + stability across repeats/seeds
+- **Linear:** Standardized |coef| on standardized inputs
 
 **Output:** `feature_importance/oof_grouped_importance.csv`
 
@@ -187,8 +187,7 @@ Step 1 -- Per-model ranking:
         3. If OOF unavailable, fall back to stability frequency ranking
 
 Step 2 -- Cross-model RRA:
-    Aggregate per-model OOF importance ranks via geometric mean of
-    normalized reciprocal ranks.
+    Aggregate per-model OOF importance ranks via geometric mean of normalized reciprocal ranks.
     - Missing proteins penalized (assigned bottom rank)
     - Correlation-cluster top candidates, select representatives
     - Extract top-N panel

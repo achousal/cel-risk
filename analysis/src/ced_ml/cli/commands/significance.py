@@ -7,10 +7,11 @@ Commands:
 
 import click
 
-from ced_ml.cli.options import run_id_required_option
+from ced_ml.cli.options import config_option, run_id_required_option
 
 
 @click.command("permutation-test")
+@config_option
 @run_id_required_option(help_text="Run ID to test (e.g., 20260127_115115)")
 @click.option(
     "--model",
@@ -21,32 +22,32 @@ from ced_ml.cli.options import run_id_required_option
 @click.option(
     "--split-seed-start",
     type=int,
-    default=0,
-    help="First split seed to test (default: 0)",
+    default=None,
+    help="First split seed to test (default from permutation config)",
 )
 @click.option(
     "--n-split-seeds",
     type=int,
-    default=1,
-    help="Number of consecutive seeds to test, starting from --split-seed-start (default: 1)",
+    default=None,
+    help="Number of consecutive seeds to test, starting from --split-seed-start (default from permutation config)",
 )
 @click.option(
     "--n-perms",
     type=int,
-    default=200,
-    help="Number of permutations (default: 200)",
+    default=None,
+    help="Number of permutations (default from permutation config)",
 )
 @click.option(
     "--metric",
     type=str,
-    default="auroc",
-    help="Metric to use (default: auroc, only auroc supported per ADR-007)",
+    default=None,
+    help="Metric to use (default from permutation config, only auroc supported per ADR-007)",
 )
 @click.option(
     "--n-jobs",
     type=int,
-    default=1,
-    help="Parallel jobs for in-process parallelization (default: 1)",
+    default=None,
+    help="Parallel jobs for in-process parallelization (default from permutation config)",
 )
 @click.option(
     "--outdir",
@@ -57,8 +58,8 @@ from ced_ml.cli.options import run_id_required_option
 @click.option(
     "--random-state",
     type=int,
-    default=42,
-    help="Random seed for reproducibility (default: 42)",
+    default=None,
+    help="Random seed for reproducibility (default from permutation config)",
 )
 @click.option(
     "--aggregate-only",
@@ -67,7 +68,7 @@ from ced_ml.cli.options import run_id_required_option
     help="Only aggregate existing per-seed results (do not run permutations).",
 )
 @click.pass_context
-def permutation_test(ctx, **kwargs):
+def permutation_test(ctx, config, **kwargs):
     """Test model significance via label permutation testing.
 
     Tests the null hypothesis that model performance is no better than chance
@@ -100,9 +101,27 @@ def permutation_test(ctx, **kwargs):
     """
     from ced_ml.cli.permutation_test import run_permutation_test_cli
     from ced_ml.cli.utils.seed_parsing import parse_seed_range
+    from ced_ml.config.loader import load_permutation_config
 
-    split_seed_start = kwargs["split_seed_start"]
-    n_split_seeds = kwargs["n_split_seeds"]
+    perm_cfg = load_permutation_config(config_file=config)
+    split_seed_start = (
+        kwargs["split_seed_start"]
+        if kwargs.get("split_seed_start") is not None
+        else perm_cfg.split_seed_start
+    )
+    n_split_seeds = (
+        kwargs["n_split_seeds"]
+        if kwargs.get("n_split_seeds") is not None
+        else perm_cfg.n_split_seeds
+    )
+    n_perms = kwargs["n_perms"] if kwargs.get("n_perms") is not None else perm_cfg.n_perms
+    metric = kwargs["metric"] if kwargs.get("metric") is not None else perm_cfg.metric
+    n_jobs = kwargs["n_jobs"] if kwargs.get("n_jobs") is not None else perm_cfg.n_jobs
+    random_state = (
+        kwargs["random_state"] if kwargs.get("random_state") is not None else perm_cfg.random_state
+    )
+    outdir = kwargs.get("outdir") if kwargs.get("outdir") is not None else perm_cfg.outdir
+
     try:
         split_seeds = parse_seed_range(split_seed_start, n_split_seeds)
     except ValueError as e:
@@ -112,11 +131,11 @@ def permutation_test(ctx, **kwargs):
         run_id=kwargs["run_id"],
         model=kwargs.get("model"),
         split_seeds=split_seeds,
-        n_perms=kwargs["n_perms"],
-        metric=kwargs["metric"],
-        n_jobs=kwargs["n_jobs"],
-        outdir=kwargs.get("outdir"),
-        random_state=kwargs["random_state"],
+        n_perms=n_perms,
+        metric=metric,
+        n_jobs=n_jobs,
+        outdir=outdir,
+        random_state=random_state,
         log_level=ctx.obj.get("log_level"),
         aggregate_only=kwargs.get("aggregate_only", False),
     )

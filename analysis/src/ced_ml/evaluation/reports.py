@@ -476,20 +476,6 @@ class ResultsWriter:
         """
         return self._feature_writer.save_stable_panel_report(panel_df, panel_type)
 
-    def save_panel_manifest(self, manifest: dict[str, Any], model: str, panel_size: int) -> str:
-        """
-        Save panel manifest to panels/{model}__N{size}__panel_manifest.json.
-
-        Args:
-            manifest: Panel metadata dictionary
-            model: Model name
-            panel_size: Panel size (N)
-
-        Returns:
-            Path to saved file
-        """
-        return self._feature_writer.save_panel_manifest(manifest, model, panel_size)
-
     def save_final_test_panel(
         self,
         panel_proteins: list[str],

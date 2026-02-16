@@ -119,6 +119,13 @@ class FeatureConfig(BaseModel):
     compute_oof_importance: bool = Field(
         default=True, description="Enable OOF importance computation during training"
     )
+    oof_importance_grouped: bool = Field(
+        default=True,
+        description=(
+            "Group correlated features before permutation importance. "
+            "Prevents dilution from correlated features compensating for each other."
+        ),
+    )
     pfi_n_repeats: int = Field(
         default=30, ge=1, description="Number of permutation repeats for tree model PFI"
     )

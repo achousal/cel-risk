@@ -375,6 +375,11 @@ def load_training_config(
             for section in ["artifacts", "plots", "aggregation", "panels"]:
                 if section in output_config:
                     config_dict["output"].update(output_config[section])
+            # Also merge top-level output keys for backward compatibility.
+            # OutputConfig (extra='forbid') will catch any invalid keys at validation time.
+            for key, value in output_config.items():
+                if key not in {"artifacts", "plots", "aggregation", "panels"}:
+                    config_dict["output"][key] = value
 
     # Apply CLI overrides
     if overrides:

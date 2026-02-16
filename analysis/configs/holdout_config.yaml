@@ -15,7 +15,6 @@ toprisk_fracs:
   - 0.01
   - 0.05
   - 0.10
-subgroup_min_n: 40
 
 # DCA settings
 dca_threshold_min: 0.0005

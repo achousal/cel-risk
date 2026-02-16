@@ -21,7 +21,7 @@ from ced_ml.cli.permutation_test import run_permutation_test_cli
 from ced_ml.cli.save_splits import run_save_splits
 from ced_ml.cli.train import run_train
 from ced_ml.cli.train_ensemble import run_train_ensemble
-from ced_ml.config.loader import load_permutation_config, load_training_config
+from ced_ml.config.loader import load_permutation_config, load_training_config, load_yaml
 from ced_ml.data.schema import ModelName
 from ced_ml.utils.logging import setup_command_logger, setup_logger
 from ced_ml.utils.paths import get_analysis_dir, get_project_root
@@ -772,6 +772,24 @@ def run_pipeline(
         logger.debug(f"Could not load permutation config, using defaults: {e}")
         # Keep the function parameter values as fallback
 
+    # Load aggregate config defaults (used by aggregate-splits stages).
+    aggregate_cfg: dict[str, Any] = {}
+    try:
+        aggregate_config_path = get_analysis_dir() / "configs" / "aggregate_config.yaml"
+        if aggregate_config_path.exists():
+            aggregate_cfg = load_yaml(aggregate_config_path)
+            logger.debug(f"Loaded aggregate config from: {aggregate_config_path}")
+    except Exception as e:
+        logger.debug(f"Could not load aggregate config, using defaults: {e}")
+
+    agg_stability_threshold = aggregate_cfg.get("stability_threshold", 0.75)
+    agg_target_specificity = aggregate_cfg.get("target_specificity", 0.95)
+    agg_plot_formats = aggregate_cfg.get("plot_formats", ["png"])
+    if isinstance(agg_plot_formats, str):
+        agg_plot_formats = [agg_plot_formats]
+    agg_n_boot = aggregate_cfg.get("n_boot", n_boot)
+    agg_control_spec_targets = aggregate_cfg.get("control_spec_targets", [0.90, 0.95, 0.99])
+
     # Auto-discover input file if not provided
     if infile is None:
         logger.info("Auto-discovering input data file...")
@@ -900,21 +918,30 @@ def run_pipeline(
         out_cfg = training_config.output
         run_aggregate_splits(
             results_dir=str(model_dir),
-            stability_threshold=0.75,
-            target_specificity=0.95,
-            plot_formats=["png"],
-            n_boot=n_boot,
-            save_plots=out_cfg.save_plots,
-            plot_roc=out_cfg.plot_roc,
-            plot_pr=out_cfg.plot_pr,
-            plot_calibration=out_cfg.plot_calibration,
-            plot_risk_distribution=out_cfg.plot_risk_distribution,
-            plot_dca=out_cfg.plot_dca,
-            plot_oof_combined=out_cfg.plot_oof_combined,
-            plot_learning_curve=out_cfg.plot_learning_curve,
-            plot_shap_summary=out_cfg.plot_shap_summary,
-            plot_shap_dependence=out_cfg.plot_shap_dependence,
-            plot_shap_heatmap=getattr(out_cfg, "plot_shap_heatmap", True),
+            stability_threshold=agg_stability_threshold,
+            target_specificity=agg_target_specificity,
+            plot_formats=agg_plot_formats,
+            n_boot=agg_n_boot,
+            save_plots=aggregate_cfg.get("save_plots", out_cfg.save_plots),
+            plot_roc=aggregate_cfg.get("plot_roc", out_cfg.plot_roc),
+            plot_pr=aggregate_cfg.get("plot_pr", out_cfg.plot_pr),
+            plot_calibration=aggregate_cfg.get("plot_calibration", out_cfg.plot_calibration),
+            plot_risk_distribution=aggregate_cfg.get(
+                "plot_risk_distribution", out_cfg.plot_risk_distribution
+            ),
+            plot_dca=aggregate_cfg.get("plot_dca", out_cfg.plot_dca),
+            plot_oof_combined=aggregate_cfg.get("plot_oof_combined", out_cfg.plot_oof_combined),
+            plot_learning_curve=aggregate_cfg.get(
+                "plot_learning_curve", out_cfg.plot_learning_curve
+            ),
+            plot_shap_summary=aggregate_cfg.get("plot_shap_summary", out_cfg.plot_shap_summary),
+            plot_shap_dependence=aggregate_cfg.get(
+                "plot_shap_dependence", out_cfg.plot_shap_dependence
+            ),
+            plot_shap_heatmap=aggregate_cfg.get(
+                "plot_shap_heatmap", getattr(out_cfg, "plot_shap_heatmap", True)
+            ),
+            control_spec_targets=agg_control_spec_targets,
             log_level=log_level,
         )
     step_timings.append(("Aggregation", time.monotonic() - t0))
@@ -959,13 +986,29 @@ def run_pipeline(
 
         run_aggregate_splits(
             results_dir=str(ensemble_dir),
-            stability_threshold=0.75,
-            target_specificity=0.95,
-            plot_formats=["png"],
-            n_boot=n_boot,
-            plot_shap_summary=getattr(training_config.output, "plot_shap_summary", True),
-            plot_shap_dependence=getattr(training_config.output, "plot_shap_dependence", True),
-            plot_shap_heatmap=getattr(training_config.output, "plot_shap_heatmap", True),
+            stability_threshold=agg_stability_threshold,
+            target_specificity=agg_target_specificity,
+            plot_formats=agg_plot_formats,
+            n_boot=agg_n_boot,
+            save_plots=aggregate_cfg.get("save_plots", True),
+            plot_roc=aggregate_cfg.get("plot_roc", True),
+            plot_pr=aggregate_cfg.get("plot_pr", True),
+            plot_calibration=aggregate_cfg.get("plot_calibration", True),
+            plot_risk_distribution=aggregate_cfg.get("plot_risk_distribution", True),
+            plot_dca=aggregate_cfg.get("plot_dca", True),
+            plot_oof_combined=aggregate_cfg.get("plot_oof_combined", True),
+            plot_learning_curve=aggregate_cfg.get("plot_learning_curve", True),
+            plot_shap_summary=aggregate_cfg.get(
+                "plot_shap_summary", getattr(training_config.output, "plot_shap_summary", True)
+            ),
+            plot_shap_dependence=aggregate_cfg.get(
+                "plot_shap_dependence",
+                getattr(training_config.output, "plot_shap_dependence", True),
+            ),
+            plot_shap_heatmap=aggregate_cfg.get(
+                "plot_shap_heatmap", getattr(training_config.output, "plot_shap_heatmap", True)
+            ),
+            control_spec_targets=agg_control_spec_targets,
             log_level=log_level,
         )
         step_timings.append(("Ensemble", time.monotonic() - t0))
@@ -1036,8 +1079,6 @@ def run_pipeline(
 
         t0 = time.monotonic()
         # Load consensus config for parameters (corr_threshold, stability_threshold, etc.)
-        from ced_ml.config.loader import load_yaml
-
         consensus_config_path = get_analysis_dir() / "configs" / "consensus_panel.yaml"
         consensus_cfg = {}
         if consensus_config_path.exists():

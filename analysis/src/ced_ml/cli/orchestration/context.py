@@ -141,6 +141,7 @@ class TrainingContext:
     oof_calibrator: IsotonicCalibrator | SigmoidCalibrator | None = None
     nested_rfecv_result: NestedRFECVResult | None = None
     oof_importance_df: pd.DataFrame | None = None
+    oof_importance_clustered_df: pd.DataFrame | None = None
     final_selected_proteins: list[str] = field(default_factory=list)
     cv_elapsed_sec: float = 0.0
     grid_rng: np.random.Generator | None = None

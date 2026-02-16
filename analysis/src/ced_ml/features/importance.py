@@ -834,3 +834,97 @@ def aggregate_fold_importances(fold_importances: list[pd.DataFrame]) -> pd.DataF
     )
 
     return result_df
+
+
+def aggregate_fold_importances_clustered(
+    fold_importances: list[pd.DataFrame],
+) -> pd.DataFrame:
+    """Aggregate cluster-level importances across CV folds without flattening.
+
+    Unlike ``aggregate_fold_importances`` (which expands clusters to individual
+    features), this function preserves the cluster grouping.  Clusters are
+    identified by their ``cluster_features`` JSON string (sorted member list),
+    so identical clusters across folds are matched correctly.  Clusters that
+    appear in only a subset of folds are still included with their fold count.
+
+    Args:
+        fold_importances: List of importance DataFrames (one per fold).
+            Expected to contain ``cluster_features`` and ``mean_importance``
+            columns (the grouped output of ``extract_importance_from_model``).
+
+    Returns:
+        DataFrame with columns:
+            - cluster_features: str, JSON list of feature names in cluster
+            - cluster_size: int, number of features in cluster
+            - mean_importance: float, mean cluster importance across folds
+            - std_importance: float, std deviation across folds
+            - n_folds: int, number of folds where this cluster appeared
+            - importance_type: str, importance type
+        Sorted by mean_importance descending.
+        Empty DataFrame if no cluster-level data is found.
+    """
+    out_cols = [
+        "cluster_features",
+        "cluster_size",
+        "mean_importance",
+        "std_importance",
+        "n_folds",
+        "importance_type",
+    ]
+
+    if not fold_importances:
+        return pd.DataFrame(columns=out_cols)
+
+    # Keep only DataFrames that have the cluster-level schema
+    cluster_dfs = [
+        df for df in fold_importances if not df.empty and "cluster_features" in df.columns
+    ]
+    if not cluster_dfs:
+        return pd.DataFrame(columns=out_cols)
+
+    imp_col = "mean_importance"
+
+    # Collect per-cluster importance values keyed by cluster_features JSON
+    cluster_values: dict[str, list[float]] = {}
+    cluster_sizes: dict[str, int] = {}
+    cluster_imp_type: dict[str, str] = {}
+
+    for df in cluster_dfs:
+        col = imp_col if imp_col in df.columns else "importance"
+        if col not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            key = row["cluster_features"]
+            cluster_values.setdefault(key, []).append(float(row[col]))
+            if key not in cluster_sizes:
+                cluster_sizes[key] = int(row.get("cluster_size", len(json.loads(key))))
+                cluster_imp_type[key] = str(row.get("importance_type", "grouped_permutation"))
+
+    if not cluster_values:
+        return pd.DataFrame(columns=out_cols)
+
+    rows = []
+    for key, values in cluster_values.items():
+        arr = np.array(values)
+        rows.append(
+            {
+                "cluster_features": key,
+                "cluster_size": cluster_sizes[key],
+                "mean_importance": float(np.mean(arr)),
+                "std_importance": float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0,
+                "n_folds": len(arr),
+                "importance_type": cluster_imp_type[key],
+            }
+        )
+
+    result_df = pd.DataFrame(rows).sort_values(
+        "mean_importance", ascending=False, ignore_index=True
+    )
+    # Add a rank column for convenience
+    result_df["rank"] = range(1, len(result_df) + 1)
+
+    logger.info(
+        f"Aggregated {len(result_df)} clusters across " f"{len(cluster_dfs)} fold importance frames"
+    )
+
+    return result_df

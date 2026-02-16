@@ -12,11 +12,10 @@ step_strategy: fine          # Feature elimination: geometric, fine, linear (def
 
 # Per-k Hyperparameter Re-tuning
 retune_trials: 100            # Optuna trials per evaluation point
-retune_cv_folds: 5           # CV folds for per-k Optuna search (was 3; 5 for stable estimates with ~220 positives)
 
 # Correlation-Aware Pruning
 corr_aware: true             # Enable correlation-aware redundancy pruning (default: true)
-corr_threshold: 0.75         # Correlation threshold for pruning redundant features (default: 0.80)
+corr_threshold: 0.95         # Correlation threshold for pruning redundant features (default: 0.80)
 corr_method: spearman        # Correlation method: spearman or pearson (default: spearman)
 
 # HPC Parallelization (only used with --hpc flag)

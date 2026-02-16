@@ -2,10 +2,13 @@
 Tests for configuration system.
 """
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from ced_ml.config.defaults import DEFAULT_SPLITS_CONFIG
-from ced_ml.config.loader import apply_overrides
+from ced_ml.config.loader import apply_overrides, load_training_config
 from ced_ml.config.schema import CVConfig, SplitsConfig
 
 
@@ -292,6 +295,48 @@ def test_unwired_feature_selection_config_multiple_non_defaults():
     assert "k_grid" in issues[0]
     assert "stability_thresh=0.9" in issues[0]
     assert "stable_corr_thresh=0.75" in issues[0]
+
+
+def test_load_training_config_merges_top_level_output_keys(tmp_path):
+    """Top-level output_config.yaml keys should still merge for backward compatibility."""
+    training_path = tmp_path / "training_config.yaml"
+    output_path = tmp_path / "output_config.yaml"
+
+    training_path.write_text("{}")
+    output_path.write_text("plot_shap_summary: false\n")
+
+    cfg = load_training_config(config_file=training_path)
+    assert cfg.output.plot_shap_summary is False
+
+
+def test_project_configs_no_known_dead_keys():
+    """Shipped configs should not contain known no-op keys."""
+    analysis_root = Path(__file__).resolve().parents[2]
+    configs_dir = analysis_root / "configs"
+
+    with open(configs_dir / "training_config.yaml") as f:
+        training_cfg = yaml.safe_load(f) or {}
+    with open(configs_dir / "training_config_local.yaml") as f:
+        training_local_cfg = yaml.safe_load(f) or {}
+    with open(configs_dir / "splits_config.yaml") as f:
+        splits_cfg = yaml.safe_load(f) or {}
+    with open(configs_dir / "optimize_panel.yaml") as f:
+        optimize_cfg = yaml.safe_load(f) or {}
+    with open(configs_dir / "holdout_config.yaml") as f:
+        holdout_cfg = yaml.safe_load(f) or {}
+    with open(configs_dir / "permutation_test.yaml") as f:
+        permutation_cfg = yaml.safe_load(f) or {}
+
+    assert "n_jobs" not in training_cfg.get("cv", {})
+    assert "verbose" not in training_cfg.get("cv", {})
+    assert "save_study" not in training_cfg.get("optuna", {})
+    assert "save_trials_csv" not in training_cfg.get("optuna", {})
+    assert "n_jobs" not in training_local_cfg.get("cv", {})
+    assert "save_indices_only" not in splits_cfg
+    assert "retune_cv_folds" not in optimize_cfg
+    assert "subgroup_min_n" not in holdout_cfg
+    assert "save_individual" not in permutation_cfg
+    assert "aggregation" not in permutation_cfg
 
 
 if __name__ == "__main__":

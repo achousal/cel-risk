@@ -1,23 +1,30 @@
 # Aggregate Splits Configuration
-# Aggregate results across multiple split seeds into summary statistics
+# Used by: ced aggregate-splits and ced run-pipeline aggregation stages
 
-# Input/output
-results_dir: ../results
-outdir: ../results/aggregated
+# Feature stability and threshold reporting
+stability_threshold: 0.75
+target_specificity: 0.95
+n_boot: 500
 
-# Discovery
-split_pattern: split_seed*  # Pattern to match split directories
+# Specificity targets for additional threshold diagnostics
+control_spec_targets:
+  - 0.90
+  - 0.95
+  - 0.99
 
-# Pooling settings
-predictions_method: median  # Options: median, mean, vote
-save_individual: false
+# Plot output formats (can include multiple, e.g. [png, pdf])
+plot_formats:
+  - png
 
-# Summary statistics
-summary_stats:
-  - mean
-  - std
-  - median
-  - ci95
-group_by:
-  - scenario
-  - model
+# Plot generation controls
+save_plots: true
+plot_roc: true
+plot_pr: true
+plot_calibration: true
+plot_risk_distribution: true
+plot_dca: true
+plot_oof_combined: true
+plot_learning_curve: true
+plot_shap_summary: true
+plot_shap_dependence: true
+plot_shap_heatmap: true

@@ -15,6 +15,10 @@ import pandas as pd
 from ced_ml.data.schema import METRIC_AUROC, METRIC_BRIER, METRIC_PRAUC
 from ced_ml.metrics.thresholds import compute_threshold_bundle
 
+MIN_SHAP_COVERAGE_FOR_BAR = 0.20
+MIN_SHAP_COVERAGE_FOR_DISTRIBUTION = 0.80
+MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION = 0.30
+
 
 def generate_aggregated_plots(
     pooled_test_df: pd.DataFrame,
@@ -342,6 +346,34 @@ def _load_pooled_parquet(out_dir: Path, filename: str) -> pd.DataFrame | None:
     return None
 
 
+def _compute_feature_overlap_ratio(
+    pooled_shap_df: pd.DataFrame,
+    feature_cols: list[str],
+) -> float:
+    """Compute per-seed feature overlap ratio (intersection/union)."""
+    if "split_seed" not in pooled_shap_df.columns:
+        return 1.0
+
+    seed_groups = list(pooled_shap_df.groupby("split_seed"))
+    if len(seed_groups) <= 1:
+        return 1.0
+
+    per_seed_sets: list[set[str]] = []
+    for _seed, grp in seed_groups:
+        present = {c for c in feature_cols if grp[c].notna().any()}
+        if present:
+            per_seed_sets.append(present)
+
+    if not per_seed_sets:
+        return 0.0
+
+    intersection = set.intersection(*per_seed_sets)
+    union = set.union(*per_seed_sets)
+    if not union:
+        return 1.0
+    return len(intersection) / len(union)
+
+
 def generate_aggregated_shap_plots(
     pooled_shap_df: pd.DataFrame | None,
     oof_shap_importance_df: pd.DataFrame | None,
@@ -413,42 +445,109 @@ def generate_aggregated_shap_plots(
     if has_pooled:
         # Extract feature columns (everything except split_seed)
         feature_cols = [c for c in pooled_shap_df.columns if c != "split_seed"]
-        shap_values = pooled_shap_df[feature_cols].values
-        feature_names = feature_cols
+        if not feature_cols:
+            if logger:
+                logger.warning(
+                    f"No feature columns in pooled SHAP for {model_name}; skipping pooled SHAP plots"
+                )
+            return
+
+        shap_df = pooled_shap_df[feature_cols]
+        feature_coverage = shap_df.notna().mean(axis=0)
+        overlap_ratio = _compute_feature_overlap_ratio(pooled_shap_df, feature_cols)
+
+        # Keep only moderately-covered features for pooled bar plotting.
+        bar_features = [
+            feat
+            for feat in feature_cols
+            if float(feature_coverage.get(feat, 0.0)) >= MIN_SHAP_COVERAGE_FOR_BAR
+        ]
+        if not bar_features:
+            # Fallback: keep any feature that appears at least once.
+            bar_features = [
+                feat for feat in feature_cols if float(feature_coverage.get(feat, 0.0)) > 0.0
+            ]
+
+        # Restrict distribution-style plots to highly-covered features.
+        dist_features = [
+            feat
+            for feat in bar_features
+            if float(feature_coverage.get(feat, 0.0)) >= MIN_SHAP_COVERAGE_FOR_DISTRIBUTION
+        ]
+
+        # Low overlap means pooled beeswarm/scatter/heatmap are unstable mixes of split-specific spaces.
+        skip_distribution = overlap_ratio < MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION
+        if logger:
+            logger.info(
+                f"[SHAP pooled] {model_name}: features_total={len(feature_cols)}, "
+                f"bar_features={len(bar_features)}, dist_features={len(dist_features)}, "
+                f"overlap_ratio={overlap_ratio:.3f}"
+            )
+            if skip_distribution:
+                logger.warning(
+                    f"[SHAP pooled] {model_name}: feature overlap ratio {overlap_ratio:.3f} "
+                    f"below threshold {MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION:.2f}; "
+                    "skipping pooled beeswarm/scatter/heatmap"
+                )
+
+        bar_values = shap_df[bar_features].fillna(0.0).values
+        bar_feature_names = bar_features
 
         # Load pooled X_transformed for color axis (beeswarm/scatter)
         features_df = _load_pooled_parquet(
             out_dir, f"test_shap_features_pooled__{model_name}.parquet.gz"
         )
+        dist_color_df: pd.DataFrame | None = None
         if features_df is not None:
+            # Align color matrix to SHAP feature order; missing columns remain NaN.
             feat_feature_cols = [c for c in features_df.columns if c != "split_seed"]
-            color_values = features_df[feat_feature_cols].values
+            feat_matrix = features_df[feat_feature_cols]
+            dist_color_df = feat_matrix.reindex(columns=feature_cols)
         else:
-            color_values = shap_values
             if logger:
                 logger.info(
                     f"X_transformed not available for {model_name}; "
                     "using SHAP values as beeswarm/scatter color axis (legacy fallback)"
                 )
 
+        # Prefer stable OOF bar when pooled feature overlap is very low.
+        use_oof_bar = skip_distribution and has_oof_importance
+
         summary_plot_failed = False
         if plot_shap_summary:
             try:
                 for fmt in plot_formats:
-                    plot_bar_importance(
-                        shap_values,
-                        feature_names,
-                        outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
-                        shap_output_scale=shap_output_scale,
-                    )
+                    if use_oof_bar:
+                        top_n = min(20, len(oof_shap_importance_df))
+                        top_df = oof_shap_importance_df.head(top_n)
+                        _plot_bar_from_importance_csv(
+                            top_df,
+                            outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
+                            shap_output_scale=shap_output_scale,
+                            model_name=model_name,
+                        )
+                    elif bar_feature_names:
+                        plot_bar_importance(
+                            bar_values,
+                            bar_feature_names,
+                            outpath=shap_plots_dir / f"{model_name}__shap_bar.{fmt}",
+                            shap_output_scale=shap_output_scale,
+                        )
 
-                    plot_beeswarm(
-                        shap_values,
-                        color_values,
-                        feature_names,
-                        outpath=shap_plots_dir / f"{model_name}__shap_beeswarm.{fmt}",
-                        shap_output_scale=shap_output_scale,
-                    )
+                    if not skip_distribution and dist_features:
+                        dist_shap_values = shap_df[dist_features].fillna(0.0).values
+                        if dist_color_df is not None:
+                            dist_color_values = dist_color_df[dist_features].fillna(0.0).values
+                        else:
+                            dist_color_values = dist_shap_values
+
+                        plot_beeswarm(
+                            dist_shap_values,
+                            dist_color_values,
+                            dist_features,
+                            outpath=shap_plots_dir / f"{model_name}__shap_beeswarm.{fmt}",
+                            shap_output_scale=shap_output_scale,
+                        )
             except ImportError as e:
                 summary_plot_failed = True
                 if logger:
@@ -456,21 +555,34 @@ def generate_aggregated_shap_plots(
                         f"SHAP summary plotting unavailable for {model_name}: {e}. "
                         "Continuing without pooled SHAP summary plots."
                     )
+            except ValueError as e:
+                summary_plot_failed = True
+                if logger:
+                    logger.warning(
+                        f"SHAP summary plotting failed for {model_name}: {e}. "
+                        "Continuing with fallback behavior."
+                    )
 
-        if plot_shap_dependence:
-            mean_abs = np.mean(np.abs(shap_values), axis=0)
+        if plot_shap_dependence and not skip_distribution and dist_features:
+            dist_shap_values = shap_df[dist_features].fillna(0.0).values
+            if dist_color_df is not None:
+                dist_color_values = dist_color_df[dist_features].fillna(0.0).values
+            else:
+                dist_color_values = dist_shap_values
+
+            mean_abs = np.nanmean(np.abs(dist_shap_values), axis=0)
             top_indices = np.argsort(mean_abs)[::-1][:5]
 
             try:
                 for fmt in plot_formats:
                     for feat_idx in top_indices:
-                        feat_name = feature_names[feat_idx]
+                        feat_name = dist_features[feat_idx]
                         safe_name = feat_name.replace("/", "_").replace(" ", "_")
                         plot_dependence(
-                            shap_values,
+                            dist_shap_values,
                             feat_idx,
-                            color_values,
-                            feature_names,
+                            dist_color_values,
+                            dist_features,
                             outpath=shap_plots_dir / f"{model_name}__scatter_{safe_name}.{fmt}",
                             shap_output_scale=shap_output_scale,
                         )
@@ -480,15 +592,26 @@ def generate_aggregated_shap_plots(
                         f"SHAP scatter plotting unavailable for {model_name}: {e}. "
                         "Continuing without scatter plots."
                     )
+            except ValueError as e:
+                if logger:
+                    logger.warning(
+                        f"SHAP scatter plotting failed for {model_name}: {e}. "
+                        "Continuing without scatter plots."
+                    )
 
         # Heatmap (per-sample SHAP across features)
-        if plot_shap_heatmap:
+        if plot_shap_heatmap and not skip_distribution and dist_features:
+            dist_shap_values = shap_df[dist_features].fillna(0.0).values
+            if dist_color_df is not None:
+                dist_color_values = dist_color_df[dist_features].fillna(0.0).values
+            else:
+                dist_color_values = dist_shap_values
             try:
                 for fmt in plot_formats:
                     plot_heatmap(
-                        shap_values,
-                        color_values,
-                        feature_names,
+                        dist_shap_values,
+                        dist_color_values,
+                        dist_features,
                         outpath=shap_plots_dir / f"{model_name}__shap_heatmap.{fmt}",
                         shap_output_scale=shap_output_scale,
                     )
@@ -498,12 +621,18 @@ def generate_aggregated_shap_plots(
                         f"SHAP heatmap plotting unavailable for {model_name}: {e}. "
                         "Continuing without heatmap plots."
                     )
+            except ValueError as e:
+                if logger:
+                    logger.warning(
+                        f"SHAP heatmap plotting failed for {model_name}: {e}. "
+                        "Continuing without heatmap plots."
+                    )
 
         # Waterfall plots from pooled sample metadata
-        if plot_shap_waterfall:
+        if plot_shap_waterfall and bar_feature_names:
             _generate_aggregate_waterfalls(
-                shap_values=shap_values,
-                feature_names=feature_names,
+                shap_values=bar_values,
+                feature_names=bar_feature_names,
                 model_name=model_name,
                 out_dir=out_dir,
                 shap_plots_dir=shap_plots_dir,

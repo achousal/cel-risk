@@ -379,27 +379,6 @@ def test_save_stable_panel_report(results_writer):
     assert "stable_panel" in path
 
 
-def test_save_panel_manifest(results_writer):
-    """Test save_panel_manifest."""
-    manifest = {
-        "scenario": "IncidentPlusPrevalent",
-        "base_model": "LR_EN",
-        "panel_size": 25,
-        "panel_rule": "top_n",
-        "corr_thresh": 0.80,
-        "corr_method": "pearson",
-        "final_proteins": ["TGM2", "CXCL9", "ITGB7"],
-    }
-
-    path = results_writer.save_panel_manifest(manifest, model="LR_EN", panel_size=25)
-
-    assert os.path.exists(path)
-    with open(path) as f:
-        loaded = json.load(f)
-    assert loaded["panel_size"] == 25
-    assert loaded["final_proteins"] == ["TGM2", "CXCL9", "ITGB7"]
-
-
 def test_save_final_test_panel(results_writer):
     """Test save_final_test_panel."""
     panel_proteins = ["TGM2", "CXCL9", "ITGB7", "IL15", "MUC2"]

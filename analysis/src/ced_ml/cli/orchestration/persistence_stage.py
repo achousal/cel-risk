@@ -30,7 +30,6 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from ced_ml.cli.train import build_training_pipeline
 from ced_ml.data.schema import METRIC_AUROC, METRIC_PRAUC
 from ced_ml.evaluation.reports import ResultsWriter
-from ced_ml.features.panels import build_multi_size_panels
 from ced_ml.features.stability import compute_selection_frequencies, extract_stable_panel
 from ced_ml.metrics.bootstrap import stratified_bootstrap_ci
 from ced_ml.metrics.dca import save_dca_results
@@ -204,12 +203,19 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
             f"(std: {np.std(ctx.nested_rfecv_result.fold_val_aurocs):.4f})"
         )
 
-    # OOF importance
+    # OOF importance (feature-level, flattened from clusters)
     if ctx.oof_importance_df is not None:
         cv_dir = Path(outdirs.cv)
         oof_importance_path = cv_dir / f"oof_importance__{config.model}.csv"
         ctx.oof_importance_df.to_csv(oof_importance_path, index=False)
         logger.info(f"OOF importance saved: {oof_importance_path.name}")
+
+    # OOF importance (cluster-level, unflattened)
+    if ctx.oof_importance_clustered_df is not None and not ctx.oof_importance_clustered_df.empty:
+        cv_dir = Path(outdirs.cv)
+        clustered_path = cv_dir / f"oof_importance_clustered__{config.model}.csv"
+        ctx.oof_importance_clustered_df.to_csv(clustered_path, index=False)
+        logger.info(f"OOF clustered importance saved: {clustered_path.name}")
 
     # OOF SHAP importance
     if ctx.oof_shap_df is not None and getattr(config.output, "save_shap_importance", True):
@@ -976,10 +982,11 @@ def _save_feature_reports(ctx: TrainingContext) -> None:
         writer.save_feature_report(feature_report, config.model)
 
         # Stable panel extraction
+        stability_threshold = getattr(config.features, "stability_thresh", 0.75)
         stable_panel_df, stable_proteins, _ = extract_stable_panel(
             selection_log=ctx.selected_proteins_df,
             n_repeats=config.cv.repeats,
-            stability_threshold=0.75,
+            stability_threshold=stability_threshold,
             selection_col="selected_proteins",
             fallback_top_n=20,
         )
@@ -987,54 +994,8 @@ def _save_feature_reports(ctx: TrainingContext) -> None:
             stable_panel_df["scenario"] = ctx.scenario
             writer.save_stable_panel_report(stable_panel_df, panel_type="KBest")
 
-        # Panel manifests
-        _save_panel_manifests(ctx, selection_freq, writer)
-
     except Exception as e:
         logger.warning(f"Failed to save feature reports/panels: {e}")
-
-
-def _save_panel_manifests(
-    ctx: TrainingContext,
-    selection_freq: dict,
-    writer: ResultsWriter,
-) -> None:
-    """Save panel manifests for multiple sizes."""
-    config = ctx.config
-
-    panels_config = getattr(config, "panels", None)
-    panel_sizes = (
-        getattr(panels_config, "panel_sizes", [10, 25, 50]) if panels_config else [10, 25, 50]
-    )
-
-    if not panel_sizes or len(selection_freq) < min(panel_sizes):
-        return
-
-    corr_threshold = getattr(panels_config, "panel_corr_thresh", 0.80) if panels_config else 0.80
-    corr_method = (
-        getattr(panels_config, "panel_corr_method", "spearman") if panels_config else "spearman"
-    )
-
-    panels = build_multi_size_panels(
-        df=ctx.X_train,
-        y=ctx.y_train,
-        selection_freq=selection_freq,
-        panel_sizes=panel_sizes,
-        corr_threshold=corr_threshold,
-        corr_method=corr_method,
-        pool_limit=1000,
-    )
-
-    for size, (_comp_map, panel_proteins) in panels.items():
-        manifest = {
-            "scenario": ctx.scenario,
-            "model": config.model,
-            "panel_size": size,
-            "actual_size": len(panel_proteins),
-            "corr_threshold": corr_threshold,
-            "proteins": panel_proteins,
-        }
-        writer.save_panel_manifest(manifest, config.model, size)
 
 
 def _save_bootstrap_ci(ctx: TrainingContext) -> None:
