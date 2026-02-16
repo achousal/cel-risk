@@ -475,19 +475,20 @@ def generate_aggregated_shap_plots(
             if float(feature_coverage.get(feat, 0.0)) >= MIN_SHAP_COVERAGE_FOR_DISTRIBUTION
         ]
 
-        # Low overlap means pooled beeswarm/scatter/heatmap are unstable mixes of split-specific spaces.
-        skip_distribution = overlap_ratio < MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION
+        # Low overlap is logged but no longer gates distribution plots;
+        # the per-feature coverage filter (dist_features >= 80%) is sufficient.
+        low_overlap = overlap_ratio < MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION
         if logger:
             logger.info(
                 f"[SHAP pooled] {model_name}: features_total={len(feature_cols)}, "
                 f"bar_features={len(bar_features)}, dist_features={len(dist_features)}, "
                 f"overlap_ratio={overlap_ratio:.3f}"
             )
-            if skip_distribution:
-                logger.warning(
+            if low_overlap:
+                logger.info(
                     f"[SHAP pooled] {model_name}: feature overlap ratio {overlap_ratio:.3f} "
-                    f"below threshold {MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION:.2f}; "
-                    "skipping pooled beeswarm/scatter/heatmap"
+                    f"below {MIN_FEATURE_OVERLAP_FOR_DISTRIBUTION:.2f}; "
+                    f"distribution plots restricted to {len(dist_features)} high-coverage features"
                 )
 
         bar_values = shap_df[bar_features].fillna(0.0).values
@@ -511,7 +512,7 @@ def generate_aggregated_shap_plots(
                 )
 
         # Prefer stable OOF bar when pooled feature overlap is very low.
-        use_oof_bar = skip_distribution and has_oof_importance
+        use_oof_bar = low_overlap and has_oof_importance
 
         summary_plot_failed = False
         if plot_shap_summary:
@@ -534,7 +535,7 @@ def generate_aggregated_shap_plots(
                             shap_output_scale=shap_output_scale,
                         )
 
-                    if not skip_distribution and dist_features:
+                    if dist_features:
                         dist_shap_values = shap_df[dist_features].fillna(0.0).values
                         if dist_color_df is not None:
                             dist_color_values = dist_color_df[dist_features].fillna(0.0).values
@@ -563,7 +564,7 @@ def generate_aggregated_shap_plots(
                         "Continuing with fallback behavior."
                     )
 
-        if plot_shap_dependence and not skip_distribution and dist_features:
+        if plot_shap_dependence and dist_features:
             dist_shap_values = shap_df[dist_features].fillna(0.0).values
             if dist_color_df is not None:
                 dist_color_values = dist_color_df[dist_features].fillna(0.0).values
@@ -600,7 +601,7 @@ def generate_aggregated_shap_plots(
                     )
 
         # Heatmap (per-sample SHAP across features)
-        if plot_shap_heatmap and not skip_distribution and dist_features:
+        if plot_shap_heatmap and dist_features:
             dist_shap_values = shap_df[dist_features].fillna(0.0).values
             if dist_color_df is not None:
                 dist_color_values = dist_color_df[dist_features].fillna(0.0).values
@@ -736,30 +737,29 @@ def _plot_bar_from_importance_csv(
     shap_output_scale: str = "raw",
     model_name: str = "",
 ) -> None:
-    """Simple horizontal bar chart from pre-aggregated OOF SHAP importance."""
-    import matplotlib
-    import matplotlib.pyplot as plt
+    """Bar chart from pre-aggregated OOF SHAP importance using shap.plots.bar."""
+    import shap
+    from matplotlib import pyplot as plt
 
-    matplotlib.use("Agg")
-
-    fig, ax = plt.subplots(figsize=(8, max(4, len(importance_df) * 0.3)))
-    y_pos = range(len(importance_df) - 1, -1, -1)
-    ax.barh(
-        list(y_pos),
-        importance_df["mean_abs_shap"].values,
-        xerr=(
-            importance_df["std_abs_shap"].values
-            if "std_abs_shap" in importance_df.columns
-            else None
-        ),
-        align="center",
-        color="#1f77b4",
-        edgecolor="none",
+    values = importance_df["mean_abs_shap"].values.reshape(1, -1)
+    explanation = shap.Explanation(
+        values=values,
+        feature_names=importance_df["feature"].tolist(),
     )
-    ax.set_yticks(list(y_pos))
-    ax.set_yticklabels(importance_df["feature"].values)
-    ax.set_xlabel(f"mean |SHAP value| ({shap_output_scale})")
-    ax.set_title(f"SHAP Feature Importance - {model_name}")
+
+    shap.plots.bar(explanation, max_display=len(importance_df), show=False)
+    ax = plt.gca()
+    scale_labels = {
+        "log_odds": "SHAP value (log-odds)",
+        "margin": "SHAP value (margin)",
+        "probability": "SHAP value (probability)",
+        "raw": "SHAP value (raw, model-dependent)",
+    }
+    ax.set_xlabel(scale_labels.get(shap_output_scale, f"SHAP value ({shap_output_scale})"))
+    if model_name:
+        ax.set_title(f"SHAP Feature Importance - {model_name}")
+
+    fig = plt.gcf()
     fig.savefig(str(outpath), dpi=300, bbox_inches="tight")
     plt.close("all")
 
