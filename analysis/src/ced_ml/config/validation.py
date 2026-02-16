@@ -236,7 +236,7 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
     Check for feature selection config options that are set but not wired into the pipeline.
 
     Validates that feature selection parameters are consistent with the selected strategy:
-    - multi_stage: Uses k_grid, stability_thresh, stable_corr_thresh (all wired)
+    - multi_stage: Uses k_grid, stability_thresh (all wired)
     - rfecv: Uses rfe_* parameters (all wired)
     - none: No feature selection (only warns about unused params)
 
@@ -250,14 +250,12 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
     # Default values for comparison (match schema.py defaults)
     DEFAULT_K_GRID = [50, 100, 200, 500]
     DEFAULT_STABILITY_THRESH = 0.70
-    DEFAULT_STABLE_CORR_THRESH = 0.80
 
     # Strategy-specific validation
     if strategy == "multi_stage":
         # All multi_stage parameters ARE wired into the pipeline
         # k_grid: tuned via hyperparameter search (hyperparams.py)
         # stability_thresh: used in post-hoc panel extraction (intended behavior)
-        # stable_corr_thresh: used in post-hoc panel building (intended behavior)
         # screen_top_n: used for initial screening (intended behavior)
 
         # Validate required parameters
@@ -286,11 +284,6 @@ def _validate_unwired_feature_selection_config(config: TrainingConfig, issues: l
         if config.features.stability_thresh != DEFAULT_STABILITY_THRESH:
             unwired_settings.append(
                 f"stability_thresh={config.features.stability_thresh} (not used with strategy='none')"
-            )
-
-        if config.features.stable_corr_thresh != DEFAULT_STABLE_CORR_THRESH:
-            unwired_settings.append(
-                f"stable_corr_thresh={config.features.stable_corr_thresh} (not used with strategy='none')"
             )
 
     if unwired_settings:

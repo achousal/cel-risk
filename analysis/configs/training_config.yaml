@@ -51,7 +51,6 @@ features:
   # Strategy 1: Multi-stage parameters (used if strategy=multi_stage)
   k_grid: [100, 150, 200, 300, 400]  # K-best tuning grid
   stability_thresh: 0.95  # Stability selection threshold (was 0.70; raised to reduce panel size)
-  stable_corr_thresh: 0.95  # Correlation threshold for post-hoc panel pruning (corr_prune)
 
   # Strategy 2: RFECV parameters (used if strategy=rfecv)
   rfe_kbest_prefilter: false  # Enable k-best pre-filter (5x speedup)
@@ -79,7 +78,7 @@ features:
   # OOF Importance (computed during training CV loop)
   compute_oof_importance: true  # Enable per-fold importance extraction
   oof_importance_grouped: true  # Group correlated features before permutation (recommended)
-  grouped_threshold: 0.85  # |Spearman r| threshold for grouping features (>= stable_corr_thresh)
+  grouped_threshold: 0.85  # |Spearman r| threshold for grouping correlated features
   pfi_n_repeats: 30  # Permutation repeats per cluster for tree models (higher = lower variance)
 
   # SHAP Explainability

@@ -49,13 +49,6 @@ class FeatureConfig(BaseModel):
         le=1.0,
         description="Stability threshold for post-hoc panel building",
     )
-    stable_corr_thresh: float = Field(
-        default=0.80, ge=0.0, le=1.0, description="Correlation threshold for pruning"
-    )
-    stable_corr_method: Literal["pearson", "spearman"] = Field(
-        default="spearman",
-        description="Correlation method for pruning (spearman recommended for proteomics)",
-    )
 
     # RFECV strategy parameters (used when strategy="rfecv")
     rfe_target_size: int = Field(

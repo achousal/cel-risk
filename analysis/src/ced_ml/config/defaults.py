@@ -57,7 +57,6 @@ DEFAULT_FEATURE_CONFIG: dict[str, Any] = {
     "kbest_max": 500,
     "k_grid": [50, 100, 200, 500],
     "stability_thresh": 0.70,
-    "stable_corr_thresh": 0.80,
 }
 
 # Default threshold configuration
