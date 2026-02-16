@@ -278,3 +278,75 @@ def test_configure_screen_step_for_panel_refit_prevents_missing_protein_keyerror
 
     assert len(results) == 1
     assert results[0].error_msg is None
+
+
+def test_configure_panel_refit_bypasses_sel_step_when_k_exceeds_panel():
+    """sel step with tuned k > panel size must be bypassed to avoid ValueError.
+
+    Regression test: essentiality was silently failing for LR_EN/LinSVM_cal
+    because the cloned pipeline preserved SelectKBest(k=tuned_k) where
+    tuned_k exceeded the number of panel proteins.
+    """
+    from sklearn.feature_selection import SelectKBest, f_classif
+    from sklearn.preprocessing import StandardScaler
+
+    from ced_ml.features.protein_selector import ProteinOnlySelector
+
+    X_train = pd.DataFrame(
+        {
+            "P1_resid": [0.1, 0.2, 0.9, 1.0, 0.15, 0.25, 0.8, 0.95],
+            "P2_resid": [1.0, 0.9, 0.2, 0.1, 0.85, 0.8, 0.25, 0.2],
+            "age": [30, 31, 42, 43, 29, 33, 45, 46],
+        }
+    )
+    y_train = np.array([0, 0, 1, 1, 0, 0, 1, 1])
+
+    X_val = pd.DataFrame(
+        {
+            "P1_resid": [0.12, 0.22, 0.88, 0.98],
+            "P2_resid": [0.95, 0.82, 0.22, 0.12],
+            "age": [30, 34, 44, 47],
+        }
+    )
+    y_val = np.array([0, 0, 1, 1])
+
+    # Pipeline with sel step having k=500 (far exceeding 2 panel proteins).
+    # Without the fix, SelectKBest(k=500).fit() raises ValueError.
+    pipeline = Pipeline(
+        [
+            (
+                "screen",
+                ScreeningTransformer(
+                    method="mannwhitney",
+                    top_n=1000,
+                    protein_cols=["P1_resid", "P2_resid", "P3_resid"],
+                ),
+            ),
+            ("pre", StandardScaler()),
+            ("sel", ProteinOnlySelector(selector=SelectKBest(f_classif, k=500))),
+            ("clf", LogisticRegression(max_iter=200)),
+        ]
+    )
+
+    panel_features = ["P1_resid", "P2_resid"]
+    _configure_screen_step_for_panel_refit(pipeline, panel_features)
+
+    # sel should be replaced with passthrough
+    assert pipeline.named_steps["sel"] == "passthrough"
+
+    # Pipeline should fit and predict without errors
+    pipeline.fit(X_train, y_train)
+
+    results = compute_drop_column_importance(
+        estimator=pipeline,
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        feature_clusters=[["P1_resid"]],
+        random_state=0,
+    )
+
+    assert len(results) == 1
+    assert results[0].error_msg is None
+    assert not np.isnan(results[0].delta_auroc)

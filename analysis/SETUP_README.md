@@ -121,7 +121,7 @@ The setup script **cannot** activate the venv in your shell (bash subprocess lim
 
 - **For interactive CLI usage**: Manually activate after setup:
   ```bash
-  source venv/bin/activate
+  source analysis/venv/bin/activate
   ced --help  # Verify installation
   ```
 

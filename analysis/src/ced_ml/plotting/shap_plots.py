@@ -1,6 +1,7 @@
 """SHAP visualization plots for CeD-ML pipeline.
 
-Provides beeswarm, bar importance, waterfall, and dependence plots.
+Provides beeswarm, bar importance, waterfall, scatter (dependence),
+and heatmap plots. Uses the modern shap.plots.* API throughout.
 All plots are gated by output config flags in the plotting stage.
 """
 
@@ -141,24 +142,63 @@ def plot_dependence(
     outpath: Path | str | None = None,
     shap_output_scale: str = "raw",
 ) -> None:
-    """Dependence plot showing feature value vs SHAP value."""
+    """Scatter plot showing feature value vs SHAP value (dependence).
+
+    Uses the modern shap.plots.scatter API (replaces deprecated
+    shap.dependence_plot). Colors by auto-detected interaction feature.
+    """
     _require_shap()
     import shap
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    shap.dependence_plot(
-        feature_idx,
-        shap_values,
-        X,
+    explanation = shap.Explanation(
+        values=shap_values,
+        data=X,
         feature_names=feature_names,
-        show=False,
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    shap.plots.scatter(
+        explanation[:, feature_idx],
+        color=explanation,
         ax=ax,
+        show=False,
     )
     ax.set_ylabel(_format_shap_ylabel(shap_output_scale))
 
     if outpath is not None:
         fig.savefig(str(outpath), dpi=300, bbox_inches="tight")
-        logger.info("SHAP dependence plot saved: %s", outpath)
+        logger.info("SHAP scatter plot saved: %s", outpath)
+    plt.close("all")
+
+
+def plot_heatmap(
+    shap_values: np.ndarray,
+    X: np.ndarray,
+    feature_names: list[str],
+    max_display: int = 20,
+    outpath: Path | str | None = None,
+    shap_output_scale: str = "raw",
+) -> None:
+    """Heatmap of per-sample SHAP values across features.
+
+    Instances on x-axis, features on y-axis, SHAP values color-encoded.
+    Samples clustered via hierarchical clustering for visual grouping.
+    """
+    _require_shap()
+    import shap
+
+    explanation = shap.Explanation(
+        values=shap_values,
+        data=X,
+        feature_names=feature_names,
+    )
+
+    shap.plots.heatmap(explanation, max_display=max_display, show=False)
+
+    if outpath is not None:
+        fig = plt.gcf()
+        fig.savefig(str(outpath), dpi=300, bbox_inches="tight")
+        logger.info("SHAP heatmap plot saved: %s", outpath)
     plt.close("all")
 
 
@@ -240,7 +280,7 @@ def generate_all_shap_plots(
                     shap_output_scale=test_payload.shap_output_scale,
                 )
 
-    # Dependence plots (top 5 features)
+    # Scatter (dependence) plots (top 5 features)
     if getattr(config.output, "plot_shap_dependence", True):
         mean_abs = np.mean(np.abs(test_payload.values), axis=0)
         top_indices = np.argsort(mean_abs)[::-1][:5]
@@ -253,8 +293,18 @@ def generate_all_shap_plots(
                 feat_idx,
                 feature_values,
                 test_payload.feature_names,
-                outpath=shap_dir / f"{model}__dependence_{safe_name}.{fmt}",
+                outpath=shap_dir / f"{model}__scatter_{safe_name}.{fmt}",
                 shap_output_scale=test_payload.shap_output_scale,
             )
+
+    # Heatmap (per-sample SHAP across features)
+    if getattr(config.output, "plot_shap_heatmap", True):
+        plot_heatmap(
+            test_payload.values,
+            feature_values,
+            test_payload.feature_names,
+            outpath=shap_dir / f"{model}__shap_heatmap.{fmt}",
+            shap_output_scale=test_payload.shap_output_scale,
+        )
 
     logger.info("All SHAP plots saved to: %s", shap_dir)

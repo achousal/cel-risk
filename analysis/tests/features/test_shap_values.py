@@ -675,12 +675,11 @@ def test_additivity_xgboost_tree_path_dependent_raw():
         feature_perturbation="tree_path_dependent",
         model_output="raw",
     )
-    shap_values = explainer.shap_values(X_test.values)
-    expected_value = explainer.expected_value
+    explanation = explainer(X_test.values)
 
-    shap_values_norm = _normalize_shap_values(shap_values, model.classes_, positive_label=1)
+    shap_values_norm = _normalize_shap_values(explanation.values, model.classes_, positive_label=1)
     expected_value_norm = _normalize_expected_value(
-        expected_value, model.classes_, positive_label=1
+        explanation.base_values, model.classes_, positive_label=1
     )
 
     model_output = model.predict(X_test, output_margin=True).ravel()
@@ -723,12 +722,11 @@ def test_additivity_rf_interventional_raw():
         feature_perturbation="interventional",
         model_output="raw",
     )
-    shap_values = explainer.shap_values(X_test.values)
-    expected_value = explainer.expected_value
+    explanation = explainer(X_test.values)
 
-    shap_values_norm = _normalize_shap_values(shap_values, model.classes_, positive_label=1)
+    shap_values_norm = _normalize_shap_values(explanation.values, model.classes_, positive_label=1)
     expected_value_norm = _normalize_expected_value(
-        expected_value, model.classes_, positive_label=1
+        explanation.base_values, model.classes_, positive_label=1
     )
 
     model_output = model.predict_proba(X_test)[:, 1]
@@ -762,12 +760,11 @@ def test_additivity_lr_log_odds():
     model.fit(X_train, y_train)
 
     explainer = shap.LinearExplainer(model, X_train.values)
-    shap_values = explainer.shap_values(X_test.values)
-    expected_value = explainer.expected_value
+    explanation = explainer(X_test.values)
 
-    shap_values_norm = _normalize_shap_values(shap_values, model.classes_, positive_label=1)
+    shap_values_norm = _normalize_shap_values(explanation.values, model.classes_, positive_label=1)
     expected_value_norm = _normalize_expected_value(
-        expected_value, model.classes_, positive_label=1
+        explanation.base_values, model.classes_, positive_label=1
     )
 
     model_output = model.decision_function(X_test).ravel()
@@ -811,11 +808,12 @@ def test_additivity_svm_margin():
         (avg_coef.reshape(1, -1), np.array([avg_intercept])),
         X_train.values,
     )
-    shap_values = explainer.shap_values(X_test.values)
-    expected_value = explainer.expected_value
+    explanation = explainer(X_test.values)
 
-    shap_values_norm = _normalize_shap_values(shap_values, clf.classes_, positive_label=1)
-    expected_value_norm = _normalize_expected_value(expected_value, clf.classes_, positive_label=1)
+    shap_values_norm = _normalize_shap_values(explanation.values, clf.classes_, positive_label=1)
+    expected_value_norm = _normalize_expected_value(
+        explanation.base_values, clf.classes_, positive_label=1
+    )
 
     model_output = (avg_coef @ X_test.T + avg_intercept).ravel()
 

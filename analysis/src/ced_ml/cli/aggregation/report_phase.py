@@ -404,6 +404,7 @@ def run_report_phase(
     plot_learning_curve: bool,
     plot_shap_summary: bool = True,
     plot_shap_dependence: bool = True,
+    plot_shap_heatmap: bool = True,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     """
@@ -428,7 +429,8 @@ def run_report_phase(
         plot_oof_combined: Whether to generate OOF combined plots
         plot_learning_curve: Whether to generate learning curve plots
         plot_shap_summary: Whether to generate SHAP bar and beeswarm plots
-        plot_shap_dependence: Whether to generate SHAP dependence plots
+        plot_shap_dependence: Whether to generate SHAP scatter (dependence) plots
+        plot_shap_heatmap: Whether to generate SHAP heatmap plots
         logger: Logger instance
 
     Returns:
@@ -600,6 +602,7 @@ def run_report_phase(
                 plot_formats=plot_formats,
                 plot_shap_summary=plot_shap_summary,
                 plot_shap_dependence=plot_shap_dependence,
+                plot_shap_heatmap=plot_shap_heatmap,
                 logger=logger,
             )
 

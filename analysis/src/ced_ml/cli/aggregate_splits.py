@@ -39,6 +39,7 @@ def run_aggregate_splits(
     plot_learning_curve: bool = True,
     plot_shap_summary: bool = True,
     plot_shap_dependence: bool = True,
+    plot_shap_heatmap: bool = True,
     control_spec_targets: list[float] | None = None,
 ) -> dict[str, Any]:
     """
@@ -172,5 +173,6 @@ def run_aggregate_splits(
         plot_learning_curve=plot_learning_curve,
         plot_shap_summary=plot_shap_summary,
         plot_shap_dependence=plot_shap_dependence,
+        plot_shap_heatmap=plot_shap_heatmap,
         logger=logger,
     )

@@ -76,8 +76,16 @@ def test_aggregate_shap_multi_split(mock_shap_splits, logger):
     expected_path = output_dir / "importance" / "oof_shap_importance__LR_EN.csv"
     assert expected_path.exists()
 
-    # Verify columns
-    expected_cols = ["feature", "mean_abs_shap", "std_abs_shap", "stability", "rank"]
+    # Verify columns (includes dual rankings)
+    expected_cols = [
+        "feature",
+        "mean_abs_shap",
+        "std_abs_shap",
+        "stability",
+        "rank",
+        "rank_pooled",
+        "rank_stability",
+    ]
     assert list(result.columns) == expected_cols
 
     # Verify features
@@ -617,6 +625,7 @@ def test_generate_aggregated_shap_plots_from_pooled(logger):
             patch("ced_ml.plotting.shap_plots.plot_bar_importance") as mock_bar,
             patch("ced_ml.plotting.shap_plots.plot_beeswarm") as mock_bee,
             patch("ced_ml.plotting.shap_plots.plot_dependence") as mock_dep,
+            patch("ced_ml.plotting.shap_plots.plot_heatmap") as mock_hm,
         ):
 
             generate_aggregated_shap_plots(
@@ -632,8 +641,10 @@ def test_generate_aggregated_shap_plots_from_pooled(logger):
             # Bar and beeswarm called once each (1 format)
             assert mock_bar.call_count == 1
             assert mock_bee.call_count == 1
-            # Dependence called for top 5 features (we have 6, so 5)
+            # Scatter called for top 5 features (we have 6, so 5)
             assert mock_dep.call_count == 5
+            # Heatmap called once per format
+            assert mock_hm.call_count == 1
 
             # Verify scale passed correctly
             bar_kwargs = mock_bar.call_args
@@ -691,3 +702,312 @@ def test_generate_aggregated_shap_plots_no_data(logger):
 
         # No shap plots dir should be created
         assert not (out_dir / "plots" / "shap").exists()
+
+
+# ---------------------------------------------------------------------------
+# Dual ranking tests
+# ---------------------------------------------------------------------------
+
+
+def test_dual_rankings_when_all_stable(mock_shap_splits, logger):
+    """When all features appear in every split, rank_pooled == rank_stability."""
+    split_dirs, output_dir = mock_shap_splits
+    result = aggregate_shap_importance(split_dirs, "LR_EN", output_dir, logger)
+
+    assert result is not None
+    assert "rank_pooled" in result.columns
+    assert "rank_stability" in result.columns
+
+    # All stability == 1.0, so stability-weighted = mean_abs_shap * 1.0 -> same order
+    assert list(result["rank_pooled"]) == list(result["rank_stability"])
+    # backward-compat alias
+    assert list(result["rank"]) == list(result["rank_pooled"])
+
+
+def test_dual_rankings_with_partial_stability(logger):
+    """Stability-weighted rank can differ from pooled rank when stability varies."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        # Split 0: features A (high SHAP) and B (low SHAP)
+        split0 = tmpdir_path / "split_seed0" / "LR_EN"
+        (split0 / "cv").mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "feature": ["protein_A", "protein_B"],
+                "mean_abs_shap": [0.9, 0.3],
+                "std_abs_shap": [0.05, 0.03],
+                "median_abs_shap": [0.88, 0.28],
+                "n_folds_nonzero": [5, 5],
+            }
+        ).to_csv(split0 / "cv" / "oof_shap_importance__LR_EN.csv", index=False)
+
+        # Split 1: only feature B (present in both splits -> higher stability)
+        split1 = tmpdir_path / "split_seed1" / "LR_EN"
+        (split1 / "cv").mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "feature": ["protein_B"],
+                "mean_abs_shap": [0.3],
+                "std_abs_shap": [0.03],
+                "median_abs_shap": [0.28],
+                "n_folds_nonzero": [5],
+            }
+        ).to_csv(split1 / "cv" / "oof_shap_importance__LR_EN.csv", index=False)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_importance([split0, split1], "LR_EN", output_dir, logger)
+
+        assert result is not None
+        # By pooled mean: A (0.9) > B (0.3) -> rank_pooled A=1, B=2
+        a_row = result[result["feature"] == "protein_A"].iloc[0]
+        b_row = result[result["feature"] == "protein_B"].iloc[0]
+        assert a_row["rank_pooled"] == 1
+        assert b_row["rank_pooled"] == 2
+
+        # Stability-weighted: A = 0.9 * 0.5 = 0.45, B = 0.3 * 1.0 = 0.3
+        # A still higher -> rank_stability A=1, B=2 in this case
+        assert a_row["rank_stability"] == 1
+        assert b_row["rank_stability"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Feature matrix and sample metadata pooling tests
+# ---------------------------------------------------------------------------
+
+
+def _make_shap_features(split_dir: Path, model: str, n_samples: int, features: list[str]):
+    """Helper: create a mock test SHAP features parquet file."""
+    shap_dir = split_dir / "shap"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(42)
+    data = {feat: rng.standard_normal(n_samples) for feat in features}
+    df = pd.DataFrame(data)
+    df.to_parquet(shap_dir / f"test_shap_features__{model}.parquet.gz", compression="gzip")
+
+
+def _make_shap_sample_meta(
+    split_dir: Path, model: str, n_samples: int, include_adjusted: bool = False
+):
+    """Helper: create a mock test SHAP sample metadata parquet file."""
+    shap_dir = split_dir / "shap"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(42)
+    data = {
+        "y_true": rng.integers(0, 2, size=n_samples).astype(float),
+        "y_prob": rng.random(n_samples),
+    }
+    if include_adjusted:
+        data["y_prob_adjusted"] = rng.random(n_samples)
+    df = pd.DataFrame(data)
+    df.to_parquet(shap_dir / f"test_shap_sample_meta__{model}.parquet.gz", compression="gzip")
+
+
+def test_aggregate_shap_pools_features_and_meta(logger):
+    """Test that feature matrices and sample metadata are pooled alongside SHAP values."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        features = ["feat_A", "feat_B"]
+        split_dirs = []
+
+        for i in range(2):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            split_dir.mkdir(parents=True)
+            _make_shap_parquet(split_dir, "LR_EN", 5, features)
+            _make_shap_features(split_dir, "LR_EN", 5, features)
+            _make_shap_sample_meta(split_dir, "LR_EN", 5)
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_values(split_dirs, "LR_EN", output_dir, logger)
+        assert result is not None
+
+        # Verify features parquet was pooled
+        feat_path = output_dir / "shap" / "test_shap_features_pooled__LR_EN.parquet.gz"
+        assert feat_path.exists()
+        feat_df = pd.read_parquet(feat_path)
+        assert len(feat_df) == 10  # 5 per split x 2 splits
+        assert "split_seed" in feat_df.columns
+
+        # Verify sample meta parquet was pooled
+        meta_path = output_dir / "shap" / "test_shap_sample_meta_pooled__LR_EN.parquet.gz"
+        assert meta_path.exists()
+        meta_df = pd.read_parquet(meta_path)
+        assert len(meta_df) == 10
+        assert "y_true" in meta_df.columns
+        assert "y_prob" in meta_df.columns
+
+
+def test_aggregate_shap_graceful_without_features(logger):
+    """Test that aggregation works when feature/meta parquets are absent (backward compat)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        features = ["feat_A", "feat_B"]
+        split_dirs = []
+
+        for i in range(2):
+            split_dir = tmpdir_path / f"split_seed{i}" / "LR_EN"
+            split_dir.mkdir(parents=True)
+            _make_shap_parquet(split_dir, "LR_EN", 5, features)
+            # No features or meta parquets
+            split_dirs.append(split_dir)
+
+        output_dir = tmpdir_path / "aggregated"
+        output_dir.mkdir()
+
+        result = aggregate_shap_values(split_dirs, "LR_EN", output_dir, logger)
+        assert result is not None
+        assert len(result) == 10
+
+        # Feature/meta parquets should NOT exist
+        assert not (output_dir / "shap" / "test_shap_features_pooled__LR_EN.parquet.gz").exists()
+        assert not (output_dir / "shap" / "test_shap_sample_meta_pooled__LR_EN.parquet.gz").exists()
+
+
+# ---------------------------------------------------------------------------
+# Aggregate beeswarm with real X_transformed test
+# ---------------------------------------------------------------------------
+
+
+def test_generate_aggregated_shap_plots_uses_x_transformed(logger):
+    """Test that beeswarm/dependence use pooled X_transformed when available."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        rng = np.random.default_rng(42)
+        features = [f"feat_{i}" for i in range(6)]
+        n = 20
+        data = {feat: rng.standard_normal(n) for feat in features}
+        data["split_seed"] = [0] * 10 + [1] * 10
+        pooled_df = pd.DataFrame(data)
+
+        # Create pooled features parquet in the expected location
+        shap_dir = out_dir / "shap"
+        shap_dir.mkdir(parents=True)
+        feat_data = {feat: rng.standard_normal(n) for feat in features}
+        feat_data["split_seed"] = [0] * 10 + [1] * 10
+        feat_df = pd.DataFrame(feat_data)
+        feat_df.to_parquet(
+            shap_dir / "test_shap_features_pooled__LR_EN.parquet.gz", compression="gzip"
+        )
+
+        metadata = {"shap_output_scale": "log_odds"}
+
+        with (
+            patch("ced_ml.plotting.shap_plots.plot_bar_importance") as mock_bar,
+            patch("ced_ml.plotting.shap_plots.plot_beeswarm") as mock_bee,
+            patch("ced_ml.plotting.shap_plots.plot_dependence") as mock_dep,
+            patch("ced_ml.plotting.shap_plots.plot_heatmap") as mock_hm,
+        ):
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=None,
+                shap_metadata=metadata,
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                plot_shap_waterfall=False,
+                logger=logger,
+            )
+
+            assert mock_bar.call_count == 1
+            assert mock_bee.call_count == 1
+            assert mock_dep.call_count == 5
+            assert mock_hm.call_count == 1
+
+            # Verify beeswarm was called with real X_transformed (not shap_values)
+            bee_args = mock_bee.call_args[0]
+            shap_vals_arg = bee_args[0]
+            color_arg = bee_args[1]
+            # color_arg should NOT be shap_values (different array)
+            assert not np.array_equal(shap_vals_arg, color_arg)
+
+
+# ---------------------------------------------------------------------------
+# Aggregate waterfall test
+# ---------------------------------------------------------------------------
+
+
+def test_generate_aggregated_waterfall_plots(logger):
+    """Test that waterfall plots are generated from pooled sample metadata."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        rng = np.random.default_rng(42)
+        features = [f"feat_{i}" for i in range(6)]
+        n = 20
+        data = {feat: rng.standard_normal(n) for feat in features}
+        data["split_seed"] = [0] * 10 + [1] * 10
+        pooled_df = pd.DataFrame(data)
+
+        # Create sample metadata with y_true and y_prob
+        shap_dir = out_dir / "shap"
+        shap_dir.mkdir(parents=True)
+        y_true = np.array([1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0])
+        y_prob = rng.random(n) * 0.5 + y_true * 0.3  # shift positives higher
+        meta_df = pd.DataFrame(
+            {
+                "y_true": y_true.astype(float),
+                "y_prob": y_prob,
+                "split_seed": [0] * 10 + [1] * 10,
+            }
+        )
+        meta_df.to_parquet(
+            shap_dir / "test_shap_sample_meta_pooled__LR_EN.parquet.gz", compression="gzip"
+        )
+
+        metadata = {"shap_output_scale": "log_odds"}
+
+        with patch("ced_ml.plotting.shap_plots.plot_waterfall") as mock_waterfall:
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=None,
+                shap_metadata=metadata,
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                plot_shap_summary=False,
+                plot_shap_dependence=False,
+                plot_shap_waterfall=True,
+                logger=logger,
+            )
+
+            # Should have generated waterfall plots (up to 4 categories: TP, FP, FN, TN)
+            assert mock_waterfall.call_count >= 1
+            assert mock_waterfall.call_count <= 4
+
+
+def test_generate_aggregated_waterfall_skipped_without_meta(logger):
+    """Test waterfall gracefully skipped when no sample metadata exists."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = Path(tmpdir)
+
+        rng = np.random.default_rng(42)
+        features = [f"feat_{i}" for i in range(6)]
+        n = 20
+        data = {feat: rng.standard_normal(n) for feat in features}
+        data["split_seed"] = [0] * 10 + [1] * 10
+        pooled_df = pd.DataFrame(data)
+
+        metadata = {"shap_output_scale": "log_odds"}
+
+        with patch("ced_ml.plotting.shap_plots.plot_waterfall") as mock_waterfall:
+            generate_aggregated_shap_plots(
+                pooled_shap_df=pooled_df,
+                oof_shap_importance_df=None,
+                shap_metadata=metadata,
+                model_name="LR_EN",
+                out_dir=out_dir,
+                plot_formats=["png"],
+                plot_shap_summary=False,
+                plot_shap_dependence=False,
+                plot_shap_waterfall=True,
+                logger=logger,
+            )
+
+            # No waterfall since no sample metadata
+            assert mock_waterfall.call_count == 0

@@ -221,9 +221,25 @@ def aggregate_shap_importance(
     )
     agg["stability"] = agg["n_splits_present"] / len(shap_files)
     agg = agg.sort_values("mean_abs_shap", ascending=False, ignore_index=True)
-    agg["rank"] = range(1, len(agg) + 1)
+    agg["rank_pooled"] = range(1, len(agg) + 1)
 
-    output_cols = ["feature", "mean_abs_shap", "std_abs_shap", "stability", "rank"]
+    # Stability-weighted rank: penalise features absent from some splits
+    agg["_sw_score"] = agg["mean_abs_shap"] * agg["stability"]
+    agg["rank_stability"] = agg["_sw_score"].rank(ascending=False, method="min").astype(int)
+    agg.drop(columns=["_sw_score"], inplace=True)
+
+    # Keep backward-compat 'rank' alias pointing at pooled ranking
+    agg["rank"] = agg["rank_pooled"]
+
+    output_cols = [
+        "feature",
+        "mean_abs_shap",
+        "std_abs_shap",
+        "stability",
+        "rank",
+        "rank_pooled",
+        "rank_stability",
+    ]
     output_df = agg[output_cols]
 
     importance_dir = output_dir / "importance"
@@ -297,7 +313,78 @@ def aggregate_shap_values(
         f"val_shap_values_pooled__{model_name}.parquet.gz",
     )
 
+    # Pool transformed feature matrices (for aggregate beeswarm/dependence color axis)
+    _pool_parquets(
+        f"test_shap_features__{model_name}.parquet.gz",
+        f"test_shap_features_pooled__{model_name}.parquet.gz",
+    )
+    _pool_parquets(
+        f"val_shap_features__{model_name}.parquet.gz",
+        f"val_shap_features_pooled__{model_name}.parquet.gz",
+    )
+
+    # Pool sample metadata (y_true, predictions for aggregate waterfall)
+    _pool_parquets(
+        f"test_shap_sample_meta__{model_name}.parquet.gz",
+        f"test_shap_sample_meta_pooled__{model_name}.parquet.gz",
+    )
+    _pool_parquets(
+        f"val_shap_sample_meta__{model_name}.parquet.gz",
+        f"val_shap_sample_meta_pooled__{model_name}.parquet.gz",
+    )
+
+    # Diagnostics logging
+    _log_shap_diagnostics(test_pooled, model_name, split_dirs, shap_dir_out, logger)
+
     return test_pooled
+
+
+def _log_shap_diagnostics(
+    pooled_df: pd.DataFrame | None,
+    model_name: str,
+    split_dirs: list[Path],
+    shap_dir_out: Path,
+    logger: Logger,
+) -> None:
+    """Emit diagnostic summary after SHAP aggregation."""
+    n_splits = len(split_dirs)
+    has_pooled = pooled_df is not None and not pooled_df.empty
+
+    if not has_pooled:
+        logger.warning(
+            f"[SHAP diag] {model_name}: no pooled SHAP values "
+            f"(0/{n_splits} splits had test SHAP parquets)"
+        )
+        return
+
+    feature_cols = [c for c in pooled_df.columns if c != "split_seed"]
+    n_samples = len(pooled_df)
+    n_features = len(feature_cols)
+    nan_frac = float(pooled_df[feature_cols].isna().mean().mean())
+    n_seeds = int(pooled_df["split_seed"].nunique())
+
+    # Feature overlap: intersection / union across seeds
+    per_seed_feats = []
+    for _seed, grp in pooled_df.groupby("split_seed"):
+        nonzero_cols = [c for c in feature_cols if grp[c].notna().any()]
+        per_seed_feats.append(set(nonzero_cols))
+
+    if per_seed_feats:
+        intersection = set.intersection(*per_seed_feats)
+        union = set.union(*per_seed_feats)
+        overlap = len(intersection) / len(union) if union else 1.0
+    else:
+        overlap = 0.0
+
+    has_features = (shap_dir_out / f"test_shap_features_pooled__{model_name}.parquet.gz").exists()
+    has_meta = (shap_dir_out / f"test_shap_sample_meta_pooled__{model_name}.parquet.gz").exists()
+
+    logger.info(
+        f"[SHAP diag] {model_name}: {n_samples} samples from {n_seeds}/{n_splits} seeds, "
+        f"{n_features} features, NaN={nan_frac:.4f}, feature_overlap={overlap:.2f}, "
+        f"X_transformed={'yes' if has_features else 'no'}, "
+        f"sample_meta={'yes' if has_meta else 'no'}"
+    )
 
 
 def aggregate_shap_metadata(

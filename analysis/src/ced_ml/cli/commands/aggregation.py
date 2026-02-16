@@ -162,6 +162,9 @@ def aggregate_splits(ctx, **kwargs):
                     shap_plot_flags["plot_shap_dependence"] = getattr(
                         cfg.output, "plot_shap_dependence", True
                     )
+                    shap_plot_flags["plot_shap_heatmap"] = getattr(
+                        cfg.output, "plot_shap_heatmap", True
+                    )
             except Exception:
                 pass  # defaults to True via function signature
 
@@ -213,6 +216,9 @@ def aggregate_splits(ctx, **kwargs):
                 )
                 kwargs.setdefault(
                     "plot_shap_dependence", getattr(cfg.output, "plot_shap_dependence", True)
+                )
+                kwargs.setdefault(
+                    "plot_shap_heatmap", getattr(cfg.output, "plot_shap_heatmap", True)
                 )
                 break
     except Exception:

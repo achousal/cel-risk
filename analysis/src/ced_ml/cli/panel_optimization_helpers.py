@@ -13,7 +13,7 @@ import pandas as pd
 
 from ced_ml.data.filters import apply_row_filters
 from ced_ml.data.io import read_proteomics_file
-from ced_ml.data.schema import TARGET_COL, get_positive_label
+from ced_ml.data.schema import SCENARIO_DEFINITIONS, TARGET_COL, get_positive_label
 from ced_ml.features.rfe import RFEResult, recursive_feature_elimination
 
 logger = logging.getLogger(__name__)
@@ -172,6 +172,7 @@ def load_and_filter_data(
     feature_cols: list[str],
     protein_cols: list[str],
     meta_num_cols: list[str],
+    scenario: str | None = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Load data and filter columns.
 
@@ -180,6 +181,8 @@ def load_and_filter_data(
         feature_cols: List of all feature columns
         protein_cols: List of protein columns
         meta_num_cols: List of numeric metadata columns
+        scenario: Optional scenario name to enforce split-aligned label filtering.
+            When provided, keeps only labels defined in SCENARIO_DEFINITIONS[scenario].
 
     Returns:
         Tuple of (filtered_df, filtered_feature_cols, filtered_protein_cols)
@@ -190,6 +193,27 @@ def load_and_filter_data(
     logger.info("Applying row filters...")
     df, filter_stats = apply_row_filters(df_raw, meta_num_cols=meta_num_cols)
     logger.info(f"Filtered: {filter_stats['n_in']:,} -> {filter_stats['n_out']:,} rows")
+
+    if scenario is not None:
+        if scenario not in SCENARIO_DEFINITIONS:
+            raise ValueError(
+                f"Unknown scenario: {scenario}. Valid: {list(SCENARIO_DEFINITIONS.keys())}"
+            )
+
+        target_labels = SCENARIO_DEFINITIONS[scenario]["labels"]
+        mask_scenario = df[TARGET_COL].isin(target_labels)
+        n_removed = int((~mask_scenario).sum())
+
+        if n_removed > 0:
+            logger.info(
+                "Applied scenario filter (%s): removed %s rows with labels outside %s",
+                scenario,
+                f"{n_removed:,}",
+                target_labels,
+            )
+
+        df = df.loc[mask_scenario].copy().reset_index(drop=True)
+        logger.info(f"Scenario-aligned data size: {len(df):,} rows")
 
     missing = [c for c in feature_cols if c not in df.columns]
     if missing:

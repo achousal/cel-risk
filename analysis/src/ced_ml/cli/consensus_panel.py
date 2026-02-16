@@ -63,32 +63,35 @@ logger = logging.getLogger(__name__)
 
 
 def _configure_screen_step_for_panel_refit(pipeline, panel_features: list[str]) -> None:
-    """Configure screening step for fixed-panel refits used in essentiality validation.
+    """Configure pipeline steps for fixed-panel refits used in essentiality validation.
 
     During within-panel essentiality, we refit on a reduced feature matrix
-    (panel proteins, optionally plus metadata). If the trained pipeline includes
-    a ``screen`` step, its original ``protein_cols`` still points to the full
-    training protein universe and can trigger KeyError on missing columns.
+    (panel proteins, optionally plus metadata). This helper adjusts:
 
-    This helper rewires screening to:
-    1) treat only the panel proteins as proteins for this refit context, and
-    2) skip re-running univariate screening by pinning precomputed_features.
+    1) ``screen`` step: rewire protein_cols and pin precomputed_features so
+       screening passes through only the panel proteins.
+    2) ``sel`` / ``model_sel`` steps: replace with ``"passthrough"`` because
+       the panel is already fixed and SelectKBest(k=tuned_k) would raise
+       ValueError when tuned_k exceeds the (smaller) panel size.
 
-    That keeps drop-column refits stable when each cluster removes additional
-    panel proteins.
+    That keeps drop-column refits stable across all model types.
     """
     if not hasattr(pipeline, "named_steps"):
         return
 
+    # -- Screen step: pin to panel proteins --
     screen_step = pipeline.named_steps.get("screen")
-    if screen_step is None:
-        return
+    if screen_step is not None:
+        panel_copy = list(panel_features)
+        if hasattr(screen_step, "protein_cols"):
+            screen_step.protein_cols = panel_copy
+        if hasattr(screen_step, "precomputed_features"):
+            screen_step.precomputed_features = panel_copy
 
-    panel_copy = list(panel_features)
-    if hasattr(screen_step, "protein_cols"):
-        screen_step.protein_cols = panel_copy
-    if hasattr(screen_step, "precomputed_features"):
-        screen_step.precomputed_features = panel_copy
+    # -- Feature selection steps: bypass (panel is already fixed) --
+    for step_name in ("sel", "model_sel"):
+        if step_name in pipeline.named_steps:
+            pipeline.set_params(**{step_name: "passthrough"})
 
 
 def _extract_bundle_metadata(model_path: Path) -> dict:

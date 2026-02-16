@@ -144,6 +144,7 @@ DEFAULT_OUTPUT_CONFIG: dict[str, Any] = {
     "plot_shap_summary": True,
     "plot_shap_waterfall": True,
     "plot_shap_dependence": True,
+    "plot_shap_heatmap": True,
 }
 
 # Default strictness configuration

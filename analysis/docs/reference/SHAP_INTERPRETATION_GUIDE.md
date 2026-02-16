@@ -65,20 +65,34 @@ Explains a single patient's prediction step-by-step.
 - Study FP and FN waterfall plots to understand misclassifications
 - Use to identify feature combinations that drive risk in high-risk individuals
 
-### 4. Dependence Plot (Feature-Risk Relationship)
+### 4. Scatter Plot (Feature-Risk Relationship)
 
-Shows how an individual feature's value (x-axis) relates to its SHAP contribution (y-axis).
+Shows how an individual feature's value (x-axis) relates to its SHAP contribution (y-axis). Uses the modern `shap.plots.scatter` API (replaces the legacy `shap.dependence_plot`).
 
 **What to look for**:
 - Slope: Is the relationship monotonic (always up/down) or non-linear?
 - Scatter: Do samples with the same feature value have different SHAP values? (Indicates interactions)
-- Color gradient: Interaction with another feature
+- Color gradient: Auto-detected interaction feature (strongest interacting feature is selected automatically)
 
 **Clinical interpretation**:
 - Steep positive slope = stronger risk factor (more weight in predictions)
 - Flat trend = weak association (feature is noise)
 - Non-linear relationship = complex dose-response curve
 - Color variation = feature works differently in different contexts (pathway interactions)
+
+### 5. Heatmap Plot (Per-Sample Feature Attribution Matrix)
+
+Shows SHAP values as a color-encoded matrix with samples on the x-axis and features on the y-axis. Samples are hierarchically clustered to group similar attribution patterns together.
+
+**What to look for**:
+- Clusters of samples with similar SHAP patterns (potential disease subtypes)
+- Features with consistent sign across all samples vs. variable sign
+- Subgroups where different features dominate
+
+**Clinical interpretation**:
+- Distinct sample clusters may correspond to biological subtypes or risk profiles
+- Features with universally positive SHAP values are consistent risk markers
+- Heterogeneous patterns suggest context-dependent feature importance
 
 ---
 
@@ -160,8 +174,9 @@ Waterfall TP/FP/FN/TN classification uses the operating threshold from the valid
 - Compare to typical waterfall patterns
 
 ### Step 3: Feature Validation
-- Review the dependence plots for top proteins
+- Review the scatter plots for top proteins
 - Check for non-linearity or unexpected interactions
+- Use the heatmap to identify patient subgroups with distinct feature patterns
 - Cross-reference with biological pathways
 
 ### Step 4: Misclassification Analysis

@@ -77,28 +77,38 @@ def _normalize_expected_value(
     classes: np.ndarray | None = None,
     positive_label: int = 1,
 ) -> float:
-    """Normalize SHAP expected_value to positive-class scalar.
+    """Normalize SHAP expected/base value to positive-class scalar.
 
-    SHAP explainers return expected_value in inconsistent shapes:
-    scalar, length-2 array (binary classifiers), or list wrapping.
-    This helper always returns a float for the positive class.
+    Handles shapes from both legacy (explainer.expected_value) and modern
+    (explanation.base_values) APIs:
+    - scalar
+    - length-2 array (binary classifier class axis)
+    - per-sample array (n_samples,) -- take first element (constant for a given explainer)
+    - per-sample matrix (n_samples, 2) -- select positive class column, take first
+    - list wrapping
 
-    When ev is array-like with length 2 (binary classifier), uses classes
-    (from clf.classes_) to find the index matching positive_label rather
-    than hardcoding index [1]. This prevents silent sign flips if a model's
-    class ordering is [1, 0] instead of the conventional [0, 1].
+    Uses classes (from clf.classes_) to find the index matching positive_label
+    rather than hardcoding index [1].
     """
     # Unwrap single-element list/array
     if isinstance(ev, list):
         ev = ev[0] if len(ev) == 1 else np.array(ev)
 
     if isinstance(ev, np.ndarray):
+        # Per-sample matrix (n_samples, 2) from modern API binary classifiers
+        if ev.ndim == 2 and ev.shape[1] == 2:
+            idx = _positive_class_index(classes, positive_label)
+            return float(ev[0, idx])
+
         ev = ev.ravel()
         if ev.shape[0] == 1:
             return float(ev[0])
         if ev.shape[0] == 2:
             idx = _positive_class_index(classes, positive_label)
             return float(ev[idx])
+        # Per-sample 1D array from modern API (all values identical for a given explainer)
+        if ev.shape[0] > 2:
+            return float(ev[0])
 
     return float(ev)
 
@@ -459,9 +469,9 @@ def compute_background_sensitivity(
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            raw_shap = explainer.shap_values(X_eval_transformed)
+            explanation = explainer(X_eval_transformed)
 
-        attr_values = _normalize_shap_values(raw_shap, classes, config.positive_label)
+        attr_values = _normalize_shap_values(explanation.values, classes, config.positive_label)
         attributions.append(np.asarray(attr_values))
 
     # Compute mean |SHAP| rankings for each background (descending importance)
@@ -663,16 +673,16 @@ def compute_shap_for_fold(
         config,
     )
 
-    # Compute SHAP values
+    # Compute SHAP values (modern __call__ API returns Explanation objects)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        raw_shap = explainer.shap_values(X_val_transformed)
-
-    raw_ev = explainer.expected_value
+        explanation = explainer(X_val_transformed)
 
     # Normalize to positive class (C13)
-    values = _normalize_shap_values(raw_shap, classes, config.positive_label)
-    expected_value = _normalize_expected_value(raw_ev, classes, config.positive_label)
+    values = _normalize_shap_values(explanation.values, classes, config.positive_label)
+    expected_value = _normalize_expected_value(
+        explanation.base_values, classes, config.positive_label
+    )
 
     # Cast dtype
     values = values.astype(config.raw_dtype)
@@ -751,16 +761,16 @@ def compute_final_shap(
         config,
     )
 
-    # Compute SHAP values
+    # Compute SHAP values (modern __call__ API returns Explanation objects)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        raw_shap = explainer.shap_values(X_eval_transformed)
-
-    raw_ev = explainer.expected_value
+        explanation = explainer(X_eval_transformed)
 
     # Normalize
-    values = _normalize_shap_values(raw_shap, classes, config.positive_label)
-    expected_value = _normalize_expected_value(raw_ev, classes, config.positive_label)
+    values = _normalize_shap_values(explanation.values, classes, config.positive_label)
+    expected_value = _normalize_expected_value(
+        explanation.base_values, classes, config.positive_label
+    )
     values = values.astype(config.raw_dtype)
 
     # Background sensitivity analysis (optional, disabled by default)

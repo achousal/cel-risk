@@ -914,6 +914,7 @@ def run_pipeline(
             plot_learning_curve=out_cfg.plot_learning_curve,
             plot_shap_summary=out_cfg.plot_shap_summary,
             plot_shap_dependence=out_cfg.plot_shap_dependence,
+            plot_shap_heatmap=getattr(out_cfg, "plot_shap_heatmap", True),
             log_level=log_level,
         )
     step_timings.append(("Aggregation", time.monotonic() - t0))
@@ -964,6 +965,7 @@ def run_pipeline(
             n_boot=n_boot,
             plot_shap_summary=getattr(training_config.output, "plot_shap_summary", True),
             plot_shap_dependence=getattr(training_config.output, "plot_shap_dependence", True),
+            plot_shap_heatmap=getattr(training_config.output, "plot_shap_heatmap", True),
             log_level=log_level,
         )
         step_timings.append(("Ensemble", time.monotonic() - t0))

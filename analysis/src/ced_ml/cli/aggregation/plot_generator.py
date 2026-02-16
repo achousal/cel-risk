@@ -334,6 +334,14 @@ def generate_aggregated_plots(
                                 )
 
 
+def _load_pooled_parquet(out_dir: Path, filename: str) -> pd.DataFrame | None:
+    """Load a pooled parquet from the shap subdirectory, returning None if absent."""
+    path = out_dir / "shap" / filename
+    if path.exists():
+        return pd.read_parquet(path)
+    return None
+
+
 def generate_aggregated_shap_plots(
     pooled_shap_df: pd.DataFrame | None,
     oof_shap_importance_df: pd.DataFrame | None,
@@ -343,14 +351,20 @@ def generate_aggregated_shap_plots(
     plot_formats: list[str],
     plot_shap_summary: bool = True,
     plot_shap_dependence: bool = True,
+    plot_shap_waterfall: bool = True,
+    plot_shap_heatmap: bool = True,
     logger: logging.Logger | None = None,
 ) -> None:
     """
     Generate aggregated SHAP plots from pooled SHAP values across splits.
 
-    Produces bar importance, beeswarm (if pooled values available), and
-    dependence plots (top 5 features). Falls back to OOF importance CSV
-    for the bar plot when pooled SHAP values are not available.
+    Produces bar importance, beeswarm (if pooled values available),
+    scatter plots (top 5 features), heatmap, and waterfall plots (if sample
+    metadata is available). Falls back to OOF importance CSV for the bar
+    plot when pooled SHAP values are not available.
+
+    Uses pooled X_transformed for beeswarm/scatter color axis when
+    available; falls back to SHAP-as-color with a warning otherwise.
 
     Args:
         pooled_shap_df: Pooled test SHAP values (samples x features + split_seed)
@@ -360,7 +374,9 @@ def generate_aggregated_shap_plots(
         out_dir: Aggregation output directory (aggregated/)
         plot_formats: List of plot formats (e.g., ["png", "pdf"])
         plot_shap_summary: Whether to generate bar and beeswarm plots
-        plot_shap_dependence: Whether to generate dependence plots
+        plot_shap_dependence: Whether to generate scatter (dependence) plots
+        plot_shap_waterfall: Whether to generate waterfall plots
+        plot_shap_heatmap: Whether to generate heatmap plots
         logger: Optional logger instance
     """
     try:
@@ -368,6 +384,7 @@ def generate_aggregated_shap_plots(
             plot_bar_importance,
             plot_beeswarm,
             plot_dependence,
+            plot_heatmap,
         )
     except ImportError as e:
         if logger:
@@ -399,11 +416,25 @@ def generate_aggregated_shap_plots(
         shap_values = pooled_shap_df[feature_cols].values
         feature_names = feature_cols
 
+        # Load pooled X_transformed for color axis (beeswarm/scatter)
+        features_df = _load_pooled_parquet(
+            out_dir, f"test_shap_features_pooled__{model_name}.parquet.gz"
+        )
+        if features_df is not None:
+            feat_feature_cols = [c for c in features_df.columns if c != "split_seed"]
+            color_values = features_df[feat_feature_cols].values
+        else:
+            color_values = shap_values
+            if logger:
+                logger.info(
+                    f"X_transformed not available for {model_name}; "
+                    "using SHAP values as beeswarm/scatter color axis (legacy fallback)"
+                )
+
         summary_plot_failed = False
         if plot_shap_summary:
             try:
                 for fmt in plot_formats:
-                    # Bar plot from pooled values
                     plot_bar_importance(
                         shap_values,
                         feature_names,
@@ -411,11 +442,9 @@ def generate_aggregated_shap_plots(
                         shap_output_scale=shap_output_scale,
                     )
 
-                    # Beeswarm plot (uses SHAP values as feature values for color
-                    # since X_transformed is not available at aggregation time)
                     plot_beeswarm(
                         shap_values,
-                        shap_values,
+                        color_values,
                         feature_names,
                         outpath=shap_plots_dir / f"{model_name}__shap_beeswarm.{fmt}",
                         shap_output_scale=shap_output_scale,
@@ -429,7 +458,6 @@ def generate_aggregated_shap_plots(
                     )
 
         if plot_shap_dependence:
-            # Top 5 features by mean |SHAP|
             mean_abs = np.mean(np.abs(shap_values), axis=0)
             top_indices = np.argsort(mean_abs)[::-1][:5]
 
@@ -441,17 +469,48 @@ def generate_aggregated_shap_plots(
                         plot_dependence(
                             shap_values,
                             feat_idx,
-                            shap_values,
+                            color_values,
                             feature_names,
-                            outpath=shap_plots_dir / f"{model_name}__dependence_{safe_name}.{fmt}",
+                            outpath=shap_plots_dir / f"{model_name}__scatter_{safe_name}.{fmt}",
                             shap_output_scale=shap_output_scale,
                         )
             except ImportError as e:
                 if logger:
                     logger.warning(
-                        f"SHAP dependence plotting unavailable for {model_name}: {e}. "
-                        "Continuing without dependence plots."
+                        f"SHAP scatter plotting unavailable for {model_name}: {e}. "
+                        "Continuing without scatter plots."
                     )
+
+        # Heatmap (per-sample SHAP across features)
+        if plot_shap_heatmap:
+            try:
+                for fmt in plot_formats:
+                    plot_heatmap(
+                        shap_values,
+                        color_values,
+                        feature_names,
+                        outpath=shap_plots_dir / f"{model_name}__shap_heatmap.{fmt}",
+                        shap_output_scale=shap_output_scale,
+                    )
+            except ImportError as e:
+                if logger:
+                    logger.warning(
+                        f"SHAP heatmap plotting unavailable for {model_name}: {e}. "
+                        "Continuing without heatmap plots."
+                    )
+
+        # Waterfall plots from pooled sample metadata
+        if plot_shap_waterfall:
+            _generate_aggregate_waterfalls(
+                shap_values=shap_values,
+                feature_names=feature_names,
+                model_name=model_name,
+                out_dir=out_dir,
+                shap_plots_dir=shap_plots_dir,
+                plot_formats=plot_formats,
+                shap_output_scale=shap_output_scale,
+                logger=logger,
+            )
 
         if summary_plot_failed and has_oof_importance:
             top_n = min(20, len(oof_shap_importance_df))
@@ -465,7 +524,6 @@ def generate_aggregated_shap_plots(
                 )
 
     elif has_oof_importance and plot_shap_summary:
-        # Fallback: bar plot from OOF importance CSV (no beeswarm/dependence possible)
         top_n = min(20, len(oof_shap_importance_df))
         top_df = oof_shap_importance_df.head(top_n)
 
@@ -479,6 +537,68 @@ def generate_aggregated_shap_plots(
 
     if logger:
         logger.info(f"Aggregated SHAP plots saved to {shap_plots_dir}")
+
+
+def _generate_aggregate_waterfalls(
+    shap_values: np.ndarray,
+    feature_names: list[str],
+    model_name: str,
+    out_dir: Path,
+    shap_plots_dir: Path,
+    plot_formats: list[str],
+    shap_output_scale: str,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Generate waterfall plots from pooled SHAP values + sample metadata."""
+    from ced_ml.plotting.shap_plots import plot_waterfall
+
+    meta_df = _load_pooled_parquet(
+        out_dir, f"test_shap_sample_meta_pooled__{model_name}.parquet.gz"
+    )
+    if meta_df is None or meta_df.empty:
+        if logger:
+            logger.debug(f"No sample metadata for {model_name}; skipping aggregate waterfall plots")
+        return
+
+    if "y_true" not in meta_df.columns:
+        if logger:
+            logger.debug(f"y_true missing in sample metadata for {model_name}; skipping waterfalls")
+        return
+
+    prob_col = "y_prob_adjusted" if "y_prob_adjusted" in meta_df.columns else "y_prob"
+    if prob_col not in meta_df.columns:
+        if logger:
+            logger.debug(f"predictions missing in sample metadata for {model_name}; skipping")
+        return
+
+    y_true = meta_df["y_true"].values
+    y_pred = meta_df[prob_col].values
+
+    # Compute expected value as global mean SHAP (approximate base value)
+    expected_value = float(np.mean(shap_values.sum(axis=1)))
+
+    # Use median prediction as threshold for TP/FP/FN/TN classification
+    from ced_ml.features.shap_values import select_waterfall_samples
+
+    threshold = float(np.median(y_pred[y_true == 1])) if y_true.sum() > 0 else 0.5
+    samples = select_waterfall_samples(y_pred, y_true, threshold, n=4)
+
+    for info in samples:
+        idx = info["index"]
+        cat = info["category"].split(" ")[0]
+        for fmt in plot_formats:
+            plot_waterfall(
+                shap_values,
+                expected_value,
+                sample_idx=idx,
+                feature_names=feature_names,
+                outpath=shap_plots_dir / f"{model_name}__waterfall_{cat}_agg.{fmt}",
+                title=f"{model_name} (agg) - {info['category']} (p={info['pred_proba']:.3f})",
+                shap_output_scale=shap_output_scale,
+            )
+
+    if logger:
+        logger.info(f"Aggregate waterfall plots: {len(samples)} samples for {model_name}")
 
 
 def _plot_bar_from_importance_csv(

@@ -276,7 +276,7 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
             meta_path.write_text(json.dumps(metadata, indent=2))
             logger.info(f"SHAP metadata saved: {meta_path.name}")
 
-    # Test SHAP values (parquet)
+    # Test SHAP values (parquet) + feature matrix and metadata for aggregate plots
     if ctx.test_shap_payload is not None:
         shap_dir = Path(outdirs.shap)
         shap_dir.mkdir(parents=True, exist_ok=True)
@@ -290,6 +290,14 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
         test_shap_path = shap_dir / f"test_shap_values__{config.model}.parquet.gz"
         test_shap_df.to_parquet(test_shap_path, compression="gzip")
         logger.info(f"Test SHAP values saved: {test_shap_path.name}")
+
+        # Persist transformed feature matrix (for aggregate beeswarm/scatter color axis)
+        _save_shap_features(ctx.test_shap_payload, shap_dir, config.model, "test")
+
+        # Persist sample metadata (y_true, predictions) for aggregate waterfall
+        _save_shap_sample_meta(
+            ctx.test_shap_payload, ctx.test_preds_df, shap_dir, config.model, "test"
+        )
 
     # Val SHAP values (parquet, optional)
     if ctx.val_shap_payload is not None:
@@ -305,6 +313,14 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
         val_shap_path = shap_dir / f"val_shap_values__{config.model}.parquet.gz"
         val_shap_df.to_parquet(val_shap_path, compression="gzip")
         logger.info(f"Val SHAP values saved: {val_shap_path.name}")
+
+        # Persist transformed feature matrix for val too
+        _save_shap_features(ctx.val_shap_payload, shap_dir, config.model, "val")
+
+        # Persist sample metadata for val
+        _save_shap_sample_meta(
+            ctx.val_shap_payload, ctx.val_preds_df, shap_dir, config.model, "val"
+        )
 
     # Final test panel
     if ctx.final_selected_proteins:
@@ -323,6 +339,51 @@ def _save_cv_artifacts(ctx: TrainingContext) -> None:
             model=config.model,
             metadata=panel_metadata,
         )
+
+
+def _save_shap_features(payload: Any, shap_dir: Path, model_name: str, split: str) -> None:
+    """Save transformed feature matrix alongside SHAP values for aggregate color axis."""
+    if payload.X_transformed is None:
+        return
+    feature_names = payload.feature_names
+    x_arr = np.asarray(payload.X_transformed)
+    if x_arr.ndim == 1:
+        return
+    feat_df = pd.DataFrame(x_arr, columns=feature_names)
+    feat_path = shap_dir / f"{split}_shap_features__{model_name}.parquet.gz"
+    feat_df.to_parquet(feat_path, compression="gzip")
+    logger.info(f"SHAP feature matrix saved: {feat_path.name}")
+
+
+def _save_shap_sample_meta(
+    payload: Any,
+    preds_df: pd.DataFrame | None,
+    shap_dir: Path,
+    model_name: str,
+    split: str,
+) -> None:
+    """Save sample metadata (y_true, predictions) for aggregate waterfall plots."""
+    rows: dict[str, Any] = {}
+
+    if payload.y_true is not None:
+        rows["y_true"] = payload.y_true
+
+    if preds_df is not None and not preds_df.empty:
+        # Align predictions with SHAP samples (handle subsampling)
+        aligned = preds_df
+        if payload.sample_indices is not None:
+            aligned = preds_df.iloc[payload.sample_indices].reset_index(drop=True)
+        for col in ("y_prob", "y_prob_adjusted"):
+            if col in aligned.columns:
+                rows[col] = aligned[col].values
+
+    if not rows:
+        return
+
+    meta_df = pd.DataFrame(rows)
+    meta_path = shap_dir / f"{split}_shap_sample_meta__{model_name}.parquet.gz"
+    meta_df.to_parquet(meta_path, compression="gzip")
+    logger.info(f"SHAP sample metadata saved: {meta_path.name}")
 
 
 def _save_optuna_artifacts(ctx: TrainingContext) -> None:

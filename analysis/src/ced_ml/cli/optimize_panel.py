@@ -240,7 +240,7 @@ def run_optimize_panel_single_seed(
 
     feature_cols = protein_cols + cat_cols + meta_num_cols
     df, feature_cols, protein_cols = load_and_filter_data(
-        infile, feature_cols, protein_cols, meta_num_cols
+        infile, feature_cols, protein_cols, meta_num_cols, scenario=scenario
     )
 
     initial_proteins = [p for p in stable_proteins if p in df.columns]
@@ -293,7 +293,7 @@ def run_optimize_panel_single_seed(
 def run_drop_column_validation_for_panels(
     result: RFEResult,
     results_path: Path,
-    infile: str,
+    df: pd.DataFrame,
     split_dir: Path,
     scenario: str,
     model_name: str,
@@ -308,7 +308,7 @@ def run_drop_column_validation_for_panels(
     Args:
         result: RFE result with recommended panels
         results_path: Path to model's aggregated results directory
-        infile: Path to input data file
+        df: Scenario-aligned filtered data (same index space as split files)
         split_dir: Root directory containing split indices
         scenario: Data scenario (e.g., "IncidentOnly")
         model_name: Model name
@@ -322,7 +322,6 @@ def run_drop_column_validation_for_panels(
 
     from ced_ml.cli.consensus_panel import _configure_screen_step_for_panel_refit
     from ced_ml.cli.panel_optimization_helpers import load_split_indices
-    from ced_ml.data.io import read_proteomics_file
     from ced_ml.data.schema import TARGET_COL, get_positive_label
     from ced_ml.features.corr_prune import (
         build_correlation_graph,
@@ -339,8 +338,7 @@ def run_drop_column_validation_for_panels(
         logger.warning("No recommended panels found, skipping drop-column validation")
         return
 
-    # Load data once
-    df = read_proteomics_file(infile)
+    # Reuse scenario-aligned filtered dataframe from optimize-panel workflow
     y_all = (df[TARGET_COL] == get_positive_label(scenario)).astype(int).values
 
     essentiality_dir = results_path / "optimize_panel" / "essentiality"
@@ -664,7 +662,7 @@ def run_optimize_panel_aggregated(
 
     feature_cols = protein_cols + cat_cols + meta_num_cols
     df, feature_cols, protein_cols = load_and_filter_data(
-        infile, feature_cols, protein_cols, meta_num_cols
+        infile, feature_cols, protein_cols, meta_num_cols, scenario=scenario
     )
 
     # Filter stable proteins
@@ -906,7 +904,7 @@ def run_optimize_panel_aggregated(
         run_drop_column_validation_for_panels(
             result=result,
             results_path=results_path,
-            infile=infile,
+            df=df,
             split_dir=Path(split_dir),
             scenario=scenario,
             model_name=model_name,

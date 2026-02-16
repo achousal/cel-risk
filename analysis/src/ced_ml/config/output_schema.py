@@ -69,6 +69,7 @@ class OutputConfig(BaseModel):
     plot_shap_summary: bool = True
     plot_shap_waterfall: bool = True
     plot_shap_dependence: bool = True
+    plot_shap_heatmap: bool = True
 
 
 class StrictnessConfig(BaseModel):
