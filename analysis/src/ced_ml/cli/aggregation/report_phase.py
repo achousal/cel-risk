@@ -586,6 +586,7 @@ def run_report_phase(
         plot_formats=plot_formats,
         meta_lines=meta_lines,
         logger=logger,
+        ensemble_dirs=ensemble_dirs,
     )
 
     ensemble_metadata = collect_ensemble_metadata(

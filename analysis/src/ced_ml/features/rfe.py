@@ -87,6 +87,8 @@ class RFEResult:
         cluster_map: Dict mapping representative protein -> cluster metadata
             (cluster_id, cluster_size, members). Empty if correlation-aware
             pre-filtering was not used.
+        retention_freq: Dict mapping protein -> fraction of evaluated panel
+            sizes where the protein remained in the panel (0-1).
     """
 
     curve: list[dict[str, Any]] = field(default_factory=list)
@@ -95,6 +97,49 @@ class RFEResult:
     max_auroc: float = 0.0
     model_name: str = ""
     cluster_map: dict[str, dict] = field(default_factory=dict)
+    retention_freq: dict[str, float] = field(default_factory=dict)
+
+
+def _extract_curve_proteins(curve: list[dict[str, Any]]) -> list[str]:
+    """Extract unique proteins that appear in the RFE curve."""
+    proteins: set[str] = set()
+    for point in curve:
+        proteins.update(point.get("proteins", []))
+    return sorted(proteins)
+
+
+def _compute_retention_frequencies(curve: list[dict[str, Any]]) -> dict[str, float]:
+    """Compute per-protein retention frequency across evaluated panel sizes."""
+    if not curve:
+        return {}
+
+    counts: dict[str, int] = {}
+    n_points = len(curve)
+    for point in curve:
+        for protein in set(point.get("proteins", [])):
+            counts[protein] = counts.get(protein, 0) + 1
+
+    return {protein: count / n_points for protein, count in counts.items()}
+
+
+def _build_complete_elimination_ranking(
+    feature_ranking: dict[str, int],
+    proteins: list[str],
+) -> dict[str, int]:
+    """Fill missing proteins in elimination ranking as non-eliminated survivors."""
+    complete_ranking = {protein: int(order) for protein, order in feature_ranking.items()}
+    survivor_order = max(complete_ranking.values(), default=-1) + 1
+    for protein in proteins:
+        complete_ranking.setdefault(protein, survivor_order)
+    return complete_ranking
+
+
+def _complete_ranking_for_result(result: RFEResult) -> dict[str, int]:
+    """Return elimination ranking including proteins never eliminated."""
+    proteins = sorted(
+        set(_extract_curve_proteins(result.curve)) | set(result.feature_ranking.keys())
+    )
+    return _build_complete_elimination_ranking(result.feature_ranking, proteins)
 
 
 def recursive_feature_elimination(
@@ -288,6 +333,8 @@ def recursive_feature_elimination(
         f"{'='*60}\n"
     )
 
+    retention_freq = _compute_retention_frequencies(curve)
+
     return RFEResult(
         curve=curve,
         feature_ranking=feature_ranking,
@@ -295,6 +342,7 @@ def recursive_feature_elimination(
         max_auroc=max_auroc_seen,
         model_name=model_name,
         cluster_map=cluster_map,
+        retention_freq=retention_freq,
     )
 
 
@@ -360,10 +408,13 @@ def save_rfe_results(
     curve_df.to_csv(curve_path, index=False)
     paths["panel_curve"] = curve_path
 
+    complete_ranking = _complete_ranking_for_result(result)
+    retention_freq = result.retention_freq or _compute_retention_frequencies(result.curve)
+
     # 2. Feature ranking CSV
     ranking_path = os.path.join(output_dir, f"feature_ranking{suffix}.csv")
     ranking_records = []
-    for p, order in sorted(result.feature_ranking.items(), key=lambda x: x[1]):
+    for p, order in sorted(complete_ranking.items(), key=lambda x: (x[1], x[0])):
         record = {"protein": p, "elimination_order": order}
         if result.cluster_map and p in result.cluster_map:
             info = result.cluster_map[p]
@@ -379,7 +430,42 @@ def save_rfe_results(
     ranking_df.to_csv(ranking_path, index=False)
     paths["feature_ranking"] = ranking_path
 
-    # 2b. Cluster mapping CSV (if clusters were used)
+    # 2b. RFE feature report with importance-style metrics
+    feature_report_path = os.path.join(output_dir, f"rfe_feature_report{suffix}.csv")
+    max_order = max(complete_ranking.values(), default=0)
+    report_records = []
+    for protein, order in complete_ranking.items():
+        if max_order > 0:
+            importance_score = order / max_order
+        else:
+            importance_score = 1.0
+
+        report_record = {
+            "protein": protein,
+            "elimination_order": order,
+            "importance_score": float(importance_score),
+            "retention_freq": float(retention_freq.get(protein, 0.0)),
+        }
+        if result.cluster_map and protein in result.cluster_map:
+            info = result.cluster_map[protein]
+            report_record["cluster_id"] = info["cluster_id"]
+            report_record["cluster_size"] = info["cluster_size"]
+        elif result.cluster_map:
+            report_record["cluster_id"] = None
+            report_record["cluster_size"] = 1
+        report_records.append(report_record)
+
+    report_df = pd.DataFrame(report_records)
+    if not report_df.empty:
+        report_df = report_df.sort_values(
+            ["elimination_order", "retention_freq", "protein"],
+            ascending=[False, False, True],
+        ).reset_index(drop=True)
+        report_df.insert(0, "rank", range(1, len(report_df) + 1))
+    report_df.to_csv(feature_report_path, index=False)
+    paths["rfe_feature_report"] = feature_report_path
+
+    # 2c. Cluster mapping CSV (if clusters were used)
     if result.cluster_map:
         cluster_map_path = os.path.join(output_dir, f"cluster_mapping{suffix}.csv")
         cluster_records = []
@@ -465,8 +551,17 @@ def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
         raise ValueError("Cannot aggregate empty results list")
 
     if len(results) == 1:
-        logger.info("Single seed: skipping aggregation, returning as-is")
-        return results[0]
+        logger.info("Single seed: normalizing output with complete ranking")
+        single = results[0]
+        return RFEResult(
+            curve=list(single.curve),
+            feature_ranking=_complete_ranking_for_result(single),
+            recommended_panels=dict(single.recommended_panels),
+            max_auroc=single.max_auroc,
+            model_name=single.model_name,
+            cluster_map=dict(single.cluster_map),
+            retention_freq=single.retention_freq or _compute_retention_frequencies(single.curve),
+        )
 
     n_seeds = len(results)
     logger.info(f"Aggregating RFE curves across {n_seeds} seeds")
@@ -535,20 +630,46 @@ def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
         aggregated_curve.append(agg)
 
     # -- Aggregate feature rankings via mean elimination order --
-    all_proteins: set[str] = set()
-    for r in results:
-        all_proteins.update(r.feature_ranking.keys())
+    complete_rankings = [_complete_ranking_for_result(r) for r in results]
 
-    aggregated_ranking: dict[str, float] = {}
+    all_proteins: set[str] = set()
+    for ranking in complete_rankings:
+        all_proteins.update(ranking.keys())
+
+    aggregated_ranking_scores: dict[str, float] = {}
     for protein in all_proteins:
-        orders = [r.feature_ranking[protein] for r in results if protein in r.feature_ranking]
-        aggregated_ranking[protein] = float(np.mean(orders))
+        orders = [ranking[protein] for ranking in complete_rankings if protein in ranking]
+        aggregated_ranking_scores[protein] = float(np.mean(orders))
 
     # Convert to int-keyed dict sorted by mean order (for compatibility)
     sorted_ranking = {
-        p: rank
-        for rank, (p, _) in enumerate(sorted(aggregated_ranking.items(), key=lambda x: x[1]))
+        protein: rank
+        for rank, (protein, _) in enumerate(
+            sorted(aggregated_ranking_scores.items(), key=lambda x: (x[1], x[0]))
+        )
     }
+
+    # -- Aggregate retention frequency (weighted by number of curve points per seed) --
+    weighted_retention_sum: dict[str, float] = {}
+    total_curve_points = 0
+    for r in results:
+        n_points = len(r.curve)
+        if n_points == 0:
+            continue
+        total_curve_points += n_points
+        r_retention = r.retention_freq or _compute_retention_frequencies(r.curve)
+        for protein, freq in r_retention.items():
+            weighted_retention_sum[protein] = (
+                weighted_retention_sum.get(protein, 0.0) + freq * n_points
+            )
+
+    if total_curve_points > 0:
+        aggregated_retention_freq = {
+            protein: weighted_retention_sum.get(protein, 0.0) / total_curve_points
+            for protein in all_proteins
+        }
+    else:
+        aggregated_retention_freq = {}
 
     # -- Recommendations from aggregated curve --
     recommended = find_recommended_panels(aggregated_curve)
@@ -576,4 +697,5 @@ def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
         max_auroc=max_auroc,
         model_name=model_name,
         cluster_map=cluster_map,
+        retention_freq=aggregated_retention_freq,
     )

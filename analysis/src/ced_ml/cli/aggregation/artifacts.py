@@ -218,6 +218,7 @@ def aggregate_learning_curves(
     plot_formats: list[str],
     meta_lines: list[str],
     logger: logging.Logger | None = None,
+    ensemble_dirs: list[Path] | None = None,
 ) -> None:
     """Aggregate learning curve results across splits.
 
@@ -229,6 +230,7 @@ def aggregate_learning_curves(
         plot_formats: List of plot formats (e.g., ["png"])
         meta_lines: Metadata lines for plot annotations
         logger: Optional logger instance
+        ensemble_dirs: List of ENSEMBLE split_seedX directories (optional)
     """
     try:
         # CSVs go to diagnostics/, plots go to plots/
@@ -240,7 +242,8 @@ def aggregate_learning_curves(
         # Note: Keep list for aggregate_learning_curve_runs (needs individual DFs)
         # Memory impact is lower than screening (smaller DataFrames)
         all_learning_curves = []
-        for split_dir in split_dirs:
+        all_dirs = list(split_dirs) + list(ensemble_dirs or [])
+        for split_dir in all_dirs:
             seed = int(split_dir.name.replace("split_seed", ""))
             # Individual splits store CSVs in diagnostics/ (flattened)
             lc_path = split_dir / "diagnostics"
@@ -311,6 +314,7 @@ def generate_additional_artifacts(
     plot_formats: list[str],
     meta_lines: list[str],
     logger: logging.Logger | None = None,
+    ensemble_dirs: list[Path] | None = None,
 ) -> None:
     """Generate all additional diagnostic artifacts.
 
@@ -326,6 +330,7 @@ def generate_additional_artifacts(
         plot_formats: List of plot formats (e.g., ["png"])
         meta_lines: Metadata lines for plot annotations
         logger: Optional logger instance
+        ensemble_dirs: List of ENSEMBLE split_seedX directories (optional)
     """
     if logger:
         logger.info("Generating additional artifacts...")
@@ -348,4 +353,5 @@ def generate_additional_artifacts(
         plot_formats,
         meta_lines,
         logger,
+        ensemble_dirs=ensemble_dirs,
     )

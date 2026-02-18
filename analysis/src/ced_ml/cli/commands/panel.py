@@ -209,6 +209,7 @@ def optimize_panel(ctx, config, **kwargs):
     Outputs (in results_dir/aggregated/optimize_panel/)
         - panel_curve_aggregated.csv: AUROC vs panel size
         - feature_ranking_aggregated.csv: Protein elimination order
+        - rfe_feature_report_aggregated.csv: Importance + retention summary
         - recommended_panels_aggregated.json: Minimum sizes at thresholds
         - panel_curve_aggregated.png: Pareto curve visualization
     """

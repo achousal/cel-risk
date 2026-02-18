@@ -427,5 +427,6 @@ def print_optimization_summary(
         print(f"  - metrics_summary{suffix}.csv (metrics at each panel size)")
         print(f"  - recommended_panels{suffix}.json (threshold-based recommendations)")
         print(f"  - feature_ranking{suffix}.csv (protein elimination order)")
+        print(f"  - rfe_feature_report{suffix}.csv (importance and retention summary)")
 
     print(f"{'='*60}\n")

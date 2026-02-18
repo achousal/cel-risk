@@ -256,6 +256,7 @@ class TestRFEResult:
         assert result.feature_ranking == {}
         assert result.recommended_panels == {}
         assert result.max_auroc == 0.0
+        assert result.retention_freq == {}
 
     def test_with_values(self):
         """Can initialize with values."""
@@ -297,6 +298,7 @@ class TestSaveRFEResults:
             # Check all files exist
             assert Path(paths["panel_curve"]).exists()
             assert Path(paths["feature_ranking"]).exists()
+            assert Path(paths["rfe_feature_report"]).exists()
             assert Path(paths["recommended_panels"]).exists()
 
             # Check panel_curve.csv content
@@ -309,6 +311,12 @@ class TestSaveRFEResults:
                 rec = json.load(f)
             assert rec["model"] == "LR_EN"
             assert rec["max_auroc"] == 0.85
+
+            # Check feature report content
+            feature_report_df = pd.read_csv(paths["rfe_feature_report"])
+            assert "rank" in feature_report_df.columns
+            assert "importance_score" in feature_report_df.columns
+            assert "retention_freq" in feature_report_df.columns
 
     def test_creates_output_directory(self):
         """Creates output directory if not exists."""
@@ -394,11 +402,14 @@ class TestAggregateRFEResults:
             model_name="LR_EN",
         )
 
-    def test_single_seed_passthrough(self):
-        """Single seed returns the result as-is."""
+    def test_single_seed_normalized(self):
+        """Single-seed aggregation returns normalized output with complete ranking."""
         r = self._make_result(seed=0)
         agg = aggregate_rfe_results([r])
-        assert agg is r
+        assert agg is not r
+        assert len(agg.feature_ranking) == 100
+        assert agg.recommended_panels == r.recommended_panels
+        assert agg.max_auroc == r.max_auroc
 
     def test_empty_raises(self):
         """Empty list raises ValueError."""
@@ -438,10 +449,19 @@ class TestAggregateRFEResults:
         agg = aggregate_rfe_results([r0, r1])
 
         # All proteins present
-        assert len(agg.feature_ranking) == 90
+        assert len(agg.feature_ranking) == 100
         # Rankings are 0-indexed integers
         ranks = sorted(agg.feature_ranking.values())
-        assert ranks == list(range(90))
+        assert ranks == list(range(100))
+
+    def test_retention_frequency_aggregated(self):
+        """Retention frequencies are available and bounded."""
+        r0 = self._make_result(seed=0)
+        r1 = self._make_result(seed=1)
+        agg = aggregate_rfe_results([r0, r1])
+
+        assert agg.retention_freq
+        assert all(0.0 <= freq <= 1.0 for freq in agg.retention_freq.values())
 
     def test_recommended_panels_computed(self):
         """Recommended panels derived from aggregated curve."""
