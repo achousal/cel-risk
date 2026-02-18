@@ -14,7 +14,7 @@ stability_threshold: 0.95
 # Correlation threshold for clustering redundant proteins
 # Proteins with |correlation| >= this threshold are grouped, and one representative
 # per cluster is kept (the one with highest consensus score)
-corr_threshold: 0.75
+corr_threshold: 0.85
 
 # Target panel size after correlation pruning
 # This is the final number of proteins in the consensus panel
@@ -51,10 +51,10 @@ significance:
 # This is a validation/interpretation artifact, NOT an input to panel selection.
 essentiality:
   enabled: true                 # Run within-panel essentiality validation
-  refit_mode: "fixed"           # "fixed" (clone, fast), "retune" (Optuna re-optimization),
+  refit_mode: "fixed_retune"    # "fixed" (clone, fast), "retune" (Optuna re-optimization),
                                 # or "fixed_retune" (both side-by-side for compensation analysis)
-  retune_n_trials: 20           # Optuna trials per cluster drop (retune modes only)
+  retune_n_trials: 300          # Optuna trials per cluster drop (retune modes only)
   retune_inner_folds: 3         # Inner CV folds for retune's OptunaSearchCV
   include_brier: true           # Include Brier score delta in output
   include_pr_auc: true          # Include PR-AUC delta in output
-  corr_threshold: 0.75          # Correlation threshold for clustering features
+  corr_threshold: 0.85          # Correlation threshold for clustering features

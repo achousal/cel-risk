@@ -1,7 +1,7 @@
 # Permutation Test Configuration
 
 # Permutation Test Parameters
-n_perms: 100              # Number of permutations (default: 200; increase for tighter p-values)
+n_perms: 300              # Number of permutations (default: 200; increase for tighter p-values)
 metric: auroc             # Metric to evaluate (only 'auroc' supported per ADR-007)
 random_state: 42          # Random seed for reproducibility
 

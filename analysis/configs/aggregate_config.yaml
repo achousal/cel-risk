@@ -4,7 +4,7 @@
 # Feature stability and threshold reporting
 stability_threshold: 0.75
 target_specificity: 0.95
-n_boot: 500
+n_boot: 1000
 
 # Specificity targets for additional threshold diagnostics
 control_spec_targets:

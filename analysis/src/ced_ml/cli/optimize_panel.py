@@ -302,6 +302,7 @@ def run_drop_column_validation_for_panels(
     meta_num_cols: list[str],
     corr_threshold: float,
     corr_method: str,
+    essentiality_corr_threshold: float | None = None,
 ) -> None:
     """Run drop-column essentiality validation for each recommended panel.
 
@@ -315,8 +316,11 @@ def run_drop_column_validation_for_panels(
         split_dirs: List of split directories
         cat_cols: Categorical metadata columns
         meta_num_cols: Numeric metadata columns
-        corr_threshold: Correlation threshold for clustering
+        corr_threshold: Correlation threshold for RFE pruning (used as fallback)
         corr_method: Correlation method
+        essentiality_corr_threshold: Separate correlation threshold for
+            essentiality clustering (default: 0.75). Lower than RFE threshold
+            to produce meaningful multi-feature clusters for interpretation.
     """
     from sklearn.base import clone
 
@@ -333,6 +337,14 @@ def run_drop_column_validation_for_panels(
         compute_drop_column_importance,
     )
     from ced_ml.models.calibration import OOFCalibratedModel
+
+    # Use dedicated essentiality threshold; fall back to RFE threshold if not set
+    ess_corr = essentiality_corr_threshold if essentiality_corr_threshold is not None else 0.75
+    if ess_corr != corr_threshold:
+        logger.info(
+            f"Essentiality clustering uses corr_threshold={ess_corr:.2f} "
+            f"(RFE corr_threshold={corr_threshold:.2f})"
+        )
 
     if not result.recommended_panels:
         logger.warning("No recommended panels found, skipping drop-column validation")
@@ -363,7 +375,7 @@ def run_drop_column_validation_for_panels(
 
         if len(panel_proteins) > 1:
             corr_matrix = compute_correlation_matrix(df, panel_proteins, method=corr_method)
-            G = build_correlation_graph(corr_matrix, corr_threshold)
+            G = build_correlation_graph(corr_matrix, ess_corr)
             clusters = find_connected_components(G)
             logger.info(
                 f"  Correlation clustering: {len(panel_proteins)} -> {len(clusters)} clusters"
@@ -480,6 +492,7 @@ def run_optimize_panel_aggregated(
     rfe_tune_spaces: dict[str, dict[str, dict]] | None = None,
     require_significance: bool = False,
     significance_alpha: float = 0.05,
+    essentiality_corr_threshold: float | None = None,
 ) -> RFEResult | None:
     """Run panel optimization using aggregated stability panel.
 
@@ -913,6 +926,7 @@ def run_optimize_panel_aggregated(
             meta_num_cols=filtered_meta_num_cols,
             corr_threshold=corr_threshold,
             corr_method=corr_method,
+            essentiality_corr_threshold=essentiality_corr_threshold,
         )
         logger.info("Drop-column essentiality validation completed successfully")
     except Exception as e:

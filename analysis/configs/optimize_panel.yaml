@@ -4,18 +4,18 @@
 
 # RFE Algorithm Parameters
 stability_threshold: 0.95    # Minimum selection fraction for stable proteins (default: 0.90)
-start_size: 100               # Cap starting panel to top N proteins by selection frequency (null = no cap)
+start_size: 100              # Cap starting panel to top N proteins by selection frequency (null = no cap)
 min_size: 5                  # Minimum panel size to evaluate (default: 5)
 min_auroc_frac: 0.50         # Early stop if AUROC < this fraction of max (default: 0.90)
 cv_folds: 5                  # CV folds for OOF AUROC (0 = skip; 5 recommended for stable estimates)
 step_strategy: fine          # Feature elimination: geometric, fine, linear (default: geometric)
 
 # Per-k Hyperparameter Re-tuning
-retune_trials: 100            # Optuna trials per evaluation point
+retune_trials: 300            # Optuna trials per evaluation point
 
 # Correlation-Aware Pruning
 corr_aware: true             # Enable correlation-aware redundancy pruning (default: true)
-corr_threshold: 0.95         # Correlation threshold for pruning redundant features (default: 0.80)
+corr_threshold: 0.85         # Correlation threshold for pruning redundant features (default: 0.80)
 corr_method: spearman        # Correlation method: spearman or pearson (default: spearman)
 
 # HPC Parallelization (only used with --hpc flag)
@@ -32,8 +32,11 @@ n_jobs_hpc: -1               # Number of parallel jobs per model (-1 = all CPUs,
 #     clf__C: {type: float, low: 1.0e-4, high: 1.0, log: true}
 #     clf__l1_ratio: {type: float, low: 0.0, high: 1.0, log: false}
 
-# Essentiality settings are in consensus_panel.yaml (single source of truth).
-# optimize-panel uses corr_threshold from its own top-level setting above.
+# Drop-column essentiality (lightweight, fixed-refit only).
+# Full essentiality settings (refit modes, retune, Brier/PR-AUC) live in
+# consensus_panel.yaml, which is the source of truth for advanced modes.
+essentiality:
+  corr_threshold: 0.85          # Clustering threshold for essentiality (separate from RFE)
 
 # Significance Gating
 significance:

@@ -235,6 +235,7 @@ def optimize_panel(ctx, config, **kwargs):
     # Load full config for nested sections
     config_params = load_config_file(Path(config_path) if config_path else None)
     significance_cfg = config_params.get("significance", {})
+    essentiality_cfg = config_params.get("essentiality", {})
 
     # Merge config with CLI args (CLI takes precedence)
     param_keys = [
@@ -638,6 +639,7 @@ def optimize_panel(ctx, config, **kwargs):
                     significance_cfg.get("alpha"),
                     0.05,
                 ),
+                essentiality_corr_threshold=essentiality_cfg.get("corr_threshold"),
             )
 
         click.echo(f"\n{'=' * 70}")
@@ -681,6 +683,7 @@ def optimize_panel(ctx, config, **kwargs):
                 significance_cfg.get("alpha"),
                 0.05,
             ),
+            essentiality_corr_threshold=essentiality_cfg.get("corr_threshold"),
         )
 
 

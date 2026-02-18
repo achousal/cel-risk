@@ -1052,6 +1052,7 @@ def run_pipeline(
                 if _op_rfe_spaces:
                     logger.info("Loaded rfe_tune_spaces from %s", _op_config_path)
 
+            _op_ess_cfg = _op_cfg.get("essentiality", {})
             run_optimize_panel_aggregated(
                 results_dir=results_dir,
                 infile=str(infile),
@@ -1068,6 +1069,7 @@ def run_pipeline(
                 log_level=log_level,
                 n_jobs=-1,
                 rfe_tune_spaces=_op_rfe_spaces,
+                essentiality_corr_threshold=_op_ess_cfg.get("corr_threshold"),
             )
         step_timings.append(("Panel optimization", time.monotonic() - t0))
 

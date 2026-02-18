@@ -35,8 +35,8 @@ hpc:
     post_timeout: 2.0  # hr
     perm_timeout: 20.0  # hr
     panel_timeout: 10.0  # hr
-    consensus_timeout: 8.0  # hr
+    consensus_timeout: 20.0  # hr
     max_concurrent_submissions: 20
     cores: 1
     mem_per_core: 2000
-    walltime: "60:00"
+    walltime: "72:00"
