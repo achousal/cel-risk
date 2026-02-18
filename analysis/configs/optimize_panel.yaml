@@ -32,13 +32,8 @@ n_jobs_hpc: -1               # Number of parallel jobs per model (-1 = all CPUs,
 #     clf__C: {type: float, low: 1.0e-4, high: 1.0, log: true}
 #     clf__l1_ratio: {type: float, low: 0.0, high: 1.0, log: false}
 
-# Drop-column essentiality validation for recommended panels
-essentiality:
-  refit_mode: "fixed"           # "fixed" (clone, fast), "retune" (Optuna re-optimization),
-                                # or "fixed_retune" (both side-by-side for compensation analysis)
-  retune_n_trials: 20           # Optuna trials per cluster drop (retune modes only)
-  retune_inner_folds: 3         # Inner CV folds for retune's OptunaSearchCV
-  corr_threshold: 0.95          # Correlation threshold for clustering features
+# Essentiality settings are in consensus_panel.yaml (single source of truth).
+# optimize-panel uses corr_threshold from its own top-level setting above.
 
 # Significance Gating
 significance:
