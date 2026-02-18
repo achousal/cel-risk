@@ -150,6 +150,13 @@ def load_data_and_models(
     if not results_path.exists():
         raise FileNotFoundError(f"Results directory not found: {results_path}")
 
+    # Auto-load saved config from run directory when no explicit config provided
+    if config is None:
+        saved_config_path = results_path / "training_config.yaml"
+        if saved_config_path.exists():
+            logger.info(f"Auto-loading config from run directory: {saved_config_path}")
+            config = load_training_config(config_file=str(saved_config_path))
+
     if base_models is None:
         base_models = [
             ModelName.LR_EN,

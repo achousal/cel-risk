@@ -768,6 +768,27 @@ def optimize_panel(ctx, config, **kwargs):
     help="Correlation threshold for clustering in essentiality validation (default: 0.75)",
 )
 @click.option(
+    "--essentiality-refit-mode",
+    type=click.Choice(["fixed", "retune", "fixed_retune"]),
+    default=None,
+    help=(
+        "Refit strategy for essentiality: 'fixed' (clone, fast), "
+        "'retune' (Optuna re-optimization), 'fixed_retune' (both side-by-side)"
+    ),
+)
+@click.option(
+    "--retune-n-trials",
+    type=int,
+    default=None,
+    help="Optuna trials per cluster drop in retune modes (default: 20)",
+)
+@click.option(
+    "--retune-inner-folds",
+    type=int,
+    default=None,
+    help="Inner CV folds for retune's OptunaSearchCV (default: 3)",
+)
+@click.option(
     "--outdir",
     type=click.Path(),
     default=None,
@@ -905,4 +926,13 @@ def consensus_panel(ctx, config, **kwargs):
         or essentiality_cfg.get("corr_threshold", 0.75),
         include_brier=essentiality_cfg.get("include_brier", True),
         include_pr_auc=essentiality_cfg.get("include_pr_auc", True),
+        essentiality_refit_mode=(
+            kwargs.get("essentiality_refit_mode") or essentiality_cfg.get("refit_mode", "fixed")
+        ),
+        essentiality_retune_n_trials=(
+            kwargs.get("retune_n_trials") or essentiality_cfg.get("retune_n_trials", 20)
+        ),
+        essentiality_retune_inner_folds=(
+            kwargs.get("retune_inner_folds") or essentiality_cfg.get("retune_inner_folds", 3)
+        ),
     )

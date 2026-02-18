@@ -400,7 +400,7 @@ def _build_postprocessing_command(
         for split_index, seed in enumerate(split_seeds):
             lines.append(f'echo "Training ensemble seed {seed}..."')
             lines.append(
-                f"ced train-ensemble --run-id {run_id} --split-seed {seed} --split-index {split_index}"
+                f'ced train-ensemble --config "{config_file}" --run-id {run_id} --split-seed {seed} --split-index {split_index}'
                 f" || {{ echo 'WARNING: ensemble seed {seed} failed'; ENSEMBLE_FAILURES=$((ENSEMBLE_FAILURES+1)); }}"
             )
         lines.append("")

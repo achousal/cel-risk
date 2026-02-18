@@ -836,3 +836,281 @@ class TestEdgeCases:
         )
 
         assert len(results) == len(clusters)
+
+
+# =============================================================================
+# Tests: Refit Modes (fixed, retune, fixed_retune)
+# =============================================================================
+
+
+class TestRefitModes:
+    """Tests for the three refit modes in drop-column importance."""
+
+    def test_fixed_mode_matches_default(self, fitted_pipeline, train_val_split):
+        """Test that refit_mode='fixed' produces identical results to default (no mode)."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A", "B"], ["C"]]
+
+        results_default = compute_drop_column_importance(
+            estimator=fitted_pipeline,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            feature_clusters=clusters,
+            random_state=42,
+        )
+
+        results_fixed = compute_drop_column_importance(
+            estimator=fitted_pipeline,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            feature_clusters=clusters,
+            random_state=42,
+            refit_mode="fixed",
+        )
+
+        for r_def, r_fix in zip(results_default, results_fixed, strict=True):
+            assert r_def.cluster_id == r_fix.cluster_id
+            assert abs(r_def.delta_auroc - r_fix.delta_auroc) < 1e-9
+            assert r_fix.retune_auroc is None
+            assert r_fix.delta_auroc_retune is None
+
+    def test_fixed_mode_no_retune_fields(self, fitted_pipeline, train_val_split):
+        """Test that fixed mode does not populate retune fields."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A"]]
+
+        results = compute_drop_column_importance(
+            estimator=fitted_pipeline,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            feature_clusters=clusters,
+            random_state=42,
+            refit_mode="fixed",
+        )
+
+        assert results[0].retune_auroc is None
+        assert results[0].delta_auroc_retune is None
+        assert results[0].retune_best_params == {}
+
+    def test_retune_mode_requires_model_name(self, fitted_pipeline, train_val_split):
+        """Test that retune mode raises without model_name."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A"]]
+
+        with pytest.raises(ValueError, match="model_name is required"):
+            compute_drop_column_importance(
+                estimator=fitted_pipeline,
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                feature_clusters=clusters,
+                random_state=42,
+                refit_mode="retune",
+            )
+
+    def test_fixed_retune_requires_model_name(self, fitted_pipeline, train_val_split):
+        """Test that fixed_retune mode raises without model_name."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A"]]
+
+        with pytest.raises(ValueError, match="model_name is required"):
+            compute_drop_column_importance(
+                estimator=fitted_pipeline,
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                feature_clusters=clusters,
+                random_state=42,
+                refit_mode="fixed_retune",
+            )
+
+    def test_retune_mode_produces_results(self, train_val_split):
+        """Test that retune mode produces valid results via Optuna."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A"]]
+
+        # Build a simple fitted pipeline for baseline AUROC computation
+        pipeline = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("model", LogisticRegression(random_state=42, max_iter=200)),
+            ]
+        )
+        pipeline.fit(X_train, y_train)
+
+        results = compute_drop_column_importance(
+            estimator=pipeline,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            feature_clusters=clusters,
+            random_state=42,
+            refit_mode="retune",
+            model_name="LR_EN",
+            cat_cols=[],
+            retune_n_trials=5,
+            retune_inner_folds=2,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        # In retune mode, primary delta_auroc uses retune values
+        assert not np.isnan(r.delta_auroc)
+        assert r.retune_auroc is not None
+        assert r.delta_auroc_retune is not None
+        assert len(r.retune_best_params) > 0
+
+    def test_fixed_retune_mode_has_both(self, train_val_split):
+        """Test that fixed_retune mode populates both fixed and retune fields."""
+        X_train, y_train, X_val, y_val = train_val_split
+        clusters = [["A"]]
+
+        pipeline = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("model", LogisticRegression(random_state=42, max_iter=200)),
+            ]
+        )
+        pipeline.fit(X_train, y_train)
+
+        results = compute_drop_column_importance(
+            estimator=pipeline,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            feature_clusters=clusters,
+            random_state=42,
+            refit_mode="fixed_retune",
+            model_name="LR_EN",
+            cat_cols=[],
+            retune_n_trials=5,
+            retune_inner_folds=2,
+        )
+
+        assert len(results) == 1
+        r = results[0]
+        # Fixed fields populated
+        assert not np.isnan(r.delta_auroc)
+        assert not np.isnan(r.reduced_auroc)
+        # Retune fields populated
+        assert r.retune_auroc is not None
+        assert r.delta_auroc_retune is not None
+        assert len(r.retune_best_params) > 0
+
+    def test_retune_to_dict_includes_retune_fields(self, train_val_split):
+        """Test that to_dict includes retune fields when present."""
+        result = DropColumnResult(
+            cluster_id=0,
+            cluster_features=["A"],
+            original_auroc=0.85,
+            reduced_auroc=0.80,
+            delta_auroc=0.05,
+            retune_auroc=0.78,
+            delta_auroc_retune=0.07,
+            retune_best_params={"clf__C": 0.1},
+        )
+        d = result.to_dict()
+        assert "retune_auroc" in d
+        assert d["retune_auroc"] == 0.78
+        assert "delta_auroc_retune" in d
+        assert d["delta_auroc_retune"] == 0.07
+        assert "retune_best_params" in d
+
+    def test_fixed_to_dict_excludes_retune_fields(self):
+        """Test that to_dict excludes retune fields when not set."""
+        result = DropColumnResult(
+            cluster_id=0,
+            cluster_features=["A"],
+            original_auroc=0.85,
+            reduced_auroc=0.80,
+            delta_auroc=0.05,
+        )
+        d = result.to_dict()
+        assert "retune_auroc" not in d
+        assert "delta_auroc_retune" not in d
+        assert "retune_best_params" not in d
+
+    def test_aggregation_with_retune_columns(self):
+        """Test that aggregation handles retune columns correctly."""
+        results_fold0 = [
+            DropColumnResult(
+                cluster_id=0,
+                cluster_features=["A"],
+                original_auroc=0.85,
+                reduced_auroc=0.80,
+                delta_auroc=0.05,
+                retune_auroc=0.78,
+                delta_auroc_retune=0.07,
+            ),
+        ]
+        results_fold1 = [
+            DropColumnResult(
+                cluster_id=0,
+                cluster_features=["A"],
+                original_auroc=0.86,
+                reduced_auroc=0.83,
+                delta_auroc=0.03,
+                retune_auroc=0.79,
+                delta_auroc_retune=0.07,
+            ),
+        ]
+
+        df = aggregate_drop_column_results([results_fold0, results_fold1])
+
+        assert "mean_delta_auroc_retune" in df.columns
+        assert "std_delta_auroc_retune" in df.columns
+        assert abs(df.loc[0, "mean_delta_auroc_retune"] - 0.07) < 1e-6
+
+    def test_compensation_flag(self):
+        """Test compensation flag logic in fixed_retune aggregation."""
+        # Cluster appears non-essential in fixed mode but essential in retune
+        results = [
+            [
+                DropColumnResult(
+                    cluster_id=0,
+                    cluster_features=["A"],
+                    original_auroc=0.85,
+                    reduced_auroc=0.849,
+                    delta_auroc=0.001,  # Below threshold
+                    retune_auroc=0.83,
+                    delta_auroc_retune=0.02,  # Above threshold
+                ),
+            ],
+        ]
+
+        df = aggregate_drop_column_results(results)
+
+        assert "compensation_flag" in df.columns
+        assert df.loc[0, "compensation_flag"] == True  # noqa: E712
+        assert df.loc[0, "compensation_delta"] > 0
+
+    def test_no_compensation_when_both_essential(self):
+        """Test no compensation flag when both modes agree feature is essential."""
+        results = [
+            [
+                DropColumnResult(
+                    cluster_id=0,
+                    cluster_features=["A"],
+                    original_auroc=0.85,
+                    reduced_auroc=0.80,
+                    delta_auroc=0.05,  # Above threshold
+                    retune_auroc=0.79,
+                    delta_auroc_retune=0.06,  # Also above
+                ),
+            ],
+        ]
+
+        df = aggregate_drop_column_results(results)
+
+        assert "compensation_flag" in df.columns
+        assert df.loc[0, "compensation_flag"] == False  # noqa: E712

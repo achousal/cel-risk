@@ -21,8 +21,8 @@ cost-benefit analysis for panels (e.g., "Removing feature X only costs 0.02 AURO
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -32,10 +32,14 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 if TYPE_CHECKING:
     from sklearn.pipeline import Pipeline
 
+# Valid refit modes for drop-column essentiality
+RefitMode = Literal["fixed", "retune", "fixed_retune"]
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DropColumnResult",
+    "RefitMode",
     "compute_drop_column_importance",
     "aggregate_drop_column_results",
     "validate_panel_essentiality",
@@ -119,6 +123,10 @@ class DropColumnResult:
     model_name: str = ""
     fold_id: int | None = None
     error_msg: str | None = None
+    # Retune fields (populated when refit_mode is "retune" or "fixed_retune")
+    retune_auroc: float | None = None
+    delta_auroc_retune: float | None = None
+    retune_best_params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization (JSON, CSV).
@@ -126,7 +134,7 @@ class DropColumnResult:
         Returns:
             Dictionary representation suitable for JSON/CSV export.
         """
-        return {
+        d = {
             "cluster_id": self.cluster_id,
             "cluster_features": ",".join(self.cluster_features),
             "n_features_in_cluster": len(self.cluster_features),
@@ -138,6 +146,13 @@ class DropColumnResult:
             "fold_id": self.fold_id,
             "error_msg": self.error_msg,
         }
+        if self.retune_auroc is not None:
+            d["retune_auroc"] = round(self.retune_auroc, 6)
+        if self.delta_auroc_retune is not None:
+            d["delta_auroc_retune"] = round(self.delta_auroc_retune, 6)
+        if self.retune_best_params:
+            d["retune_best_params"] = str(self.retune_best_params)
+        return d
 
 
 def compute_drop_column_importance(
@@ -148,12 +163,19 @@ def compute_drop_column_importance(
     y_val: np.ndarray,
     feature_clusters: list[list[str]],
     random_state: int = 42,
+    *,
+    refit_mode: RefitMode = "fixed",
+    model_name: str = "",
+    cat_cols: list[str] | None = None,
+    retune_n_trials: int = 20,
+    retune_inner_folds: int = 3,
+    retune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> list[DropColumnResult]:
     """Compute drop-column importance by refitting model with each cluster removed.
 
     For each cluster in feature_clusters:
     1. Remove all features in the cluster from X_train and X_val
-    2. Clone and refit the estimator on reduced training set
+    2. Refit the estimator on reduced training set (strategy depends on refit_mode)
     3. Evaluate on validation set (AUROC)
     4. Compute delta_auroc = original_auroc - reduced_auroc
 
@@ -167,6 +189,16 @@ def compute_drop_column_importance(
             Each cluster is a list of feature names.
             Example: [['A', 'B'], ['C'], ['D', 'E', 'F']]
         random_state: Random state for consistent cloning/fitting.
+        refit_mode: Strategy for refitting after dropping features.
+            - "fixed": clone with frozen hyperparams (fast, default).
+            - "retune": full Optuna re-optimization per cluster drop.
+            - "fixed_retune": run both, report side-by-side for compensation analysis.
+        model_name: Model identifier (e.g., "LR_EN", "RF"). Required for retune modes.
+        cat_cols: Categorical metadata columns. Required for retune modes.
+        retune_n_trials: Number of Optuna trials per cluster (retune modes only).
+        retune_inner_folds: Inner CV folds for retune's OptunaSearchCV.
+        retune_spaces: Optional override search spaces (model_name -> {param: spec}).
+            Passed to get_rfe_tune_space as config_overrides.
 
     Returns:
         List of DropColumnResult objects, one per cluster.
@@ -175,20 +207,9 @@ def compute_drop_column_importance(
         ValueError: If X_train/X_val have different columns or feature_clusters
                     contains unknown features.
         RuntimeError: If refitting or evaluation fails for a cluster.
-
-    Example:
-        >>> from sklearn.linear_model import LogisticRegression
-        >>> from sklearn.pipeline import Pipeline
-        >>> estimator = Pipeline([('model', LogisticRegression())])
-        >>> estimator.fit(X_train, y_train)
-        >>> clusters = [['prot_A', 'prot_B'], ['prot_C']]
-        >>> results = compute_drop_column_importance(
-        ...     estimator, X_train, y_train, X_val, y_val,
-        ...     clusters, random_state=42
-        ... )
-        >>> for res in results:
-        ...     print(f"Cluster {res.cluster_id}: delta_auroc={res.delta_auroc:.4f}")
     """
+    if refit_mode in ("retune", "fixed_retune") and not model_name:
+        raise ValueError(f"model_name is required for refit_mode='{refit_mode}'")
     # Validate inputs
     X_train = pd.DataFrame(X_train) if not isinstance(X_train, pd.DataFrame) else X_train
     X_val = pd.DataFrame(X_val) if not isinstance(X_val, pd.DataFrame) else X_val
@@ -232,6 +253,22 @@ def compute_drop_column_importance(
         logger.error(f"Failed to compute baseline AUROC: {e}")
         raise RuntimeError(f"Failed to compute baseline AUROC: {e}") from e
 
+    # Compute retune baseline AUROC if needed (re-optimized on full feature set)
+    retune_baseline_auroc = None
+    if refit_mode in ("retune", "fixed_retune"):
+        retune_baseline_auroc = _compute_retune_baseline(
+            model_name=model_name,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            cat_cols=cat_cols or [],
+            n_trials=retune_n_trials,
+            cv_folds=retune_inner_folds,
+            random_state=random_state,
+            retune_spaces=retune_spaces,
+        )
+
     results = []
 
     # For each cluster, drop and refit
@@ -246,6 +283,13 @@ def compute_drop_column_importance(
             cluster_features=cluster_features,
             original_auroc=original_auroc,
             random_state=random_state,
+            refit_mode=refit_mode,
+            model_name=model_name,
+            cat_cols=cat_cols or [],
+            retune_n_trials=retune_n_trials,
+            retune_inner_folds=retune_inner_folds,
+            retune_spaces=retune_spaces,
+            retune_baseline_auroc=retune_baseline_auroc,
         )
         results.append(result)
 
@@ -262,6 +306,13 @@ def _drop_and_evaluate_cluster(
     cluster_features: list[str],
     original_auroc: float,
     random_state: int,
+    refit_mode: RefitMode = "fixed",
+    model_name: str = "",
+    cat_cols: list[str] | None = None,
+    retune_n_trials: int = 20,
+    retune_inner_folds: int = 3,
+    retune_spaces: dict[str, dict[str, dict]] | None = None,
+    retune_baseline_auroc: float | None = None,
 ) -> DropColumnResult:
     """Helper: drop a single cluster and evaluate AUROC.
 
@@ -273,11 +324,19 @@ def _drop_and_evaluate_cluster(
         y_val: Validation labels.
         cluster_id: Cluster identifier.
         cluster_features: List of feature names to drop.
-        original_auroc: Baseline AUROC for comparison.
+        original_auroc: Baseline AUROC for comparison (fixed mode).
         random_state: Random state for consistent cloning.
+        refit_mode: "fixed", "retune", or "fixed_retune".
+        model_name: Model identifier for retune modes.
+        cat_cols: Categorical columns for retune pipeline rebuild.
+        retune_n_trials: Optuna trials for retune modes.
+        retune_inner_folds: Inner CV folds for retune.
+        retune_spaces: Optional override search spaces.
+        retune_baseline_auroc: Baseline AUROC from re-optimized model on full features.
 
     Returns:
-        DropColumnResult with delta_auroc computed.
+        DropColumnResult with delta_auroc computed. If refit_mode includes retune,
+        also populates retune_auroc, delta_auroc_retune, and retune_best_params.
     """
     try:
         # Drop cluster from X_train and X_val
@@ -297,21 +356,58 @@ def _drop_and_evaluate_cluster(
         X_train_reduced = X_train[features_to_keep]
         X_val_reduced = X_val[features_to_keep]
 
-        # Clone estimator and propagate random_state to nested estimators
-        estimator_clone = clone(estimator)
-        _propagate_random_state(estimator_clone, random_state)
-        estimator_clone.fit(X_train_reduced, y_train)
+        # --- Fixed mode (clone with frozen hyperparams) ---
+        reduced_auroc = np.nan
+        delta_auroc = np.nan
+        if refit_mode in ("fixed", "fixed_retune"):
+            estimator_clone = clone(estimator)
+            _propagate_random_state(estimator_clone, random_state)
+            estimator_clone.fit(X_train_reduced, y_train)
 
-        # Evaluate on validation set
-        y_pred_proba_reduced = estimator_clone.predict_proba(X_val_reduced)[:, 1]
-        reduced_auroc = roc_auc_score(y_val, y_pred_proba_reduced)
+            y_pred_proba_reduced = estimator_clone.predict_proba(X_val_reduced)[:, 1]
+            reduced_auroc = roc_auc_score(y_val, y_pred_proba_reduced)
+            delta_auroc = original_auroc - reduced_auroc
 
-        delta_auroc = original_auroc - reduced_auroc
+            logger.debug(
+                f"Cluster {cluster_id} [fixed] ({len(cluster_features)} features): "
+                f"reduced_auroc={reduced_auroc:.6f}, delta_auroc={delta_auroc:.6f}"
+            )
 
-        logger.debug(
-            f"Cluster {cluster_id} ({len(cluster_features)} features): "
-            f"reduced_auroc={reduced_auroc:.6f}, delta_auroc={delta_auroc:.6f}"
-        )
+        # --- Retune mode (Optuna re-optimization) ---
+        retune_auroc_val = None
+        delta_auroc_retune_val = None
+        retune_best_params = {}
+        if refit_mode in ("retune", "fixed_retune"):
+            retune_result = _retune_and_evaluate_cluster(
+                model_name=model_name,
+                X_train_reduced=X_train_reduced,
+                y_train=y_train,
+                X_val_reduced=X_val_reduced,
+                y_val=y_val,
+                cat_cols=cat_cols or [],
+                n_trials=retune_n_trials,
+                cv_folds=retune_inner_folds,
+                random_state=random_state,
+                retune_spaces=retune_spaces,
+            )
+            retune_auroc_val = retune_result["auroc"]
+            retune_best_params = retune_result["best_params"]
+
+            baseline = (
+                retune_baseline_auroc if retune_baseline_auroc is not None else original_auroc
+            )
+            delta_auroc_retune_val = baseline - retune_auroc_val
+
+            logger.debug(
+                f"Cluster {cluster_id} [retune] ({len(cluster_features)} features): "
+                f"retune_auroc={retune_auroc_val:.6f}, "
+                f"delta_auroc_retune={delta_auroc_retune_val:.6f}"
+            )
+
+        # For pure retune mode, use retune values as primary
+        if refit_mode == "retune":
+            reduced_auroc = retune_auroc_val if retune_auroc_val is not None else np.nan
+            delta_auroc = delta_auroc_retune_val if delta_auroc_retune_val is not None else np.nan
 
         return DropColumnResult(
             cluster_id=cluster_id,
@@ -319,6 +415,9 @@ def _drop_and_evaluate_cluster(
             original_auroc=original_auroc,
             reduced_auroc=reduced_auroc,
             delta_auroc=delta_auroc,
+            retune_auroc=retune_auroc_val,
+            delta_auroc_retune=delta_auroc_retune_val,
+            retune_best_params=retune_best_params,
         )
 
     except Exception as e:
@@ -331,6 +430,114 @@ def _drop_and_evaluate_cluster(
             delta_auroc=np.nan,
             error_msg=str(e),
         )
+
+
+def _retune_and_evaluate_cluster(
+    model_name: str,
+    X_train_reduced: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val_reduced: pd.DataFrame,
+    y_val: np.ndarray,
+    cat_cols: list[str],
+    n_trials: int = 20,
+    cv_folds: int = 3,
+    random_state: int = 42,
+    retune_spaces: dict[str, dict[str, dict]] | None = None,
+) -> dict[str, Any]:
+    """Re-optimize hyperparameters on reduced features and evaluate.
+
+    Uses quick_tune_at_k from rfe_tuning for Optuna-based re-optimization,
+    then evaluates the re-tuned pipeline on the validation set.
+
+    Args:
+        model_name: Model identifier (e.g., "LR_EN", "RF").
+        X_train_reduced: Training features with cluster removed.
+        y_train: Training labels.
+        X_val_reduced: Validation features with cluster removed.
+        y_val: Validation labels.
+        cat_cols: Categorical metadata columns.
+        n_trials: Number of Optuna trials.
+        cv_folds: Inner CV folds for Optuna.
+        random_state: Random seed.
+        retune_spaces: Optional override search spaces.
+
+    Returns:
+        Dict with keys: auroc, best_params.
+    """
+    from ced_ml.features.rfe_tuning import quick_tune_at_k
+
+    feature_cols = [c for c in X_train_reduced.columns if c not in cat_cols]
+
+    fitted_pipeline, best_params = quick_tune_at_k(
+        model_name=model_name,
+        X_train=X_train_reduced,
+        y_train=y_train,
+        feature_cols=feature_cols,
+        cat_cols=[c for c in cat_cols if c in X_train_reduced.columns],
+        cv_folds=cv_folds,
+        n_trials=n_trials,
+        n_jobs=1,
+        random_state=random_state,
+        rfe_tune_spaces=retune_spaces,
+    )
+
+    y_pred_proba = fitted_pipeline.predict_proba(X_val_reduced)[:, 1]
+    auroc = roc_auc_score(y_val, y_pred_proba)
+
+    return {"auroc": auroc, "best_params": best_params}
+
+
+def _compute_retune_baseline(
+    model_name: str,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    cat_cols: list[str],
+    n_trials: int = 20,
+    cv_folds: int = 3,
+    random_state: int = 42,
+    retune_spaces: dict[str, dict[str, dict]] | None = None,
+) -> float:
+    """Compute baseline AUROC from a re-optimized model on the full feature set.
+
+    This ensures the retune delta is measured against a consistently re-optimized
+    baseline, not the original training-time optimization which used a different
+    pipeline structure (screen, sel, model_sel steps).
+
+    Args:
+        model_name: Model identifier.
+        X_train: Full training features.
+        y_train: Training labels.
+        X_val: Full validation features.
+        y_val: Validation labels.
+        cat_cols: Categorical metadata columns.
+        n_trials: Number of Optuna trials.
+        cv_folds: Inner CV folds.
+        random_state: Random seed.
+        retune_spaces: Optional override search spaces.
+
+    Returns:
+        Baseline AUROC from re-optimized model.
+    """
+    logger.info(
+        f"Computing retune baseline: {model_name} with {n_trials} trials "
+        f"on {X_train.shape[1]} features"
+    )
+    result = _retune_and_evaluate_cluster(
+        model_name=model_name,
+        X_train_reduced=X_train,
+        y_train=y_train,
+        X_val_reduced=X_val,
+        y_val=y_val,
+        cat_cols=cat_cols,
+        n_trials=n_trials,
+        cv_folds=cv_folds,
+        random_state=random_state,
+        retune_spaces=retune_spaces,
+    )
+    logger.info(f"Retune baseline AUROC: {result['auroc']:.6f}")
+    return result["auroc"]
 
 
 def aggregate_drop_column_results(
@@ -426,19 +633,33 @@ def aggregate_drop_column_results(
         else:
             raise ValueError(f"Unknown agg_method: {agg_method}")
 
-        agg_rows.append(
-            {
-                "cluster_id": cluster_id,
-                "cluster_features": ",".join(cluster_features),
-                "n_features_in_cluster": n_features,
-                "mean_delta_auroc": mean_delta,
-                "std_delta_auroc": std_delta,
-                "min_delta_auroc": min_delta,
-                "max_delta_auroc": max_delta,
-                "n_folds": len(cluster_results),
-                "n_errors": n_errors,
-            }
-        )
+        row = {
+            "cluster_id": cluster_id,
+            "cluster_features": ",".join(cluster_features),
+            "n_features_in_cluster": n_features,
+            "mean_delta_auroc": mean_delta,
+            "std_delta_auroc": std_delta,
+            "min_delta_auroc": min_delta,
+            "max_delta_auroc": max_delta,
+            "n_folds": len(cluster_results),
+            "n_errors": n_errors,
+        }
+
+        # Aggregate retune deltas if present
+        valid_retune_deltas = [
+            r.delta_auroc_retune
+            for r in cluster_results
+            if r.delta_auroc_retune is not None and not np.isnan(r.delta_auroc_retune)
+        ]
+        if valid_retune_deltas:
+            row["mean_delta_auroc_retune"] = float(np.mean(valid_retune_deltas))
+            row["std_delta_auroc_retune"] = (
+                float(np.std(valid_retune_deltas, ddof=1))
+                if len(valid_retune_deltas) > 1
+                else np.nan
+            )
+
+        agg_rows.append(row)
 
     df = pd.DataFrame(agg_rows)
 
@@ -446,6 +667,14 @@ def aggregate_drop_column_results(
     df = df.sort_values("mean_delta_auroc", ascending=False, na_position="last").reset_index(
         drop=True
     )
+
+    # Add compensation flag for fixed_retune mode
+    if "mean_delta_auroc_retune" in df.columns:
+        compensation_threshold = 0.005
+        df["compensation_flag"] = (df["mean_delta_auroc"].abs() < compensation_threshold) & (
+            df["mean_delta_auroc_retune"] > compensation_threshold
+        )
+        df["compensation_delta"] = df["mean_delta_auroc_retune"] - df["mean_delta_auroc"]
 
     logger.info(
         f"Aggregated drop-column results: {len(df)} clusters across {len(results_per_fold)} folds"
@@ -464,12 +693,19 @@ def validate_panel_essentiality(
     corr_threshold: float = 0.85,
     include_brier: bool = False,
     random_state: int = 42,
+    *,
+    refit_mode: RefitMode = "fixed",
+    model_name: str = "",
+    cat_cols: list[str] | None = None,
+    retune_n_trials: int = 20,
+    retune_inner_folds: int = 3,
+    retune_spaces: dict[str, dict[str, dict]] | None = None,
 ) -> pd.DataFrame:
     """Validate panel robustness via grouped LOCO/refit.
 
     For each correlation cluster in the panel:
     1. Compute correlation matrix and cluster correlated features
-    2. Drop each cluster and refit model
+    2. Drop each cluster and refit model (strategy depends on refit_mode)
     3. Evaluate OOF AUROC (and optionally Brier)
     4. Compute delta_auroc, delta_brier, essentiality_rank
 
@@ -483,6 +719,12 @@ def validate_panel_essentiality(
         corr_threshold: Correlation threshold for clustering (default: 0.85).
         include_brier: Whether to compute Brier score (default: False).
         random_state: Random state for model cloning.
+        refit_mode: "fixed", "retune", or "fixed_retune".
+        model_name: Model identifier (required for retune modes).
+        cat_cols: Categorical metadata columns (required for retune modes).
+        retune_n_trials: Optuna trials for retune modes.
+        retune_inner_folds: Inner CV folds for retune.
+        retune_spaces: Optional override search spaces.
 
     Returns:
         DataFrame with columns:
@@ -492,23 +734,13 @@ def validate_panel_essentiality(
             - delta_auroc: float (importance measure)
             - delta_brier: float (if include_brier=True, else NaN)
             - essentiality_rank: int (1 = most essential)
+            - delta_auroc_retune: float (if retune mode, else absent)
+            - compensation_flag: bool (if fixed_retune mode, else absent)
 
         Sorted by delta_auroc descending (most essential first).
 
     Raises:
         ValueError: If panel_features are not in X_train or X_val.
-
-    Example:
-        >>> from sklearn.linear_model import LogisticRegression
-        >>> from sklearn.pipeline import Pipeline
-        >>> model = Pipeline([('model', LogisticRegression())])
-        >>> model.fit(X_train, y_train)
-        >>> panel_features = ['prot_A_resid', 'prot_B_resid', 'prot_C_resid']
-        >>> results = validate_panel_essentiality(
-        ...     model, X_train, y_train, X_val, y_val,
-        ...     panel_features, corr_threshold=0.85, random_state=42
-        ... )
-        >>> print(results[['cluster_id', 'n_features', 'delta_auroc', 'essentiality_rank']])
     """
     # Validate inputs
     X_train = pd.DataFrame(X_train) if not isinstance(X_train, pd.DataFrame) else X_train
@@ -528,7 +760,8 @@ def validate_panel_essentiality(
 
     logger.info(
         f"Validating panel essentiality: {len(panel_features)} features, "
-        f"corr_threshold={corr_threshold}, include_brier={include_brier}"
+        f"corr_threshold={corr_threshold}, include_brier={include_brier}, "
+        f"refit_mode={refit_mode}"
     )
 
     # Step 1: Build correlation clusters
@@ -551,6 +784,12 @@ def validate_panel_essentiality(
         y_val=y_val,
         feature_clusters=feature_clusters,
         random_state=random_state,
+        refit_mode=refit_mode,
+        model_name=model_name,
+        cat_cols=cat_cols,
+        retune_n_trials=retune_n_trials,
+        retune_inner_folds=retune_inner_folds,
+        retune_spaces=retune_spaces,
     )
 
     # Step 3: Build results DataFrame

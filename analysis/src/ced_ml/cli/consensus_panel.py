@@ -348,6 +348,9 @@ def _run_multimodel_essentiality_validation(
     essentiality_corr_threshold: float,
     include_brier: bool = True,
     include_pr_auc: bool = True,
+    refit_mode: str = "fixed",
+    retune_n_trials: int = 20,
+    retune_inner_folds: int = 3,
 ) -> dict:
     """Run drop-column essentiality validation for all models and aggregate.
 
@@ -370,6 +373,9 @@ def _run_multimodel_essentiality_validation(
         essentiality_corr_threshold: Correlation threshold for clustering
         include_brier: Whether to compute delta-Brier
         include_pr_auc: Whether to compute delta-PR-AUC
+        refit_mode: "fixed", "retune", or "fixed_retune"
+        retune_n_trials: Optuna trials per cluster (retune modes only)
+        retune_inner_folds: Inner CV folds for retune
 
     Returns:
         Dict with essentiality summary including per-model and cross-model statistics
@@ -384,7 +390,10 @@ def _run_multimodel_essentiality_validation(
         _compute_pr_auc_deltas,
     )
 
-    logger.info(f"Running within-panel essentiality validation for {len(model_dirs)} models...")
+    logger.info(
+        f"Running within-panel essentiality validation for {len(model_dirs)} models "
+        f"(refit_mode={refit_mode})"
+    )
 
     # Keep resolved metadata columns in refits
     metadata_features = resolved_cols.get("numeric_metadata", []) + resolved_cols.get(
@@ -485,6 +494,10 @@ def _run_multimodel_essentiality_validation(
                 )
                 panel_pipeline.fit(X_train_seed, y_train_seed)
 
+                # Resolve cat_cols for retune modes
+                cat_cols = resolved_cols.get("categorical_metadata", [])
+                cat_cols = [c for c in cat_cols if c in X_train_seed.columns]
+
                 # Primary: delta-AUROC via drop-column
                 fold_results = compute_drop_column_importance(
                     estimator=panel_pipeline,
@@ -494,6 +507,11 @@ def _run_multimodel_essentiality_validation(
                     y_val=y_val_seed,
                     feature_clusters=clusters,
                     random_state=seed,
+                    refit_mode=refit_mode,
+                    model_name=model_name,
+                    cat_cols=cat_cols,
+                    retune_n_trials=retune_n_trials,
+                    retune_inner_folds=retune_inner_folds,
                 )
                 drop_column_results_per_fold.append(fold_results)
 
@@ -564,11 +582,25 @@ def _run_multimodel_essentiality_validation(
     # Cross-model aggregation
     logger.info(f"\nAggregating essentiality across {len(per_model_results)} models...")
 
-    # Merge all model results on cluster_id
+    # Merge all model results on cluster_id.
+    # Per-model outputs from aggregate_drop_column_results currently expose
+    # `n_features_in_cluster` (not `n_features`), so handle both schemas.
     merged_df = None
     for model_name, model_df in per_model_results.items():
+        n_features_col = (
+            "n_features"
+            if "n_features" in model_df.columns
+            else "n_features_in_cluster" if "n_features_in_cluster" in model_df.columns else None
+        )
+        if n_features_col is None:
+            raise ValueError(
+                f"Essentiality dataframe for {model_name} missing feature-count column. "
+                "Expected one of: n_features, n_features_in_cluster"
+            )
+
         if merged_df is None:
-            merged_df = model_df[["cluster_id", "n_features", "mean_delta_auroc"]].copy()
+            merged_df = model_df[["cluster_id", n_features_col, "mean_delta_auroc"]].copy()
+            merged_df = merged_df.rename(columns={n_features_col: "n_features"})
             merged_df = merged_df.rename(columns={"mean_delta_auroc": f"delta_auroc_{model_name}"})
         else:
             # Right join to keep all clusters
@@ -610,6 +642,7 @@ def _run_multimodel_essentiality_validation(
 
     summary = {
         "validation_type": "multimodel_within_panel",
+        "refit_mode": refit_mode,
         "n_models": n_models,
         "models_used": list(per_model_results.keys()),
         "panel_size": len(panel_features),
@@ -675,6 +708,9 @@ def run_consensus_panel(
     essentiality_corr_threshold: float = 0.75,
     include_brier: bool = True,
     include_pr_auc: bool = True,
+    essentiality_refit_mode: str = "fixed",
+    essentiality_retune_n_trials: int = 20,
+    essentiality_retune_inner_folds: int = 3,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
 
@@ -706,6 +742,11 @@ def run_consensus_panel(
         essentiality_corr_threshold: Correlation threshold for clustering in drop-column (default 0.75).
         include_brier: Whether to compute delta-Brier in post-hoc essentiality (default True).
         include_pr_auc: Whether to compute delta-PR-AUC in post-hoc essentiality (default True).
+        essentiality_refit_mode: Refit strategy for essentiality validation.
+            "fixed" (clone, fast), "retune" (Optuna re-optimization),
+            or "fixed_retune" (both side-by-side).
+        essentiality_retune_n_trials: Optuna trials per cluster (retune modes).
+        essentiality_retune_inner_folds: Inner CV folds for retune.
 
     Returns:
         ConsensusResult with final panel and intermediate data.
@@ -1010,6 +1051,9 @@ def run_consensus_panel(
                 essentiality_corr_threshold=essentiality_corr_threshold,
                 include_brier=include_brier,
                 include_pr_auc=include_pr_auc,
+                refit_mode=essentiality_refit_mode,
+                retune_n_trials=essentiality_retune_n_trials,
+                retune_inner_folds=essentiality_retune_inner_folds,
             )
 
         except Exception as e:
