@@ -158,9 +158,14 @@ def test_build_postprocessing_command_with_ensemble():
         enable_ensemble=True,
     )
 
-    assert "ced train-ensemble --run-id 20260130_120000 --split-seed 0" in cmd
-    assert "ced train-ensemble --run-id 20260130_120000 --split-seed 1" in cmd
-    assert "ced train-ensemble --run-id 20260130_120000 --split-seed 2" in cmd
+    assert "ced train-ensemble" in cmd
+    assert "--run-id 20260130_120000" in cmd
+    assert "--split-seed 0" in cmd
+    assert "--split-seed 1" in cmd
+    assert "--split-seed 2" in cmd
+    assert "--split-index 0" in cmd
+    assert "--split-index 1" in cmd
+    assert "--split-index 2" in cmd
     assert "ced aggregate-splits --run-id 20260130_120000 --model ENSEMBLE" in cmd
 
 

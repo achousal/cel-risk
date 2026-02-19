@@ -169,9 +169,15 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 
 ### 2.5 Calibration
 
-**Methods:**
-- `sigmoid` - Platt scaling (logistic regression on scores)
+**Methods (OOF posthoc):**
+- `logistic_full` - Two-parameter Platt scaling: logit(Y=1) = a + b*logit(p)
+- `logistic_intercept` - Intercept-only recalibration (lowest variance, default)
 - `isotonic` - Isotonic regression (non-parametric, monotonic)
+- `beta` - Beta calibration (Kull et al. 2017, three parameters)
+
+**Methods (per-fold via sklearn):**
+- `sigmoid` - Platt scaling (sklearn CalibratedClassifierCV)
+- `isotonic` - Isotonic regression (sklearn CalibratedClassifierCV)
 
 **Strategies:**
 - `per_fold` (default): Apply `CalibratedClassifierCV` inside each CV fold

@@ -209,7 +209,7 @@ DEFAULT_XGBOOST_CONFIG: dict[str, Any] = {
 }
 
 DEFAULT_CALIBRATION_CONFIG: dict[str, Any] = {
-    "method": "sigmoid",
+    "method": "logistic_full",
     "cv": 5,
     "ensemble": False,
 }

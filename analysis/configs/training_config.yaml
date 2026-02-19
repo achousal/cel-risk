@@ -206,9 +206,8 @@ calibration:
   # - oof_posthoc: Fit calibrator on pooled OOF predictions after CV (eliminates ~0.5-1% bias)
   # - none: No calibration applied
   method: logistic_intercept  # Global default: 1-param, lowest variance (safe at n_pos=148)
-                              # Options: isotonic, sigmoid (alias for logistic_full),
-                              #   logistic_full (two-param Platt), logistic_intercept (one-param),
-                              #   beta (Kull et al. 2017, three-param)
+                              # Options: isotonic, logistic_full (two-param Platt),
+                              #   logistic_intercept (one-param), beta (Kull et al. 2017, three-param)
   cv: 5  # CV folds for per_fold strategy
   # Per-model overrides: tree models need shape correction, not just intercept shift
   per_model:

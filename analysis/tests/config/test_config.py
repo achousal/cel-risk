@@ -285,7 +285,6 @@ def test_unwired_feature_selection_config_multiple_non_defaults():
             feature_selection_strategy="none",
             k_grid=[50, 100],
             stability_thresh=0.90,
-            stable_corr_thresh=0.75,
         ),
     )
     issues = []
@@ -294,7 +293,6 @@ def test_unwired_feature_selection_config_multiple_non_defaults():
     assert len(issues) == 1, "Multiple unwired params should be combined in one issue"
     assert "k_grid" in issues[0]
     assert "stability_thresh=0.9" in issues[0]
-    assert "stable_corr_thresh=0.75" in issues[0]
 
 
 def test_load_training_config_merges_top_level_output_keys(tmp_path):

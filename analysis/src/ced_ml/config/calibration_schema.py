@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, field_validator
 
 # Supported OOF calibration method names (kept in sync with OOFCalibrator).
 CalibrationMethodLiteral = Literal[
-    "sigmoid",  # Alias for logistic_full (Platt scaling, two parameters).
     "isotonic",  # Isotonic regression (non-parametric, high variance).
     "logistic_full",  # Two-parameter Platt: logit(Y=1) = a + b*logit(p).
     "logistic_intercept",  # Intercept-only: logit(Y=1) = a + logit(p). Lowest variance.
@@ -40,8 +39,7 @@ class CalibrationConfig(BaseModel):
                 calibrator post-hoc.
             - "none": No calibration applied.
         method: Calibration method for OOF post-hoc calibration. One of:
-            "sigmoid" (alias for logistic_full), "isotonic", "logistic_full",
-            "logistic_intercept", "beta".
+            "isotonic", "logistic_full", "logistic_intercept", "beta".
         cv: Number of CV folds for per_fold calibration.
         per_model: Optional per-model overrides. Keys are model names
             (e.g., "LR_EN"), values are PerModelCalibrationConfig with optional
@@ -59,7 +57,7 @@ class CalibrationConfig(BaseModel):
     def _coerce_per_model(cls, v: Any) -> dict[str, PerModelCalibrationConfig] | None:
         """Coerce legacy string-valued per_model entries.
 
-        Allows YAML configs and older code to pass plain strategy strings
+        Allows YAML configs to pass plain strategy strings
         (e.g. {"LR_EN": "oof_posthoc"}) instead of full PerModelCalibrationConfig
         dicts. String values are treated as strategy overrides with no method override.
         """

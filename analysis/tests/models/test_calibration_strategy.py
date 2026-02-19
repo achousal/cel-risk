@@ -231,17 +231,23 @@ class TestOOFPosthocCalibration:
     def test_init_default(self):
         """Default initialization."""
         strategy = OOFPosthocCalibration()
-        assert strategy.method() == "isotonic"
+        assert strategy.method() == "logistic_intercept"
 
     def test_init_custom(self):
-        """Custom initialization."""
-        strategy = OOFPosthocCalibration(method="sigmoid")
-        assert strategy.method() == "sigmoid"
+        """Custom initialization with each valid method."""
+        for method in ("isotonic", "logistic_full", "logistic_intercept", "beta"):
+            strategy = OOFPosthocCalibration(method=method)
+            assert strategy.method() == method
 
     def test_init_invalid_method(self):
         """Should raise error for invalid method."""
-        with pytest.raises(ValueError, match="must be 'isotonic' or 'sigmoid'"):
+        with pytest.raises(ValueError, match="must be one of"):
             OOFPosthocCalibration(method="invalid")
+
+    def test_init_rejects_sigmoid(self):
+        """Should reject 'sigmoid' (use 'logistic_full' instead)."""
+        with pytest.raises(ValueError, match="must be one of"):
+            OOFPosthocCalibration(method="sigmoid")
 
     def test_name(self):
         """Name should be 'oof_posthoc'."""
@@ -276,9 +282,9 @@ class TestOOFPosthocCalibration:
 
     def test_repr(self):
         """Repr should show method."""
-        strategy = OOFPosthocCalibration(method="sigmoid")
+        strategy = OOFPosthocCalibration(method="logistic_full")
         assert "OOFPosthocCalibration" in repr(strategy)
-        assert "sigmoid" in repr(strategy)
+        assert "logistic_full" in repr(strategy)
 
     def test_create_calibrator(self):
         """create_calibrator should return an OOFCalibrator."""
@@ -375,21 +381,32 @@ class TestGetCalibrationStrategy:
         assert isinstance(strategy, NoCalibration)
 
     def test_per_fold_strategy(self):
-        """Strategy 'per_fold' should return PerFoldCalibration."""
-        config = self._make_config(enabled=True, strategy="per_fold", method="sigmoid", cv=3)
+        """Strategy 'per_fold' should return PerFoldCalibration with mapped method."""
+        config = self._make_config(enabled=True, strategy="per_fold", method="logistic_full", cv=3)
         strategy = get_calibration_strategy(config)
 
         assert isinstance(strategy, PerFoldCalibration)
+        # logistic_full maps to sklearn's "sigmoid"
         assert strategy.method() == "sigmoid"
         assert strategy.get_cv_folds() == 3
 
+    def test_per_fold_isotonic_passthrough(self):
+        """Strategy 'per_fold' with isotonic should pass through unchanged."""
+        config = self._make_config(enabled=True, strategy="per_fold", method="isotonic", cv=5)
+        strategy = get_calibration_strategy(config)
+
+        assert isinstance(strategy, PerFoldCalibration)
+        assert strategy.method() == "isotonic"
+
     def test_oof_posthoc_strategy(self):
         """Strategy 'oof_posthoc' should return OOFPosthocCalibration."""
-        config = self._make_config(enabled=True, strategy="oof_posthoc", method="isotonic")
+        config = self._make_config(
+            enabled=True, strategy="oof_posthoc", method="logistic_intercept"
+        )
         strategy = get_calibration_strategy(config)
 
         assert isinstance(strategy, OOFPosthocCalibration)
-        assert strategy.method() == "isotonic"
+        assert strategy.method() == "logistic_intercept"
 
     def test_per_model_override(self):
         """Per-model override should be respected."""
@@ -446,9 +463,9 @@ class TestGetStrategyDisplayName:
 
     def test_oof_posthoc_calibration(self):
         """OOFPosthocCalibration should include method and strategy."""
-        strategy = OOFPosthocCalibration(method="sigmoid")
+        strategy = OOFPosthocCalibration(method="logistic_full")
         display = get_strategy_display_name(strategy)
-        assert "sigmoid" in display
+        assert "logistic_full" in display
         assert "oof_posthoc" in display
 
 

@@ -227,6 +227,8 @@ class TestE2EPermutationTest:
                 "LR_EN",
                 "--split-seed-start",
                 "42",
+                "--n-split-seeds",
+                "1",
                 "--n-perms",
                 "5",  # Small B for fast CI
                 "--n-jobs",

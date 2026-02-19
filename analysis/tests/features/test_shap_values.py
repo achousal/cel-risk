@@ -815,7 +815,7 @@ def test_additivity_svm_margin():
         explanation.base_values, clf.classes_, positive_label=1
     )
 
-    model_output = (avg_coef @ X_test.T + avg_intercept).ravel()
+    model_output = np.asarray(avg_coef @ X_test.T + avg_intercept).ravel()
 
     np.testing.assert_allclose(
         shap_values_norm.sum(axis=1) + expected_value_norm,

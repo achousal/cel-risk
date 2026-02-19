@@ -24,7 +24,7 @@ class CalibrationInfo:
 
     Attributes:
         strategy: Calibration strategy ('none', 'per_fold', 'oof_posthoc')
-        method: Calibration method ('isotonic', 'sigmoid', or None)
+        method: Calibration method (e.g. 'isotonic', 'logistic_full', 'sigmoid', or None)
         oof_calibrator: Optional fitted OOF calibrator object
     """
 

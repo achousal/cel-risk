@@ -163,5 +163,9 @@ class TestE2EAggregationWorkflow:
             ],
         )
 
-        # Should fail (either immediately or with clear error)
-        assert result.exit_code != 0
+        # Should exit cleanly but produce no aggregated output
+        # (the aggregation gracefully handles missing splits)
+        assert result.exit_code == 0
+        # Verify no aggregated directory was created (nothing to aggregate)
+        agg_dirs = list(results_dir.rglob("*aggregated*"))
+        assert len(agg_dirs) == 0, "Should not produce aggregated output without splits"

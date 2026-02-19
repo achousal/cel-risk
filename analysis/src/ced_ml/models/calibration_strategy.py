@@ -3,8 +3,8 @@ Calibration strategy pattern for model calibration.
 
 This module provides:
 - CalibrationStrategy protocol defining the interface for calibration strategies
-- Concrete implementations: IsotonicCalibration, SigmoidCalibration,
-  OOFPosthocCalibration, PerFoldCalibration, NoCalibration
+- Concrete implementations: PerFoldCalibration, OOFPosthocCalibration,
+  IsotonicCalibration, SigmoidCalibration (per-fold convenience), NoCalibration
 - Factory function to get calibration strategy from config
 
 The strategy pattern replaces direct config.calibration.* checks throughout
@@ -40,12 +40,12 @@ class CalibrationStrategy(Protocol):
         """Return the name of the calibration strategy.
 
         Returns:
-            Strategy name (e.g., "isotonic", "sigmoid", "oof_posthoc", "per_fold", "none")
+            Strategy name (e.g., "per_fold", "oof_posthoc", "none")
         """
         ...
 
     def method(self) -> str | None:
-        """Return the calibration method used (e.g., "isotonic", "sigmoid").
+        """Return the calibration method used.
 
         Returns:
             Calibration method or None if not applicable
@@ -226,14 +226,17 @@ class OOFPosthocCalibration:
     introduced by per-fold CalibratedClassifierCV.
     """
 
-    def __init__(self, method: str = "isotonic"):
+    _VALID_METHODS = frozenset({"isotonic", "logistic_full", "logistic_intercept", "beta"})
+
+    def __init__(self, method: str = "logistic_intercept"):
         """Initialize OOF posthoc calibration strategy.
 
         Args:
-            method: Calibration method ("isotonic" or "sigmoid")
+            method: Calibration method. One of "isotonic", "logistic_full",
+                    "logistic_intercept", "beta".
         """
-        if method not in ("isotonic", "sigmoid"):
-            raise ValueError(f"method must be 'isotonic' or 'sigmoid', got '{method}'")
+        if method not in self._VALID_METHODS:
+            raise ValueError(f"method must be one of {sorted(self._VALID_METHODS)}, got '{method}'")
         self._method = method
 
     def name(self) -> str:
@@ -350,8 +353,17 @@ def get_calibration_strategy(
         return NoCalibration()
 
     elif effective_strategy == "per_fold":
+        # Map OOF-granularity method names to sklearn CalibratedClassifierCV terms.
+        # sklearn only accepts "isotonic" or "sigmoid".
+        _SKLEARN_METHOD_MAP = {
+            "isotonic": "isotonic",
+            "logistic_full": "sigmoid",
+            "logistic_intercept": "sigmoid",
+            "beta": "sigmoid",
+        }
+        sklearn_method = _SKLEARN_METHOD_MAP.get(config.calibration.method, "sigmoid")
         return PerFoldCalibration(
-            method=config.calibration.method,
+            method=sklearn_method,
             cv=config.calibration.cv,
         )
 

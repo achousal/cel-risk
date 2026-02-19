@@ -138,6 +138,7 @@ def make_mock_config(**overrides):
             rf_perm_top_n=50,
             rf_perm_repeats=3,
             rf_perm_min_importance=0.0,
+            compute_oof_importance=True,
         ),
         "compute": SimpleNamespace(cpus=2, tune_n_jobs=None),
         # Model configs at top level (matching TrainingConfig schema)

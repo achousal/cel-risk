@@ -13,11 +13,13 @@ Note: Prevalence adjustment functions are in prevalence.py
 Supported OOF calibration methods
 ----------------------------------
 isotonic          : Isotonic regression (non-parametric, high variance).
-sigmoid           : Alias for logistic_full (Platt scaling, two parameters).
 logistic_full     : Fits logit(Y=1) = a + b*logit(p); two-parameter Platt scaling.
 logistic_intercept: Fits logit(Y=1) = a + logit(p); intercept-only, lowest variance.
 beta              : Fits logit(q) = a*log(p) + b*log(1-p) + c; three parameters.
                     Handles asymmetric miscalibration (Kull et al. 2017).
+
+Note: "sigmoid" is sklearn's CalibratedClassifierCV name for Platt scaling.
+For OOFCalibrator, use "logistic_full" instead.
 """
 
 import logging
@@ -898,12 +900,7 @@ def maybe_calibrate_estimator(
         return estimator
 
 
-_VALID_OOF_METHODS = frozenset(
-    {"isotonic", "sigmoid", "logistic_full", "logistic_intercept", "beta"}
-)
-
-# "sigmoid" is an alias for "logistic_full".
-_SIGMOID_ALIAS = "logistic_full"
+_VALID_OOF_METHODS = frozenset({"isotonic", "logistic_full", "logistic_intercept", "beta"})
 
 
 def _beta_nll(params: np.ndarray, log_p: np.ndarray, log1mp: np.ndarray, y: np.ndarray) -> float:
@@ -943,7 +940,6 @@ class OOFCalibrator:
     Supported methods
     -----------------
     isotonic          : Isotonic regression (non-parametric, high variance).
-    sigmoid           : Alias for logistic_full.
     logistic_full     : Two-parameter Platt scaling: logit(Y=1) = a + b*logit(p).
     logistic_intercept: Intercept-only recalibration: logit(Y=1) = a + logit(p).
                         Lowest-variance parametric option for small calibration sets.
@@ -951,7 +947,7 @@ class OOFCalibrator:
                         Handles asymmetric miscalibration (Kull et al. 2017).
 
     Attributes:
-        method: Calibration method (normalised; "sigmoid" stored as "logistic_full").
+        method: Calibration method.
         calibrator_: Fitted object (sklearn estimator or dict of scipy params).
         is_fitted: Whether the calibrator has been fitted.
     """
@@ -961,13 +957,12 @@ class OOFCalibrator:
         Initialize OOF calibrator.
 
         Args:
-            method: Calibration method. One of "isotonic", "sigmoid" (alias for
-                    "logistic_full"), "logistic_full", "logistic_intercept", "beta".
+            method: Calibration method. One of "isotonic", "logistic_full",
+                    "logistic_intercept", "beta".
         """
         if method not in _VALID_OOF_METHODS:
             raise ValueError(f"method must be one of {sorted(_VALID_OOF_METHODS)}, got '{method}'")
-        # Normalise alias so downstream code branches on canonical names.
-        self.method = _SIGMOID_ALIAS if method == "sigmoid" else method
+        self.method = method
         self.calibrator_ = None
         self.is_fitted = False
 
@@ -1190,8 +1185,8 @@ def fit_oof_calibrator(
     Args:
         oof_preds: Raw (uncalibrated) OOF predictions, shape (n_samples,).
         y_true: True binary labels, shape (n_samples,).
-        method: Calibration method. One of "isotonic", "sigmoid" (alias for
-                "logistic_full"), "logistic_full", "logistic_intercept", "beta".
+        method: Calibration method. One of "isotonic", "logistic_full",
+                "logistic_intercept", "beta".
 
     Returns:
         Fitted OOFCalibrator instance.

@@ -15,8 +15,8 @@ class EnsembleConfig(BaseModel):
             link function.  Set to True only when base models are uncalibrated or when
             you have a specific reason to apply an additional calibration layer (and
             accept that double calibration may distort probabilities).
-        meta_calibration_method: Calibration method used when calibrate_meta=True.
-            'isotonic' (nonparametric, requires more data) or 'sigmoid' (Platt scaling).
+        meta_calibration_method: sklearn CalibratedClassifierCV method when
+            calibrate_meta=True. 'isotonic' or 'sigmoid' (Platt scaling).
         calibration_cv: Number of CV folds for meta-learner calibration.
             Only used when calibrate_meta=True.
     """
