@@ -9,6 +9,7 @@ from .calibration_schema import CalibrationConfig, ThresholdConfig
 from .compute_schema import ComputeConfig
 from .cv_schema import CVConfig, OptunaConfig
 from .data_schema import ColumnsConfig
+from .ensemble_schema import EnsembleConfig
 from .evaluation_schema import DCAConfig, EvaluationConfig
 from .features_schema import FeatureConfig
 from .model_schema import LRConfig, RFConfig, SVMConfig, XGBoostConfig
@@ -46,6 +47,7 @@ class TrainingConfig(BaseModel):
     xgboost: XGBoostConfig = Field(default_factory=XGBoostConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     optuna: OptunaConfig = Field(default_factory=OptunaConfig)
+    ensemble: EnsembleConfig = Field(default_factory=EnsembleConfig)
 
     # Output
     outdir: Path = Field(default=Path("../results"))

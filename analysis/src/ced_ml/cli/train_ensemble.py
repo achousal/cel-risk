@@ -180,6 +180,8 @@ def train_meta_learner(
     meta_c: float,
     random_state: int,
     run_id: str | None = None,
+    calibrate_meta: bool = False,
+    meta_calibration_method: str = "isotonic",
 ) -> tuple[StackingEnsemble, dict[str, Any], np.ndarray, np.ndarray, np.ndarray | None]:
     """Train the stacking ensemble meta-learner.
 
@@ -191,6 +193,10 @@ def train_meta_learner(
         meta_c: Meta-learner regularization strength
         random_state: Random state for reproducibility
         run_id: Optional run_id to scope path resolution to a specific run
+        calibrate_meta: Whether to wrap meta-learner in CalibratedClassifierCV.
+            Defaults to False (base models are already OOF-calibrated).
+        meta_calibration_method: Calibration method when calibrate_meta=True.
+            'isotonic' or 'sigmoid'.
 
     Returns:
         Tuple of (ensemble, oof_dict, y_train, train_idx, cat_train)
@@ -219,12 +225,12 @@ def train_meta_learner(
 
     log_section(logger, "Training Meta-Learner")
 
-    calibrate_meta = True
     ensemble = StackingEnsemble(
         base_model_names=available_models,
         meta_penalty=meta_penalty,
         meta_C=meta_c,
         calibrate_meta=calibrate_meta,
+        meta_calibration_method=meta_calibration_method,
         random_state=random_state,
     )
     ensemble.fit_from_oof(oof_dict, y_train)
@@ -484,6 +490,13 @@ def run_train_ensemble(
 
     random_state = config.cv.random_state if config else 42
 
+    # Read ensemble-specific calibration settings from config (if available)
+    ensemble_cfg = config.ensemble if config is not None else None
+    calibrate_meta = ensemble_cfg.calibrate_meta if ensemble_cfg is not None else False
+    meta_calibration_method = (
+        ensemble_cfg.meta_calibration_method if ensemble_cfg is not None else "isotonic"
+    )
+
     ensemble, oof_dict, y_train, train_idx, cat_train, calibration_info = train_meta_learner(
         available_models,
         results_path,
@@ -492,6 +505,8 @@ def run_train_ensemble(
         meta_c,
         random_state,
         run_id=run_id,
+        calibrate_meta=calibrate_meta,
+        meta_calibration_method=meta_calibration_method,
     )
 
     coef = ensemble.get_meta_model_coef()

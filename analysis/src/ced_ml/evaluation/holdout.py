@@ -39,8 +39,12 @@ from ced_ml.metrics import (
     top_risk_capture,
 )
 from ced_ml.models.calibration import (
+    adaptive_expected_calibration_error,
+    brier_score_decomposition,
     calibration_intercept_slope,
     expected_calibration_error,
+    integrated_calibration_index,
+    spiegelhalter_z_test,
 )
 from ced_ml.models.prevalence import adjust_probabilities_for_prevalence
 from ced_ml.utils.math_utils import EPSILON_BOUNDS
@@ -184,6 +188,10 @@ def compute_holdout_metrics(
     # Calibration metrics
     cal_metrics = calibration_intercept_slope(y_true, proba_eval)
     ece = expected_calibration_error(y_true, proba_eval)
+    ici = integrated_calibration_index(y_true, proba_eval)
+    spieg = spiegelhalter_z_test(y_true, proba_eval)
+    ece_adaptive = adaptive_expected_calibration_error(y_true, proba_eval)
+    brier_decomp = brier_score_decomposition(y_true, proba_eval)
 
     # Extract threshold metadata
     thresholds_meta = bundle.get("thresholds", {})
@@ -271,6 +279,13 @@ def compute_holdout_metrics(
             float(cal_metrics.slope) if np.isfinite(cal_metrics.slope) else np.nan
         ),
         "ECE_holdout": float(ece),
+        "ICI_holdout": float(ici),
+        "ECE_adaptive_holdout": float(ece_adaptive),
+        "spiegelhalter_z_holdout": float(spieg.z_statistic),
+        "spiegelhalter_p_holdout": float(spieg.p_value),
+        "brier_reliability_holdout": float(brier_decomp.reliability),
+        "brier_resolution_holdout": float(brier_decomp.resolution),
+        "brier_uncertainty_holdout": float(brier_decomp.uncertainty),
         "thr_objective_name": objective_name,
         "thr_primary": float(thr_primary),
         "precision_holdout_at_thr_primary": float(m_primary.precision),

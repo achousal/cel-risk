@@ -34,8 +34,12 @@ from ced_ml.metrics.thresholds import (
     compute_multi_target_specificity_metrics,
 )
 from ced_ml.models.calibration import (
+    adaptive_expected_calibration_error,
+    brier_score_decomposition,
     calibration_intercept_slope,
     expected_calibration_error,
+    integrated_calibration_index,
+    spiegelhalter_z_test,
 )
 from ced_ml.models.prevalence import adjust_probabilities_for_prevalence
 from ced_ml.utils.logging import log_section, setup_logger
@@ -408,6 +412,10 @@ def evaluate_on_split(
     brier = compute_brier_score(y, y_probs_adj)
     cal_metrics = calibration_intercept_slope(y, y_probs_adj)
     ece = expected_calibration_error(y, y_probs_adj)
+    ici = integrated_calibration_index(y, y_probs_adj)
+    spieg = spiegelhalter_z_test(y, y_probs_adj)
+    ece_adaptive = adaptive_expected_calibration_error(y, y_probs_adj)
+    brier_decomp = brier_score_decomposition(y, y_probs_adj)
 
     metrics.update(
         {
@@ -415,6 +423,13 @@ def evaluate_on_split(
             "calibration_intercept": cal_metrics.intercept,
             "calibration_slope": cal_metrics.slope,
             "ECE": ece,
+            "ICI": ici,
+            "ECE_adaptive": ece_adaptive,
+            "spiegelhalter_z": spieg.z_statistic,
+            "spiegelhalter_p": spieg.p_value,
+            "brier_reliability": brier_decomp.reliability,
+            "brier_resolution": brier_decomp.resolution,
+            "brier_uncertainty": brier_decomp.uncertainty,
         }
     )
 

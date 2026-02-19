@@ -14,6 +14,12 @@ cv:
 
 # Ensemble training: Use separate CLI command `ced train-ensemble`
 # See docs/reference/CLI_REFERENCE.md for usage
+# ensemble:
+#   calibrate_meta: false  # Wrap meta-learner in CalibratedClassifierCV. Default false:
+#                          # base models are already OOF-calibrated and LR calibrates
+#                          # naturally via the logistic link.
+#   meta_calibration_method: isotonic  # Options: isotonic, sigmoid (only used when calibrate_meta=true)
+#   calibration_cv: 5  # CV folds for meta-learner calibration (only used when calibrate_meta=true)
 
 # Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
 optuna:
@@ -199,13 +205,17 @@ calibration:
   # - per_fold: Apply CalibratedClassifierCV inside each CV fold (current behavior, simple)
   # - oof_posthoc: Fit calibrator on pooled OOF predictions after CV (eliminates ~0.5-1% bias)
   # - none: No calibration applied
-  method: isotonic  # Options: isotonic (nonparametric), sigmoid (Platt scaling)
+  method: logistic_intercept  # Global default: 1-param, lowest variance (safe at n_pos=148)
+                              # Options: isotonic, sigmoid (alias for logistic_full),
+                              #   logistic_full (two-param Platt), logistic_intercept (one-param),
+                              #   beta (Kull et al. 2017, three-param)
   cv: 5  # CV folds for per_fold strategy
-  # Per-model overrides (optional):
-  # per_model:
-  #   LR_EN: oof_posthoc  # Use oof_posthoc for logistic regression
-  #   RF: per_fold        # Keep per_fold for random forest
-  #   XGBoost: none       # No calibration for XGBoost
+  # Per-model overrides: tree models need shape correction, not just intercept shift
+  per_model:
+    RF:
+      method: beta             # 3-param, corrects asymmetric tree-probability distortion
+    XGBoost:
+      method: beta             # Same rationale as RF
 
 # Thresholding
 thresholds:

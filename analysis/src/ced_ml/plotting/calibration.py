@@ -7,6 +7,8 @@ This module provides calibration curve plotting in both probability and logit sp
 - Multi-split aggregation with 95% CI and ±1 SD confidence bands
 - LOESS smoothing for logit calibration
 - Bootstrap confidence intervals (95% CI and ±1 SD)
+- LOWESS-smoothed calibration curve overlay on probability-space panels
+- ICI, E50, E90, and Spiegelhalter z-test annotation on probability-space panels
 
 References:
     Van Calster et al. (2016). Calibration: the Achilles heel of predictive analytics.
@@ -23,7 +25,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.interpolate import UnivariateSpline
 
+from ced_ml.models.calibration import (
+    calibration_error_quantiles,
+    spiegelhalter_z_test,
+)
 from ced_ml.utils.constants import CI_LOWER_PCT, CI_UPPER_PCT
 
 from .calibration_reliability import (
@@ -39,6 +46,7 @@ from .style import (
     ALPHA_SD,
     COLOR_EDGE,
     COLOR_PRIMARY,
+    COLOR_SECONDARY,
     DPI,
     FIGSIZE_CALIBRATION,
     FONT_LABEL,
@@ -51,7 +59,127 @@ from .style import (
     configure_backend,
 )
 
+# Minimum sample count required to attempt LOWESS smoothing on a panel.
+_LOWESS_MIN_SAMPLES = 50
+
+# Minimum unique prediction values required for spline fitting (matches
+# the threshold in models/calibration._loess_calibration_errors).
+_LOWESS_MIN_UNIQUE_PREDS = 10
+
 logger = logging.getLogger(__name__)
+
+
+def _add_lowess_overlay(ax, y: np.ndarray, p: np.ndarray) -> None:
+    """
+    Add a LOWESS-smoothed calibration curve overlay to a probability-space panel.
+
+    The curve is computed via a cubic UnivariateSpline (same approach used by
+    the ICI metric in ced_ml.models.calibration._loess_calibration_errors).
+    The overlay is skipped silently when there are too few samples or when
+    spline fitting fails.
+
+    Only called for probability-space panels, not logit-space panels.
+
+    Args:
+        ax: Matplotlib axis on which to draw the overlay.
+        y: True binary labels (0/1), already filtered for finite values.
+        p: Predicted probabilities, already filtered for finite values.
+    """
+    n = len(p)
+    if n < _LOWESS_MIN_SAMPLES:
+        logger.debug(
+            "_add_lowess_overlay: only %d samples (need >= %d); skipping.",
+            n,
+            _LOWESS_MIN_SAMPLES,
+        )
+        return
+
+    n_unique = len(np.unique(p))
+    if n_unique < _LOWESS_MIN_UNIQUE_PREDS:
+        logger.debug(
+            "_add_lowess_overlay: only %d unique prediction values " "(need >= %d); skipping.",
+            n_unique,
+            _LOWESS_MIN_UNIQUE_PREDS,
+        )
+        return
+
+    sort_idx = np.argsort(p)
+    p_sorted = p[sort_idx]
+    y_sorted = y[sort_idx]
+
+    try:
+        spline = UnivariateSpline(p_sorted, y_sorted, k=3, s=len(y_sorted), ext=3)
+        # Evaluate on a dense grid for a smooth visual curve.
+        p_grid = np.linspace(float(p_sorted[0]), float(p_sorted[-1]), 200)
+        curve = np.clip(spline(p_grid), 0.0, 1.0)
+    except Exception as exc:
+        logger.debug("_add_lowess_overlay: spline fitting failed: %s", exc)
+        return
+
+    ax.plot(
+        p_grid,
+        curve,
+        color=COLOR_SECONDARY,
+        linewidth=LW_SECONDARY,
+        linestyle="--",
+        alpha=0.75,
+        label="LOWESS smooth",
+        zorder=3,
+    )
+
+
+def _add_calibration_metrics_annotation(ax, y: np.ndarray, p: np.ndarray) -> None:
+    """
+    Add an ICI / E50 / E90 / Spiegelhalter p-value annotation box to a panel.
+
+    Metrics are computed from the supplied y and p arrays.  When a metric
+    cannot be computed (too few samples, NaN) its field is shown as 'N/A'.
+
+    Placed in the upper-left corner of the axes with a semi-transparent
+    background box.  Only called for probability-space panels.
+
+    Args:
+        ax: Matplotlib axis on which to place the annotation.
+        y: True binary labels (0/1), already filtered for finite values.
+        p: Predicted probabilities, already filtered for finite values.
+    """
+    try:
+        q = calibration_error_quantiles(y, p)
+        spieg = spiegelhalter_z_test(y, p)
+    except Exception as exc:
+        logger.debug("_add_calibration_metrics_annotation: metric computation failed: %s", exc)
+        return
+
+    def _fmt(val: float, digits: int = 3) -> str:
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return "N/A"
+        return f"{val:.{digits}f}"
+
+    lines = [
+        f"ICI: {_fmt(q.ici)}",
+        f"E50: {_fmt(q.e50)}",
+        f"E90: {_fmt(q.e90)}",
+        f"Spieg. p: {_fmt(spieg.p_value, digits=2)}",
+    ]
+    text = "\n".join(lines)
+
+    ax.text(
+        0.03,
+        0.97,
+        text,
+        transform=ax.transAxes,
+        fontsize=8,
+        verticalalignment="top",
+        horizontalalignment="left",
+        bbox={
+            "boxstyle": "round,pad=0.4",
+            "facecolor": "white",
+            "alpha": 0.75,
+            "edgecolor": "lightgray",
+            "linewidth": 0.8,
+        },
+        zorder=5,
+    )
 
 
 # Re-export extracted functions for backward compatibility
@@ -223,6 +351,10 @@ def _plot_prob_calibration_panel(
             linewidth=LW_SECONDARY,
             alpha=ALPHA_LINE,
         )
+
+    # LOWESS overlay and calibration metrics annotation (probability-space only).
+    _add_lowess_overlay(ax, y, p)
+    _add_calibration_metrics_annotation(ax, y, p)
 
     bin_label = "quantile" if bin_strategy == "quantile" else "uniform"
     if panel_title:

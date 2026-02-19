@@ -34,6 +34,11 @@ from ced_ml.features.stability import compute_selection_frequencies, extract_sta
 from ced_ml.metrics.bootstrap import stratified_bootstrap_ci
 from ced_ml.metrics.dca import save_dca_results
 from ced_ml.metrics.threshold_strategy import get_threshold_strategy
+from ced_ml.models.calibration import (
+    adaptive_ece_metric,
+    calib_slope_metric,
+    ici_metric,
+)
 from ced_ml.models.calibration_strategy import get_calibration_strategy
 from ced_ml.models.registry import build_models
 from ced_ml.plotting.learning_curve import save_learning_curve_csv
@@ -1029,6 +1034,33 @@ def _save_bootstrap_ci(ctx: TrainingContext) -> None:
             seed=seed,
         )
 
+        # Bootstrap CI for calibration slope
+        cal_slope_lo, cal_slope_hi = stratified_bootstrap_ci(
+            y_true=ctx.y_test,
+            y_pred=ctx.test_preds_df["y_prob"].values,
+            metric_fn=calib_slope_metric,
+            n_boot=1000,
+            seed=seed,
+        )
+
+        # Bootstrap CI for ICI
+        ici_lo, ici_hi = stratified_bootstrap_ci(
+            y_true=ctx.y_test,
+            y_pred=ctx.test_preds_df["y_prob"].values,
+            metric_fn=ici_metric,
+            n_boot=1000,
+            seed=seed,
+        )
+
+        # Bootstrap CI for Adaptive ECE
+        aece_lo, aece_hi = stratified_bootstrap_ci(
+            y_true=ctx.y_test,
+            y_pred=ctx.test_preds_df["y_prob"].values,
+            metric_fn=adaptive_ece_metric,
+            n_boot=1000,
+            seed=seed,
+        )
+
         bootstrap_ci_df = pd.DataFrame(
             [
                 {
@@ -1043,6 +1075,15 @@ def _save_bootstrap_ci(ctx: TrainingContext) -> None:
                     METRIC_PRAUC: ctx.test_metrics[METRIC_PRAUC],
                     "PR_AUC_ci_lo": prauc_lo,
                     "PR_AUC_ci_hi": prauc_hi,
+                    "cal_slope": ctx.test_metrics.get("calibration_slope"),
+                    "cal_slope_ci_lo": cal_slope_lo,
+                    "cal_slope_ci_hi": cal_slope_hi,
+                    "ICI": ctx.test_metrics.get("ICI"),
+                    "ICI_ci_lo": ici_lo,
+                    "ICI_ci_hi": ici_hi,
+                    "ECE_adaptive": ctx.test_metrics.get("ECE_adaptive"),
+                    "ECE_adaptive_ci_lo": aece_lo,
+                    "ECE_adaptive_ci_hi": aece_hi,
                 }
             ]
         )

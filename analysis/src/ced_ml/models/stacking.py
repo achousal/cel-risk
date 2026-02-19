@@ -70,8 +70,9 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
         meta_solver: str = "lbfgs",
         use_probabilities: bool = True,
         scale_meta_features: bool = True,
-        calibrate_meta: bool = True,
+        calibrate_meta: bool = False,
         calibration_cv: int = 5,
+        meta_calibration_method: str = "isotonic",
         random_state: int | None = None,
     ):
         """Initialize stacking ensemble.
@@ -84,8 +85,14 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
             meta_solver: Solver for logistic regression meta-learner
             use_probabilities: Use probabilities (True) or logits (False) as meta features
             scale_meta_features: Whether to standardize meta-learner input
-            calibrate_meta: Whether to calibrate meta-learner predictions
-            calibration_cv: CV folds for meta-learner calibration
+            calibrate_meta: Whether to wrap meta-learner in CalibratedClassifierCV.
+                Defaults to False because base models are already OOF-calibrated and
+                the LR meta-learner is inherently calibrated via the logistic link.
+                Set to True only when base models are uncalibrated.
+            calibration_cv: CV folds for meta-learner calibration (only used when calibrate_meta=True)
+            meta_calibration_method: Calibration method when calibrate_meta=True.
+                Options: 'isotonic' (nonparametric) or 'sigmoid' (Platt scaling).
+                Defaults to 'isotonic'.
             random_state: Random seed for reproducibility
         """
         self.base_model_names = base_model_names or []
@@ -97,12 +104,13 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
         self.scale_meta_features = scale_meta_features
         self.calibrate_meta = calibrate_meta
         self.calibration_cv = calibration_cv
+        self.meta_calibration_method = meta_calibration_method
         self.random_state = random_state
 
         # Will be set during fitting
         self.meta_model: LogisticRegression | CalibratedClassifierCV | None = None
         self.scaler: StandardScaler | None = None
-        self.base_models: dict[str, any] = {}
+        self.base_models: dict[str, object] = {}
         self.classes_ = np.array([0, 1])
         self.is_fitted_ = False
         self._feature_names: list[str] = []
@@ -266,44 +274,34 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
         # Build meta-learner
         base_meta = self._build_meta_estimator()
 
-        # 1.7-M1: Detect and warn about double calibration
-        # Check if any base model OOF predictions appear to be already calibrated
-        # (This is a heuristic check: calibrated predictions tend to be smoother/less extreme)
-        # We check if predictions are suspiciously well-calibrated (close to empirical frequency)
+        # Warn explicitly when calibrate_meta=True, since base models are already
+        # OOF-calibrated and the LR meta-learner is inherently calibrated via its
+        # logistic link function.  Double calibration can distort probabilities.
         if self.calibrate_meta:
-            for model_idx, model_name in enumerate(self.base_model_names):
-                model_preds = X_meta[:, model_idx]
-                # Simple heuristic: check if mean prediction is very close to observed prevalence
-                # (could indicate prior calibration)
-                pred_mean = np.mean(model_preds)
-                prevalence = np.mean(y)
-                # If predictions are within 5% of prevalence, they may already be calibrated
-                if abs(pred_mean - prevalence) < 0.05 and prevalence < 0.10:
-                    logger.warning(
-                        f"Base model '{model_name}' OOF predictions may already be calibrated "
-                        f"(mean pred={pred_mean:.4f} vs prevalence={prevalence:.4f}). "
-                        "Applying meta-learner calibration will result in double calibration. "
-                        "Consider disabling either base model calibration (set calibration.strategy='none') "
-                        "or meta-learner calibration (set ensemble.calibrate_meta=False)."
-                    )
-                    break  # Only warn once
+            logger.warning(
+                "calibrate_meta=True: wrapping the LR meta-learner in CalibratedClassifierCV. "
+                "Base models are already OOF-calibrated, and logistic regression is inherently "
+                "calibrated via the logistic link function. Double calibration may degrade "
+                "probability estimates. Set ensemble.calibrate_meta=False (the default) unless "
+                "you have a specific reason to re-calibrate the meta-learner output."
+            )
 
         # Optionally wrap in calibration
         if self.calibrate_meta and len(y) >= 2 * self.calibration_cv:
-            # 1.7-H1: Check if positive samples per fold are sufficient for isotonic regression
+            # Check if positive samples per fold are sufficient for isotonic regression
             n_pos = int(y.sum())
             pos_per_fold = n_pos / self.calibration_cv
-            if pos_per_fold < 30:
+            if pos_per_fold < 30 and self.meta_calibration_method == "isotonic":
                 logger.warning(
                     f"Meta-learner calibration may be unreliable: only ~{pos_per_fold:.1f} positive "
                     f"samples per calibration fold (recommend >= 30 for isotonic regression). "
-                    f"Consider using method='sigmoid' instead, or disable meta-learner calibration "
-                    f"by setting calibrate_meta=False in ensemble config."
+                    f"Consider using meta_calibration_method='sigmoid' instead, or disable "
+                    f"meta-learner calibration by setting calibrate_meta=False."
                 )
 
             self.meta_model = CalibratedClassifierCV(
                 estimator=base_meta,
-                method="isotonic",
+                method=self.meta_calibration_method,
                 cv=self.calibration_cv,
             )
         else:
@@ -403,7 +401,7 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
         if self.calibrate_meta and len(y) >= 2 * self.calibration_cv:
             self.meta_model = CalibratedClassifierCV(
                 estimator=base_meta,
-                method="isotonic",
+                method=self.meta_calibration_method,
                 cv=self.calibration_cv,
             )
         else:

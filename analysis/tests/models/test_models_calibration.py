@@ -460,14 +460,18 @@ class TestOOFCalibrator:
         assert calibrator.calibrator_ is None
 
     def test_init_sigmoid(self):
-        """Test OOFCalibrator initialization with sigmoid method."""
+        """Test OOFCalibrator initialization with sigmoid method.
+
+        "sigmoid" is a legacy alias for "logistic_full"; the stored method
+        is normalised to the canonical name.
+        """
         calibrator = OOFCalibrator(method="sigmoid")
-        assert calibrator.method == "sigmoid"
+        assert calibrator.method == "logistic_full"
         assert not calibrator.is_fitted
 
     def test_init_invalid_method(self):
         """Test OOFCalibrator raises error for invalid method."""
-        with pytest.raises(ValueError, match="must be 'isotonic' or 'sigmoid'"):
+        with pytest.raises(ValueError, match="method must be one of"):
             OOFCalibrator(method="invalid")
 
     def test_fit_isotonic(self):
@@ -499,12 +503,14 @@ class TestOOFCalibrator:
         assert calibrator.calibrator_ is not None
 
     def test_fit_insufficient_data(self):
-        """Test OOFCalibrator raises error for insufficient data."""
-        oof_preds = np.array([0.5, 0.6, 0.7])
-        y_true = np.array([0, 1, 0])
+        """Test OOFCalibrator raises error when fewer than 50 valid samples."""
+        rng = np.random.default_rng(42)
+        # 20 samples is below the new minimum of 50.
+        oof_preds = rng.uniform(0.1, 0.9, size=20)
+        y_true = rng.binomial(1, oof_preds)
 
         calibrator = OOFCalibrator(method="isotonic")
-        with pytest.raises(ValueError, match="at least 10 valid samples"):
+        with pytest.raises(ValueError, match="at least 50 valid samples"):
             calibrator.fit(oof_preds, y_true)
 
     def test_fit_single_class(self):
@@ -890,3 +896,271 @@ class TestOOFCalibrationIntegration:
         test_proba = calibrated_model.predict_proba(X_test)[:, 1]
         assert len(test_proba) == len(y_test)
         assert np.all((test_proba >= 0) & (test_proba <= 1))
+
+
+# ============================================================================
+# New Calibration Method Tests
+# ============================================================================
+
+
+class TestOOFCalibratorNewMethods:
+    """Tests for the new OOFCalibrator methods: logistic_full, logistic_intercept, beta."""
+
+    # --- Shared fixture ---
+
+    @staticmethod
+    def _make_data(n: int = 300, seed: int = 42):
+        rng = np.random.default_rng(seed)
+        oof_preds = rng.uniform(0.05, 0.95, size=n)
+        y_true = rng.binomial(1, oof_preds)
+        return oof_preds, y_true
+
+    # --- Initialisation ---
+
+    def test_init_logistic_full(self):
+        """logistic_full initialises correctly."""
+        cal = OOFCalibrator(method="logistic_full")
+        assert cal.method == "logistic_full"
+        assert not cal.is_fitted
+
+    def test_init_logistic_intercept(self):
+        """logistic_intercept initialises correctly."""
+        cal = OOFCalibrator(method="logistic_intercept")
+        assert cal.method == "logistic_intercept"
+        assert not cal.is_fitted
+
+    def test_init_beta(self):
+        """beta initialises correctly."""
+        cal = OOFCalibrator(method="beta")
+        assert cal.method == "beta"
+        assert not cal.is_fitted
+
+    def test_sigmoid_alias_normalised(self):
+        """sigmoid is stored as logistic_full."""
+        cal = OOFCalibrator(method="sigmoid")
+        assert cal.method == "logistic_full"
+
+    # --- Fit + transform for each new method ---
+
+    def test_fit_logistic_full(self):
+        """logistic_full fits and produces in-range calibrated outputs."""
+        oof, y = self._make_data()
+        cal = OOFCalibrator(method="logistic_full")
+        result = cal.fit(oof, y)
+
+        assert result is cal
+        assert cal.is_fitted
+        calibrated = cal.transform(oof)
+        assert calibrated.shape == oof.shape
+        assert np.all(calibrated >= 0.0) and np.all(calibrated <= 1.0)
+
+    def test_fit_logistic_intercept(self):
+        """logistic_intercept fits and produces in-range calibrated outputs."""
+        oof, y = self._make_data()
+        cal = OOFCalibrator(method="logistic_intercept")
+        cal.fit(oof, y)
+
+        assert cal.is_fitted
+        assert isinstance(cal.calibrator_, dict)
+        assert "intercept" in cal.calibrator_
+        calibrated = cal.transform(oof)
+        assert calibrated.shape == oof.shape
+        assert np.all(calibrated >= 0.0) and np.all(calibrated <= 1.0)
+
+    def test_fit_beta(self):
+        """beta calibration fits and produces in-range calibrated outputs."""
+        oof, y = self._make_data()
+        cal = OOFCalibrator(method="beta")
+        cal.fit(oof, y)
+
+        assert cal.is_fitted
+        assert isinstance(cal.calibrator_, dict)
+        assert "a" in cal.calibrator_ and "b" in cal.calibrator_ and "c" in cal.calibrator_
+        calibrated = cal.transform(oof)
+        assert calibrated.shape == oof.shape
+        assert np.all(calibrated >= 0.0) and np.all(calibrated <= 1.0)
+
+    # --- Ordering preservation ---
+
+    def test_logistic_intercept_preserves_rank_order(self):
+        """Intercept-only shift is monotone, so rank order must be preserved."""
+        oof, y = self._make_data()
+        cal = OOFCalibrator(method="logistic_intercept")
+        cal.fit(oof, y)
+
+        test_pts = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+        calibrated = cal.transform(test_pts)
+        # Monotone transform: original rank order must be preserved.
+        assert np.all(np.diff(calibrated) > 0), "logistic_intercept must be monotone"
+
+    def test_logistic_full_preserves_rank_order(self):
+        """Two-parameter Platt scaling is monotone."""
+        oof, y = self._make_data()
+        cal = OOFCalibrator(method="logistic_full")
+        cal.fit(oof, y)
+
+        test_pts = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+        calibrated = cal.transform(test_pts)
+        assert np.all(np.diff(calibrated) > 0), "logistic_full must be monotone"
+
+    # --- Intercept at zero for well-calibrated predictions ---
+
+    def test_logistic_intercept_near_zero_for_calibrated_preds(self):
+        """When predictions are already calibrated, the fitted intercept should be near 0."""
+        rng = np.random.default_rng(0)
+        n = 2000
+        # Predictions drawn from a logistic model -> well-calibrated.
+        x = rng.standard_normal(n)
+        true_prob = 1.0 / (1.0 + np.exp(-x))
+        y = rng.binomial(1, true_prob)
+        # Use true_prob as our "predicted" probabilities.
+        cal = OOFCalibrator(method="logistic_intercept")
+        cal.fit(true_prob, y)
+        intercept = cal.calibrator_["intercept"]
+        assert (
+            abs(intercept) < 0.5
+        ), f"Intercept should be near 0 for well-calibrated predictions, got {intercept:.4f}"
+
+    # --- Isotonic safety: minimum sample threshold ---
+
+    def test_isotonic_fails_below_50_samples(self):
+        """OOFCalibrator.fit should raise ValueError when n < 50."""
+        rng = np.random.default_rng(42)
+        oof = rng.uniform(0.1, 0.9, size=30)
+        y = rng.binomial(1, oof)
+        cal = OOFCalibrator(method="isotonic")
+        with pytest.raises(ValueError, match="at least 50 valid samples"):
+            cal.fit(oof, y)
+
+    def test_isotonic_warns_few_positives(self):
+        """OOFCalibrator.fit should emit a logger.warning when n_positive < 30.
+
+        We construct labels deterministically: exactly 5 positives out of 100
+        samples, which is guaranteed to be < 30.  Verification is done by
+        patching logger.warning directly to avoid caplog propagation issues.
+        """
+        import unittest.mock as mock
+
+        n = 100
+        # Predictions spread evenly so both classes have distinct scores.
+        oof = np.linspace(0.1, 0.9, n)
+        # Exactly 5 positives (indices 0..4); rest negative.  n_positive == 5 < 30.
+        y = np.zeros(n, dtype=int)
+        y[:5] = 1
+
+        cal = OOFCalibrator(method="isotonic")
+        with mock.patch("ced_ml.models.calibration.logger") as mock_logger:
+            cal.fit(oof, y)
+
+        # Confirm that logger.warning was called with a message about positive samples.
+        warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+        assert any(
+            "positive samples" in msg for msg in warning_calls
+        ), f"Expected a warning about positive sample count; calls were: {warning_calls}"
+
+    # --- Sigmoid alias fit_oof_calibrator ---
+
+    def test_fit_oof_calibrator_sigmoid_alias(self):
+        """fit_oof_calibrator with method='sigmoid' stores logistic_full internally."""
+        oof, y = self._make_data()
+        cal = fit_oof_calibrator(oof, y, method="sigmoid")
+        assert cal.method == "logistic_full"
+
+    def test_fit_oof_calibrator_logistic_intercept(self):
+        """fit_oof_calibrator convenience function works with logistic_intercept."""
+        oof, y = self._make_data()
+        cal = fit_oof_calibrator(oof, y, method="logistic_intercept")
+        assert cal.is_fitted
+        assert cal.method == "logistic_intercept"
+
+    def test_fit_oof_calibrator_beta(self):
+        """fit_oof_calibrator convenience function works with beta."""
+        oof, y = self._make_data()
+        cal = fit_oof_calibrator(oof, y, method="beta")
+        assert cal.is_fitted
+        assert cal.method == "beta"
+
+
+# ============================================================================
+# CalibrationConfig Schema Tests (new methods + per_model override)
+# ============================================================================
+
+
+class TestCalibrationConfigSchema:
+    """Tests for the updated CalibrationConfig schema."""
+
+    def test_new_method_literals_accepted(self):
+        """All new method literals should be accepted by CalibrationConfig."""
+        from ced_ml.config.calibration_schema import CalibrationConfig
+
+        for method in ("sigmoid", "isotonic", "logistic_full", "logistic_intercept", "beta"):
+            cfg = CalibrationConfig(method=method)
+            assert cfg.method == method
+
+    def test_invalid_method_rejected(self):
+        """Unknown method names should raise a Pydantic validation error."""
+        from pydantic import ValidationError
+
+        from ced_ml.config.calibration_schema import CalibrationConfig
+
+        with pytest.raises(ValidationError):
+            CalibrationConfig(method="unknown_method")
+
+    def test_per_model_string_coercion(self):
+        """Legacy string-valued per_model entries should be coerced to PerModelCalibrationConfig."""
+        from ced_ml.config.calibration_schema import CalibrationConfig, PerModelCalibrationConfig
+
+        cfg = CalibrationConfig(
+            strategy="per_fold",
+            per_model={"LR_EN": "oof_posthoc"},
+        )
+        assert cfg.per_model is not None
+        override = cfg.per_model["LR_EN"]
+        assert isinstance(override, PerModelCalibrationConfig)
+        assert override.strategy == "oof_posthoc"
+        assert override.method is None  # no method override from string
+
+    def test_per_model_dict_accepted(self):
+        """Full PerModelCalibrationConfig dicts should be accepted."""
+        from ced_ml.config.calibration_schema import CalibrationConfig, PerModelCalibrationConfig
+
+        cfg = CalibrationConfig(
+            strategy="per_fold",
+            method="isotonic",
+            per_model={"LR_EN": {"strategy": "oof_posthoc", "method": "logistic_intercept"}},
+        )
+        override = cfg.per_model["LR_EN"]
+        assert isinstance(override, PerModelCalibrationConfig)
+        assert override.strategy == "oof_posthoc"
+        assert override.method == "logistic_intercept"
+
+    def test_get_method_for_model_uses_global_default(self):
+        """get_method_for_model returns global method when no per_model override."""
+        from ced_ml.config.calibration_schema import CalibrationConfig
+
+        cfg = CalibrationConfig(method="logistic_full")
+        assert cfg.get_method_for_model("LR_EN") == "logistic_full"
+        assert cfg.get_method_for_model("RF") == "logistic_full"
+
+    def test_get_method_for_model_uses_per_model_override(self):
+        """get_method_for_model returns per-model method when present."""
+        from ced_ml.config.calibration_schema import CalibrationConfig
+
+        cfg = CalibrationConfig(
+            method="isotonic",
+            per_model={"LR_EN": {"method": "beta"}},
+        )
+        assert cfg.get_method_for_model("LR_EN") == "beta"
+        assert cfg.get_method_for_model("RF") == "isotonic"  # falls back to global
+
+    def test_get_strategy_for_model_string_coercion_backward_compat(self):
+        """Legacy string per_model still works with get_strategy_for_model."""
+        from ced_ml.config.calibration_schema import CalibrationConfig
+
+        cfg = CalibrationConfig(
+            strategy="per_fold",
+            per_model={"LR_EN": "oof_posthoc", "LinSVM_cal": "none"},
+        )
+        assert cfg.get_strategy_for_model("LR_EN") == "oof_posthoc"
+        assert cfg.get_strategy_for_model("LinSVM_cal") == "none"
+        assert cfg.get_strategy_for_model("RF") == "per_fold"

@@ -29,6 +29,9 @@ from ced_ml.config.compute_schema import (
 from ced_ml.config.cv_schema import CVConfig, OptunaConfig
 from ced_ml.config.data_schema import ColumnsConfig, SplitsConfig
 
+# Ensemble
+from ced_ml.config.ensemble_schema import EnsembleConfig
+
 # Evaluation and DCA
 from ced_ml.config.evaluation_schema import DCAConfig, EvaluationConfig
 
@@ -70,6 +73,8 @@ __all__ = [
     # Calibration and thresholds
     "CalibrationConfig",
     "ThresholdConfig",
+    # Ensemble
+    "EnsembleConfig",
     # Evaluation and DCA
     "EvaluationConfig",
     "DCAConfig",
