@@ -449,9 +449,31 @@ def optimize_panel(ctx, config, **kwargs):
                     f"No models found with run_id={run_id} and aggregated results in {results_dir}"
                 )
 
-        click.echo(f"\nSubmitting {len(model_dirs)} panel optimization job(s) to HPC:")
-        for model_name in model_dirs.keys():
-            click.echo(f"  - {model_name}")
+        # Discover available split seeds per model
+        from ced_ml.hpc.common import _build_panel_optimization_command
+
+        model_seeds: dict[str, list[int]] = {}
+        for model_name, agg_dir in model_dirs.items():
+            model_root = agg_dir.parent  # e.g., results/run_ID/ModelName/
+            splits_dir = model_root / "splits"
+            if splits_dir.exists():
+                seeds = sorted(
+                    int(d.name.replace("split_seed", ""))
+                    for d in splits_dir.glob("split_seed*")
+                    if d.is_dir()
+                )
+                model_seeds[model_name] = seeds
+            else:
+                model_seeds[model_name] = []
+
+        total_seed_jobs = sum(len(seeds) for seeds in model_seeds.values())
+        total_agg_jobs = len(model_dirs)
+        click.echo(
+            f"\nSubmitting {total_seed_jobs} per-seed + {total_agg_jobs} aggregation "
+            f"job(s) to HPC ({len(model_dirs)} models):"
+        )
+        for model_name, seeds in model_seeds.items():
+            click.echo(f"  - {model_name}: {len(seeds)} seeds {seeds}")
 
         # Build job parameters from config + environment
         default_resources = hpc_config.get_resources("default")
@@ -467,38 +489,67 @@ def optimize_panel(ctx, config, **kwargs):
             **default_resources,
         }
 
-        # Build and submit jobs for each model
-        from ced_ml.hpc.common import _build_panel_optimization_command
-
+        # Submit per-model per-seed jobs, then per-model aggregation jobs
         submitted_jobs = []
-        for model_name in model_dirs.keys():
-            cmd = _build_panel_optimization_command(run_id=run_id, model=model_name)
-            job_name = f"opt_panel_{model_name}_{run_id}"
+        for model_name, seeds in model_seeds.items():
+            if not seeds:
+                click.echo(f"  {model_name}: No seeds found, submitting single job")
+                cmd = _build_panel_optimization_command(run_id=run_id, model=model_name)
+                job_name = f"opt_panel_{model_name}_{run_id}"
+                script = build_job_script(job_name=job_name, command=cmd, **job_params)
+                job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run_flag)
+                if job_id:
+                    submitted_jobs.append((job_name, job_id))
+                    click.echo(f"  Submitted {job_name}: job_id={job_id}")
+                elif dry_run_flag:
+                    click.echo(f"  [DRY RUN] {job_name}")
+                continue
 
-            script = build_job_script(
-                job_name=job_name,
-                command=cmd,
-                **job_params,
-            )
-
-            job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run_flag)
-
-            if job_id:
-                submitted_jobs.append((model_name, job_id))
-                click.echo(f"  Submitted {model_name}: job_id={job_id}")
-            elif dry_run_flag:
-                click.echo(f"  [DRY RUN] {model_name}: {job_name}")
-            else:
-                click.echo(f"  {model_name}: Submission failed", err=True)
-                raise click.ClickException(
-                    f"HPC job submission failed for model {model_name}. "
-                    "Check HPC configuration and job script."
+            # Per-seed RFE jobs
+            for seed in seeds:
+                cmd = _build_panel_optimization_command(
+                    run_id=run_id,
+                    model=model_name,
+                    split_seed=seed,
                 )
+                job_name = f"opt_panel_{model_name}_s{seed}_{run_id}"
+                script = build_job_script(job_name=job_name, command=cmd, **job_params)
+                job_id = submit_job(script, scheduler=scheduler, dry_run=dry_run_flag)
+
+                if job_id:
+                    submitted_jobs.append((job_name, job_id))
+                    click.echo(f"  Submitted {job_name}: job_id={job_id}")
+                elif dry_run_flag:
+                    click.echo(f"  [DRY RUN] {job_name}")
+                else:
+                    click.echo(f"  {job_name}: Submission failed", err=True)
+                    raise click.ClickException(
+                        f"HPC job submission failed for {job_name}. "
+                        "Check HPC configuration and job script."
+                    )
+
+            # Per-model aggregation job (runs after all seeds complete;
+            # detects pre-computed seed results and skips to aggregation)
+            agg_cmd = _build_panel_optimization_command(run_id=run_id, model=model_name)
+            agg_job_name = f"opt_panel_{model_name}_agg_{run_id}"
+            agg_script = build_job_script(job_name=agg_job_name, command=agg_cmd, **job_params)
+            agg_job_id = submit_job(agg_script, scheduler=scheduler, dry_run=dry_run_flag)
+
+            if agg_job_id:
+                submitted_jobs.append((agg_job_name, agg_job_id))
+                click.echo(f"  Submitted {agg_job_name}: job_id={agg_job_id}")
+            elif dry_run_flag:
+                click.echo(f"  [DRY RUN] {agg_job_name}")
 
         if dry_run_flag:
             click.echo("\n[DRY RUN] No jobs were actually submitted.")
         elif submitted_jobs:
             click.echo(f"\nSuccessfully submitted {len(submitted_jobs)} job(s)")
+            click.echo(
+                "Note: Aggregation jobs should be submitted after seed jobs complete.\n"
+                "If using LSF/Slurm dependency chains, consider using "
+                "'ced run-pipeline --hpc' for automatic orchestration."
+            )
             click.echo(f"Monitor with: {scheduler.monitor_hint('opt_panel_*')}")
 
         return
@@ -792,6 +843,12 @@ def optimize_panel(ctx, config, **kwargs):
     help="Inner CV folds for retune's OptunaSearchCV (default: 3)",
 )
 @click.option(
+    "--n-jobs",
+    type=int,
+    default=None,
+    help="Number of parallel jobs for essentiality validation (default: 1, use -1 for all CPUs)",
+)
+@click.option(
     "--outdir",
     type=click.Path(),
     default=None,
@@ -938,4 +995,5 @@ def consensus_panel(ctx, config, **kwargs):
         essentiality_retune_inner_folds=(
             kwargs.get("retune_inner_folds") or essentiality_cfg.get("retune_inner_folds", 3)
         ),
+        n_jobs=kwargs.get("n_jobs") or config_params.get("n_jobs_hpc", 1),
     )

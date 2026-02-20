@@ -237,6 +237,7 @@ def evaluate_panel_size(
     cv_folds: int,
     random_state: int,
     panel_size: int,
+    cv_n_jobs: int = 1,
 ) -> dict[str, float]:
     """Evaluate metrics for a given panel size.
 
@@ -249,6 +250,7 @@ def evaluate_panel_size(
         cv_folds: CV folds for OOF estimation (0 to skip).
         random_state: Random seed.
         panel_size: Current panel size (for logging).
+        cv_n_jobs: Parallel jobs for cross_val_predict (default 1).
 
     Returns:
         Dict with all evaluation metrics.
@@ -264,6 +266,7 @@ def evaluate_panel_size(
             y_train,
             cv=cv,
             method="predict_proba",
+            n_jobs=cv_n_jobs,
         )[:, 1]
         metrics["auroc_cv"] = auroc(y_train, oof_probs)
         metrics["prauc_cv"] = prauc(y_train, oof_probs)

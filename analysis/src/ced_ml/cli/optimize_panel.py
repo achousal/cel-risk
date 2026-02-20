@@ -303,6 +303,7 @@ def run_drop_column_validation_for_panels(
     corr_threshold: float,
     corr_method: str,
     essentiality_corr_threshold: float | None = None,
+    n_jobs: int = 1,
 ) -> None:
     """Run drop-column essentiality validation for each recommended panel.
 
@@ -384,43 +385,53 @@ def run_drop_column_validation_for_panels(
             clusters = [[panel_proteins[0]]]
 
         # Run drop-column across all seeds
-        per_seed_results = []
-        for seed_dir in split_dirs:
+        # Auto-partition cores: outer seed-level vs inner cluster-level
+        import os
+
+        total_jobs = n_jobs if n_jobs != -1 else (os.cpu_count() or 1)
+        n_seeds = len(split_dirs)
+        seed_jobs = min(n_seeds, max(1, total_jobs))
+        cluster_jobs = max(1, total_jobs // seed_jobs)
+
+        def _essentiality_for_seed(
+            seed_dir: Path,
+            *,
+            _X_all: pd.DataFrame = X_all,
+            _y_all: np.ndarray = y_all,
+            _panel_proteins: list[str] = panel_proteins,
+            _clusters: list[list[str]] = clusters,
+            _cluster_jobs: int = cluster_jobs,
+            _model_name: str = model_name,
+        ) -> list | None:
             seed = int(seed_dir.name.replace("split_seed", ""))
-            model_path = seed_dir / "core" / f"{model_name}__final_model.joblib"
+            model_path = seed_dir / "core" / f"{_model_name}__final_model.joblib"
 
             if not model_path.exists():
                 logger.warning(f"  Seed {seed}: model not found at {model_path}, skipping")
-                continue
+                return None
 
-            # Load split indices
             train_idx, val_idx = load_split_indices(split_dir, scenario, seed)
 
-            # Split data
-            X_train = X_all.iloc[train_idx]
-            y_train = y_all[train_idx]
-            X_val = X_all.iloc[val_idx]
-            y_val = y_all[val_idx]
+            X_train = _X_all.iloc[train_idx]
+            y_train = _y_all[train_idx]
+            X_val = _X_all.iloc[val_idx]
+            y_val = _y_all[val_idx]
 
-            # Load model, clone, reconfigure, and refit on panel features
             try:
                 bundle = joblib.load(model_path)
                 original_pipeline = bundle.get("model")
 
                 if original_pipeline is None:
                     logger.warning(f"  Seed {seed}: model bundle missing 'model' key, skipping")
-                    continue
+                    return None
 
-                # Unwrap OOFCalibratedModel to get the fittable base model
                 if isinstance(original_pipeline, OOFCalibratedModel):
                     original_pipeline = original_pipeline.base_model
 
-                # Clone preserves tuned hyperparameters but produces unfitted estimator
                 panel_pipeline = clone(original_pipeline)
-                _configure_screen_step_for_panel_refit(panel_pipeline, panel_proteins)
+                _configure_screen_step_for_panel_refit(panel_pipeline, _panel_proteins)
 
-                # Refit on panel features only
-                logger.debug(f"  Seed {seed}: refitting on {len(panel_proteins)} panel proteins")
+                logger.debug(f"  Seed {seed}: refitting on {len(_panel_proteins)} panel proteins")
                 panel_pipeline.fit(X_train, y_train)
 
                 seed_results = compute_drop_column_importance(
@@ -429,13 +440,33 @@ def run_drop_column_validation_for_panels(
                     y_train=y_train,
                     X_val=X_val,
                     y_val=y_val,
-                    feature_clusters=clusters,
+                    feature_clusters=_clusters,
                     random_state=seed,
+                    n_jobs=_cluster_jobs,
                 )
-                per_seed_results.append(seed_results)
                 logger.info(f"  Seed {seed}: {len(seed_results)} clusters evaluated")
+                return seed_results
             except Exception as e:
                 logger.warning(f"  Seed {seed}: drop-column failed: {e}")
+                return None
+
+        if seed_jobs > 1 and n_seeds > 1:
+            from joblib import Parallel, delayed
+
+            logger.info(
+                f"  Parallel essentiality: {seed_jobs} seed jobs x "
+                f"{cluster_jobs} cluster jobs/seed ({total_jobs} total cores)"
+            )
+            raw_results = Parallel(n_jobs=seed_jobs)(
+                delayed(_essentiality_for_seed)(sd) for sd in split_dirs
+            )
+            per_seed_results = [r for r in raw_results if r is not None]
+        else:
+            per_seed_results = []
+            for sd in split_dirs:
+                r = _essentiality_for_seed(sd)
+                if r is not None:
+                    per_seed_results.append(r)
 
         if not per_seed_results:
             logger.warning(f"  No successful drop-column results for {threshold_name}, skipping")
@@ -927,6 +958,7 @@ def run_optimize_panel_aggregated(
             corr_threshold=corr_threshold,
             corr_method=corr_method,
             essentiality_corr_threshold=essentiality_corr_threshold,
+            n_jobs=n_jobs,
         )
         logger.info("Drop-column essentiality validation completed successfully")
     except Exception as e:

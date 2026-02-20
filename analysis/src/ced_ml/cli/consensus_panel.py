@@ -351,6 +351,7 @@ def _run_multimodel_essentiality_validation(
     refit_mode: str = "fixed",
     retune_n_trials: int = 20,
     retune_inner_folds: int = 3,
+    n_jobs: int = 1,
 ) -> dict:
     """Run drop-column essentiality validation for all models and aggregate.
 
@@ -437,22 +438,28 @@ def _run_multimodel_essentiality_validation(
             logger.warning(f"  {model_name}: No split_seed* subdirectories found")
             continue
 
-        drop_column_results_per_fold = []
-        brier_deltas_per_fold = []
-        pr_auc_deltas_per_fold = []
+        # Auto-partition cores: outer seed-level vs inner cluster-level
+        import os
 
-        # For each seed, find and refit the model
-        for split_dir_path in model_split_dirs:
+        total_jobs = n_jobs if n_jobs != -1 else (os.cpu_count() or 1)
+        n_seeds = len(model_split_dirs)
+        seed_jobs = min(n_seeds, max(1, total_jobs))
+        cluster_jobs = max(1, total_jobs // seed_jobs)
+
+        def _essentiality_for_seed(
+            split_dir_path: Path,
+            *,
+            _model_name: str = model_name,
+            _cluster_jobs: int = cluster_jobs,
+        ) -> dict | None:
+            """Run essentiality for a single (model, seed) pair."""
             seed = int(split_dir_path.name.replace("split_seed", ""))
-
-            # Try to find this model for this seed
-            model_path = split_dir_path / "core" / f"{model_name}__final_model.joblib"
+            model_path = split_dir_path / "core" / f"{_model_name}__final_model.joblib"
 
             if not model_path.exists():
-                logger.debug(f"  Seed {seed}: {model_name} not found, skipping")
-                continue
+                logger.debug(f"  Seed {seed}: {_model_name} not found, skipping")
+                return None
 
-            # Load split indices from shared location
             train_file = split_indices_dir / f"train_idx_{scenario}_seed{seed}.csv"
             val_file = split_indices_dir / f"val_idx_{scenario}_seed{seed}.csv"
 
@@ -460,25 +467,22 @@ def _run_multimodel_essentiality_validation(
                 logger.debug(
                     f"  Seed {seed}: split indices not found ({train_file.name}, {val_file.name}), skipping"
                 )
-                continue
+                return None
 
             train_idx = pd.read_csv(train_file).squeeze().values
             val_idx = pd.read_csv(val_file).squeeze().values
 
-            # Load model pipeline
             try:
                 seed_bundle = joblib.load(model_path)
                 original_pipeline = seed_bundle.get("model")
 
                 if original_pipeline is None:
                     logger.warning(f"  Seed {seed}: model bundle missing 'model' key, skipping")
-                    continue
+                    return None
 
-                # Unwrap OOFCalibratedModel to get the fittable base model
                 if isinstance(original_pipeline, OOFCalibratedModel):
                     original_pipeline = original_pipeline.base_model
 
-                # Clone preserves tuned hyperparameters but produces unfitted estimator
                 panel_pipeline = clone(original_pipeline)
                 _configure_screen_step_for_panel_refit(panel_pipeline, panel_features)
 
@@ -487,18 +491,15 @@ def _run_multimodel_essentiality_validation(
                 X_val_seed = df.iloc[val_idx][refit_features]
                 y_val_seed = y_all[val_idx]
 
-                # Fit the cloned model on panel proteins
                 logger.debug(
-                    f"  Seed {seed}: refitting {model_name} on "
+                    f"  Seed {seed}: refitting {_model_name} on "
                     f"{len(panel_features)} panel proteins"
                 )
                 panel_pipeline.fit(X_train_seed, y_train_seed)
 
-                # Resolve cat_cols for retune modes
                 cat_cols = resolved_cols.get("categorical_metadata", [])
                 cat_cols = [c for c in cat_cols if c in X_train_seed.columns]
 
-                # Primary: delta-AUROC via drop-column
                 fold_results = compute_drop_column_importance(
                     estimator=panel_pipeline,
                     X_train=X_train_seed,
@@ -508,16 +509,17 @@ def _run_multimodel_essentiality_validation(
                     feature_clusters=clusters,
                     random_state=seed,
                     refit_mode=refit_mode,
-                    model_name=model_name,
+                    model_name=_model_name,
                     cat_cols=cat_cols,
                     retune_n_trials=retune_n_trials,
                     retune_inner_folds=retune_inner_folds,
+                    n_jobs=_cluster_jobs,
                 )
-                drop_column_results_per_fold.append(fold_results)
 
-                # Secondary: delta-Brier
+                result = {"drop_column": fold_results}
+
                 if include_brier:
-                    brier_deltas = _compute_brier_deltas(
+                    result["brier"] = _compute_brier_deltas(
                         model=panel_pipeline,
                         X_train=X_train_seed,
                         y_train=y_train_seed,
@@ -526,11 +528,9 @@ def _run_multimodel_essentiality_validation(
                         feature_clusters=clusters,
                         random_state=seed,
                     )
-                    brier_deltas_per_fold.append(brier_deltas)
 
-                # Secondary: delta-PR-AUC
                 if include_pr_auc:
-                    pr_auc_deltas = _compute_pr_auc_deltas(
+                    result["pr_auc"] = _compute_pr_auc_deltas(
                         model=panel_pipeline,
                         X_train=X_train_seed,
                         y_train=y_train_seed,
@@ -539,13 +539,40 @@ def _run_multimodel_essentiality_validation(
                         feature_clusters=clusters,
                         random_state=seed,
                     )
-                    pr_auc_deltas_per_fold.append(pr_auc_deltas)
 
-                logger.debug(f"  Seed {seed}: completed essentiality for {model_name}")
+                logger.debug(f"  Seed {seed}: completed essentiality for {_model_name}")
+                return result
 
             except Exception as e:
-                logger.warning(f"  Seed {seed}: error processing {model_name}: {e}")
+                logger.warning(f"  Seed {seed}: error processing {_model_name}: {e}")
+                return None
+
+        # Dispatch seed-level parallelism
+        if seed_jobs > 1 and n_seeds > 1:
+            from joblib import Parallel, delayed
+
+            logger.info(
+                f"  Parallel essentiality: {seed_jobs} seed jobs x "
+                f"{cluster_jobs} cluster jobs/seed ({total_jobs} total cores)"
+            )
+            raw_results = Parallel(n_jobs=seed_jobs)(
+                delayed(_essentiality_for_seed)(sd) for sd in model_split_dirs
+            )
+        else:
+            raw_results = [_essentiality_for_seed(sd) for sd in model_split_dirs]
+
+        # Unpack results
+        drop_column_results_per_fold = []
+        brier_deltas_per_fold = []
+        pr_auc_deltas_per_fold = []
+        for r in raw_results:
+            if r is None:
                 continue
+            drop_column_results_per_fold.append(r["drop_column"])
+            if "brier" in r:
+                brier_deltas_per_fold.append(r["brier"])
+            if "pr_auc" in r:
+                pr_auc_deltas_per_fold.append(r["pr_auc"])
 
         # Aggregate results for this model across folds
         if drop_column_results_per_fold:
@@ -711,6 +738,7 @@ def run_consensus_panel(
     essentiality_refit_mode: str = "fixed",
     essentiality_retune_n_trials: int = 20,
     essentiality_retune_inner_folds: int = 3,
+    n_jobs: int = 1,
 ) -> ConsensusResult:
     """Run consensus panel generation from multiple models.
 
@@ -1054,6 +1082,7 @@ def run_consensus_panel(
                 refit_mode=essentiality_refit_mode,
                 retune_n_trials=essentiality_retune_n_trials,
                 retune_inner_folds=essentiality_retune_inner_folds,
+                n_jobs=n_jobs,
             )
 
         except Exception as e:

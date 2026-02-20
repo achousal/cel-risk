@@ -527,10 +527,19 @@ def build_models(
         )
 
     elif model_name == ModelName.LinSVM_cal:
+        # Map OOF-posthoc method names to sklearn CalibratedClassifierCV terms.
+        # sklearn only accepts "isotonic" or "sigmoid".
+        _SKLEARN_CAL_MAP = {
+            "isotonic": "isotonic",
+            "logistic_full": "sigmoid",
+            "logistic_intercept": "sigmoid",
+            "beta": "sigmoid",
+        }
+        sklearn_cal_method = _SKLEARN_CAL_MAP.get(config.calibration.method, "sigmoid")
         return build_linear_svm_calibrated(
             C=1.0,
             max_iter=config.svm.max_iter,
-            calibration_method=config.calibration.method,
+            calibration_method=sklearn_cal_method,
             calibration_cv=config.calibration.cv,
             random_state=random_state,
         )

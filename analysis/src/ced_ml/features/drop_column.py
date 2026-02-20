@@ -170,6 +170,7 @@ def compute_drop_column_importance(
     retune_n_trials: int = 20,
     retune_inner_folds: int = 3,
     retune_spaces: dict[str, dict[str, dict]] | None = None,
+    n_jobs: int = 1,
 ) -> list[DropColumnResult]:
     """Compute drop-column importance by refitting model with each cluster removed.
 
@@ -199,6 +200,10 @@ def compute_drop_column_importance(
         retune_inner_folds: Inner CV folds for retune's OptunaSearchCV.
         retune_spaces: Optional override search spaces (model_name -> {param: spec}).
             Passed to get_rfe_tune_space as config_overrides.
+        n_jobs: Number of parallel jobs for cluster evaluation. Each cluster
+            drop-and-refit is independent. Default 1 (sequential). Use -1 for
+            all available CPUs. When using retune mode, keep inner Optuna
+            n_jobs=1 to avoid over-subscription.
 
     Returns:
         List of DropColumnResult objects, one per cluster.
@@ -269,29 +274,47 @@ def compute_drop_column_importance(
             retune_spaces=retune_spaces,
         )
 
-    results = []
+    # Build common kwargs for _drop_and_evaluate_cluster
+    common_kwargs = {
+        "estimator": estimator,
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "original_auroc": original_auroc,
+        "random_state": random_state,
+        "refit_mode": refit_mode,
+        "model_name": model_name,
+        "cat_cols": cat_cols or [],
+        "retune_n_trials": retune_n_trials,
+        "retune_inner_folds": retune_inner_folds,
+        "retune_spaces": retune_spaces,
+        "retune_baseline_auroc": retune_baseline_auroc,
+    }
 
-    # For each cluster, drop and refit
-    for cluster_id, cluster_features in enumerate(feature_clusters):
-        result = _drop_and_evaluate_cluster(
-            estimator=estimator,
-            X_train=X_train,
-            y_train=y_train,
-            X_val=X_val,
-            y_val=y_val,
-            cluster_id=cluster_id,
-            cluster_features=cluster_features,
-            original_auroc=original_auroc,
-            random_state=random_state,
-            refit_mode=refit_mode,
-            model_name=model_name,
-            cat_cols=cat_cols or [],
-            retune_n_trials=retune_n_trials,
-            retune_inner_folds=retune_inner_folds,
-            retune_spaces=retune_spaces,
-            retune_baseline_auroc=retune_baseline_auroc,
+    # Parallel or sequential cluster evaluation
+    use_parallel = n_jobs != 1 and len(feature_clusters) > 1
+    if use_parallel:
+        from joblib import Parallel, delayed
+
+        logger.info(f"Evaluating {len(feature_clusters)} clusters in parallel (n_jobs={n_jobs})")
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_drop_and_evaluate_cluster)(
+                cluster_id=cluster_id,
+                cluster_features=cluster_features,
+                **common_kwargs,
+            )
+            for cluster_id, cluster_features in enumerate(feature_clusters)
         )
-        results.append(result)
+    else:
+        results = []
+        for cluster_id, cluster_features in enumerate(feature_clusters):
+            result = _drop_and_evaluate_cluster(
+                cluster_id=cluster_id,
+                cluster_features=cluster_features,
+                **common_kwargs,
+            )
+            results.append(result)
 
     return results
 
@@ -700,6 +723,7 @@ def validate_panel_essentiality(
     retune_n_trials: int = 20,
     retune_inner_folds: int = 3,
     retune_spaces: dict[str, dict[str, dict]] | None = None,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """Validate panel robustness via grouped LOCO/refit.
 
@@ -790,6 +814,7 @@ def validate_panel_essentiality(
         retune_n_trials=retune_n_trials,
         retune_inner_folds=retune_inner_folds,
         retune_spaces=retune_spaces,
+        n_jobs=n_jobs,
     )
 
     # Step 3: Build results DataFrame
