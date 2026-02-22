@@ -362,6 +362,53 @@ def _build_training_command(
     return " \\\n  ".join(parts)
 
 
+def _build_aggregation_command(
+    *,
+    run_id: str,
+    model: str,
+) -> str:
+    """Build aggregation command for a single model.
+
+    Returns:
+        A bash command string for aggregating a single model's split results.
+    """
+    validate_identifier(run_id, "run_id")
+    validate_identifier(model, "model")
+    return f"ced aggregate-splits --run-id {run_id} --model {model}"
+
+
+def _build_ensemble_training_command(
+    *,
+    config_file: Path,
+    run_id: str,
+    split_seed: int,
+    split_index: int,
+) -> str:
+    """Build ensemble training command for a single split seed.
+
+    Returns:
+        A bash command string for training one ensemble seed.
+    """
+    validate_identifier(run_id, "run_id")
+    return (
+        f'ced train-ensemble --config "{config_file}" '
+        f"--run-id {run_id} --split-seed {split_seed} --split-index {split_index}"
+    )
+
+
+def _build_ensemble_aggregation_command(
+    *,
+    run_id: str,
+) -> str:
+    """Build ensemble aggregation command.
+
+    Returns:
+        A bash command string for aggregating ENSEMBLE model results.
+    """
+    validate_identifier(run_id, "run_id")
+    return f"ced aggregate-splits --run-id {run_id} --model ENSEMBLE"
+
+
 def _build_postprocessing_command(
     *,
     config_file: Path,
@@ -427,6 +474,7 @@ def _build_panel_optimization_command(
     run_id: str,
     model: str,
     split_seed: int | None = None,
+    n_jobs: int | None = None,
 ) -> str:
     """Build panel optimization command for a single model.
 
@@ -435,6 +483,8 @@ def _build_panel_optimization_command(
         model: Model name.
         split_seed: If provided, run RFE for this single seed only.
             If None, run aggregation (detects pre-computed seed results).
+        n_jobs: Parallel jobs for essentiality validation (-1 = all cores).
+            Only applied in aggregation mode (split_seed is None).
 
     Returns:
         A bash command string for optimizing panel size via RFE.
@@ -444,18 +494,28 @@ def _build_panel_optimization_command(
     cmd = f"ced optimize-panel --run-id {run_id} --model {model}"
     if split_seed is not None:
         cmd += f" --split-seed {split_seed}"
+    elif n_jobs is not None and n_jobs != 1:
+        cmd += f" --n-jobs {n_jobs}"
     return cmd
 
 
 def _build_consensus_panel_command(
     *,
     run_id: str,
+    n_jobs: int = -1,
 ) -> str:
     """Build consensus panel command.
 
+    Args:
+        run_id: Run identifier.
+        n_jobs: Parallel jobs for essentiality validation (-1 = all cores).
+
     Returns a bash command string for generating cross-model consensus panel.
     """
-    return f"ced consensus-panel --run-id {run_id}"
+    cmd = f"ced consensus-panel --run-id {run_id}"
+    if n_jobs != 1:
+        cmd += f" --n-jobs {n_jobs}"
+    return cmd
 
 
 def _build_permutation_test_full_command(
@@ -724,8 +784,12 @@ def _build_orchestrator_script(
     wrapper_script_path: Path,
     training_job_ids: list[str],
     training_job_names: list[str],
-    post_key: str,
-    post_job_name: str,
+    agg_keys: list[str],
+    agg_job_names: list[str],
+    ensemble_keys: list[str],
+    ensemble_job_names: list[str],
+    ensemble_agg_key: str | None,
+    ensemble_agg_job_name: str | None,
     perm_keys: list[str],
     perm_job_names: list[str],
     perm_agg_keys: list[str],
@@ -738,7 +802,17 @@ def _build_orchestrator_script(
     consensus_job_name: str | None,
     expected_training_jobs: int,
 ) -> str:
-    """Build the barrier-orchestrator bash script."""
+    """Build the barrier-orchestrator bash script.
+
+    DAG (maximally parallel):
+        training -> aggregation (per model, parallel)
+        -> [ensemble (per seed) | perm tests | panel seeds] (all parallel)
+        -> ensemble barrier -> ensemble_agg
+        -> perm barrier -> perm_agg
+        -> panel barrier -> panel_agg
+        -> combined downstream barrier
+        -> consensus -> done
+    """
     validate_identifier(run_id, "run_id")
     orchestrator_cfg = hpc_config.orchestrator
 
@@ -782,50 +856,113 @@ def _build_orchestrator_script(
         f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",
         "echo \"[$(date '+%F %T')] Training IDs submitted: ${#TRAINING_IDS[@]} (expected: $EXPECTED_TRAINING)\"",
         "",
+        # Stage 1: Wait for training
         'UPSTREAM_IDS=("${TRAINING_IDS[@]}")',
         f'barrier_wait "training" {orchestrator_cfg.timeout_seconds("training")} "$POLL_INTERVAL" "${{TRAINING_JOBS[@]}}"',
         "",
-        'POST_IDS_FILE=$(mktemp "$SENTINEL_DIR/post_ids.XXXXXX")',
-        f'submit_and_track "{post_key}" "post-processing" "$POST_IDS_FILE"',
-        'mapfile -t UPSTREAM_IDS < "$POST_IDS_FILE"',
-        _bash_array_literal("POST_JOBS", [post_job_name]),
-        f'barrier_wait "post-processing" {orchestrator_cfg.timeout_seconds("post")} "$POLL_INTERVAL" "${{POST_JOBS[@]}}"',
-        "",
     ]
 
-    if perm_keys:
+    # Stage 2: Per-model aggregation (parallel)
+    lines.extend(
+        [
+            _bash_array_literal("AGG_KEYS", agg_keys),
+            _bash_array_literal("AGG_JOBS", agg_job_names),
+            'AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/agg_ids.XXXXXX")',
+            'submit_batch "$MAX_CHUNK" "$AGG_IDS_FILE" "${AGG_KEYS[@]}"',
+            'mapfile -t UPSTREAM_IDS < "$AGG_IDS_FILE"',
+            f'barrier_wait "aggregation" {orchestrator_cfg.timeout_seconds("aggregation")} "$POLL_INTERVAL" "${{AGG_JOBS[@]}}"',
+            "",
+        ]
+    )
+
+    # Stage 3: Submit all post-aggregation jobs simultaneously
+    # These are independent: ensemble training, permutation tests, panel seeds
+    has_ensemble = bool(ensemble_keys)
+    has_perm = bool(perm_keys)
+    has_panel = bool(panel_seed_keys)
+
+    if has_ensemble:
+        lines.extend(
+            [
+                _bash_array_literal("ENSEMBLE_KEYS", ensemble_keys),
+                _bash_array_literal("ENSEMBLE_JOBS", ensemble_job_names),
+                'ENSEMBLE_IDS_FILE=$(mktemp "$SENTINEL_DIR/ensemble_ids.XXXXXX")',
+                'submit_batch "$MAX_CHUNK" "$ENSEMBLE_IDS_FILE" "${ENSEMBLE_KEYS[@]}"',
+                "",
+            ]
+        )
+
+    if has_perm:
         lines.extend(
             [
                 _bash_array_literal("PERM_KEYS", perm_keys),
                 _bash_array_literal("PERM_JOBS", perm_job_names),
                 'PERM_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PERM_IDS_FILE" "${PERM_KEYS[@]}"',
-                'mapfile -t UPSTREAM_IDS < "$PERM_IDS_FILE"',
-                f'barrier_wait "permutation-tests" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_JOBS[@]}}"',
                 "",
             ]
         )
 
-    if perm_agg_keys:
-        lines.extend(
-            [
-                _bash_array_literal("PERM_AGG_KEYS", perm_agg_keys),
-                _bash_array_literal("PERM_AGG_JOBS", perm_agg_job_names),
-                'PERM_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_agg_ids.XXXXXX")',
-                'submit_batch "$MAX_CHUNK" "$PERM_AGG_IDS_FILE" "${PERM_AGG_KEYS[@]}"',
-                'mapfile -t UPSTREAM_IDS < "$PERM_AGG_IDS_FILE"',
-                f'barrier_wait "permutation-aggregation" {orchestrator_cfg.timeout_seconds("post")} "$POLL_INTERVAL" "${{PERM_AGG_JOBS[@]}}"',
-                "",
-            ]
-        )
-
-    if panel_seed_keys:
+    if has_panel:
         lines.extend(
             [
                 _bash_array_literal("PANEL_SEED_KEYS", panel_seed_keys),
                 _bash_array_literal("PANEL_SEED_JOBS", panel_seed_job_names),
                 'PANEL_SEED_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_seed_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PANEL_SEED_IDS_FILE" "${PANEL_SEED_KEYS[@]}"',
+                "",
+            ]
+        )
+
+    # Stage 4: Wait for each chain and submit its downstream job(s).
+    # Jobs from all chains are already running in parallel on HPC.
+    # The orchestrator waits for each chain sequentially, but the actual
+    # compute is fully overlapped.
+
+    # Collect all "penultimate" job names for the combined downstream barrier
+    downstream_job_names: list[str] = []
+
+    if has_ensemble:
+        lines.extend(
+            [
+                'mapfile -t UPSTREAM_IDS < "$ENSEMBLE_IDS_FILE"',
+                f'barrier_wait "ensemble-training" {orchestrator_cfg.timeout_seconds("ensemble")} "$POLL_INTERVAL" "${{ENSEMBLE_JOBS[@]}}"',
+                "",
+            ]
+        )
+        if ensemble_agg_key and ensemble_agg_job_name:
+            lines.extend(
+                [
+                    'ENSEMBLE_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/ensemble_agg_ids.XXXXXX")',
+                    f'submit_and_track "{ensemble_agg_key}" "ensemble-aggregation" "$ENSEMBLE_AGG_IDS_FILE"',
+                    "",
+                ]
+            )
+            downstream_job_names.append(ensemble_agg_job_name)
+
+    if has_perm:
+        lines.extend(
+            [
+                'mapfile -t UPSTREAM_IDS < "$PERM_IDS_FILE"',
+                f'barrier_wait "permutation-tests" {orchestrator_cfg.timeout_seconds("perm")} "$POLL_INTERVAL" "${{PERM_JOBS[@]}}"',
+                "",
+            ]
+        )
+        if perm_agg_keys:
+            lines.extend(
+                [
+                    _bash_array_literal("PERM_AGG_KEYS", perm_agg_keys),
+                    _bash_array_literal("PERM_AGG_JOBS", perm_agg_job_names),
+                    'PERM_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/perm_agg_ids.XXXXXX")',
+                    'submit_batch "$MAX_CHUNK" "$PERM_AGG_IDS_FILE" "${PERM_AGG_KEYS[@]}"',
+                    "",
+                ]
+            )
+            downstream_job_names.extend(perm_agg_job_names)
+
+    if has_panel:
+        lines.extend(
+            [
                 'mapfile -t UPSTREAM_IDS < "$PANEL_SEED_IDS_FILE"',
                 f'barrier_wait "panel-seed" {orchestrator_cfg.timeout_seconds("panel")} "$POLL_INTERVAL" "${{PANEL_SEED_JOBS[@]}}"',
                 "",
@@ -833,12 +970,34 @@ def _build_orchestrator_script(
                 _bash_array_literal("PANEL_AGG_JOBS", panel_agg_job_names),
                 'PANEL_AGG_IDS_FILE=$(mktemp "$SENTINEL_DIR/panel_agg_ids.XXXXXX")',
                 'submit_batch "$MAX_CHUNK" "$PANEL_AGG_IDS_FILE" "${PANEL_AGG_KEYS[@]}"',
-                'mapfile -t UPSTREAM_IDS < "$PANEL_AGG_IDS_FILE"',
-                f'barrier_wait "panel-aggregation" {orchestrator_cfg.timeout_seconds("panel")} "$POLL_INTERVAL" "${{PANEL_AGG_JOBS[@]}}"',
+                "",
+            ]
+        )
+        downstream_job_names.extend(panel_agg_job_names)
+
+    # Stage 5: Wait for all downstream aggregation jobs
+    if downstream_job_names:
+        lines.extend(
+            [
+                _bash_array_literal("DOWNSTREAM_JOBS", downstream_job_names),
+                "UPSTREAM_IDS=()",
+                # Collect IDs from whichever downstream stages exist
+            ]
+        )
+        if has_ensemble and ensemble_agg_key:
+            lines.append('mapfile -t _ids < "$ENSEMBLE_AGG_IDS_FILE"; UPSTREAM_IDS+=("${_ids[@]}")')
+        if perm_agg_keys:
+            lines.append('mapfile -t _ids < "$PERM_AGG_IDS_FILE"; UPSTREAM_IDS+=("${_ids[@]}")')
+        if has_panel:
+            lines.append('mapfile -t _ids < "$PANEL_AGG_IDS_FILE"; UPSTREAM_IDS+=("${_ids[@]}")')
+        lines.extend(
+            [
+                f'barrier_wait "downstream-aggregation" {orchestrator_cfg.timeout_seconds("panel")} "$POLL_INTERVAL" "${{DOWNSTREAM_JOBS[@]}}"',
                 "",
             ]
         )
 
+    # Stage 6: Consensus
     if consensus_key and consensus_job_name:
         lines.extend(
             [
@@ -1008,23 +1167,45 @@ def _submit_orchestrator_pipeline(
     # Downstream stages are represented in a single manifest
     manifest_jobs: dict[str, dict[str, str | int]] = {}
 
-    post_job_name = f"CeD_{run_id}_post"
-    post_command = _build_postprocessing_command(
-        config_file=config_file.resolve(),
-        run_id=run_id,
-        outdir=outdir.resolve(),
-        infile=infile.resolve(),
-        split_dir=split_dir.resolve(),
-        models=models,
-        split_seeds=split_seeds,
-        enable_ensemble=enable_ensemble,
-    )
-    post_key = "post"
-    manifest_jobs[post_key] = _manifest_entry(
-        job_name=post_job_name,
-        command=post_command,
-    )
+    # Stage 2: Per-model aggregation (parallel)
+    agg_job_names: list[str] = []
+    agg_keys: list[str] = []
+    for model in models:
+        agg_job = f"CeD_{run_id}_agg_{model}"
+        agg_cmd = _build_aggregation_command(run_id=run_id, model=model)
+        agg_key = f"agg_{model}"
+        manifest_jobs[agg_key] = _manifest_entry(job_name=agg_job, command=agg_cmd)
+        agg_job_names.append(agg_job)
+        agg_keys.append(agg_key)
 
+    # Stage 3a: Ensemble training (parallel per seed)
+    ensemble_job_names: list[str] = []
+    ensemble_keys: list[str] = []
+    ensemble_agg_key: str | None = None
+    ensemble_agg_job_name: str | None = None
+    if enable_ensemble:
+        for split_index, seed in enumerate(split_seeds):
+            ens_job = f"CeD_{run_id}_ensemble_s{seed}"
+            ens_cmd = _build_ensemble_training_command(
+                config_file=config_file.resolve(),
+                run_id=run_id,
+                split_seed=seed,
+                split_index=split_index,
+            )
+            ens_key = f"ensemble_s{seed}"
+            manifest_jobs[ens_key] = _manifest_entry(job_name=ens_job, command=ens_cmd)
+            ensemble_job_names.append(ens_job)
+            ensemble_keys.append(ens_key)
+
+        # Ensemble aggregation (single job after all ensemble seeds)
+        ensemble_agg_job_name = f"CeD_{run_id}_ensemble_agg"
+        ensemble_agg_cmd = _build_ensemble_aggregation_command(run_id=run_id)
+        ensemble_agg_key = "ensemble_agg"
+        manifest_jobs[ensemble_agg_key] = _manifest_entry(
+            job_name=ensemble_agg_job_name, command=ensemble_agg_cmd
+        )
+
+    # Stage 3b: Permutation tests (parallel per model x seed)
     permutation_job_names: list[str] = []
     perm_keys: list[str] = []
     perm_agg_names: list[str] = []
@@ -1063,6 +1244,7 @@ def _submit_orchestrator_pipeline(
             perm_agg_names.append(perm_agg_job)
             perm_agg_keys.append(perm_agg_key)
 
+    # Stage 3c: Panel optimization seeds (parallel per model x seed)
     panel_job_names: list[str] = []
     panel_agg_names: list[str] = []
     panel_seed_keys: list[str] = []
@@ -1085,7 +1267,7 @@ def _submit_orchestrator_pipeline(
                 panel_seed_keys.append(panel_seed_key)
 
             panel_agg_job = f"CeD_{run_id}_panel_{model}_agg"
-            panel_agg_cmd = _build_panel_optimization_command(run_id=run_id, model=model)
+            panel_agg_cmd = _build_panel_optimization_command(run_id=run_id, model=model, n_jobs=-1)
             panel_agg_key = f"panel_{model}_agg"
             manifest_jobs[panel_agg_key] = _manifest_entry(
                 job_name=panel_agg_job,
@@ -1098,7 +1280,7 @@ def _submit_orchestrator_pipeline(
     consensus_job_name = f"CeD_{run_id}_consensus"
     consensus_key: str | None = None
     if enable_consensus:
-        consensus_cmd = _build_consensus_panel_command(run_id=run_id)
+        consensus_cmd = _build_consensus_panel_command(run_id=run_id, n_jobs=-1)
         consensus_key = "consensus"
         manifest_jobs[consensus_key] = _manifest_entry(
             job_name=consensus_job_name,
@@ -1122,8 +1304,12 @@ def _submit_orchestrator_pipeline(
         wrapper_script_path=wrapper_script_path,
         training_job_ids=training_job_ids,
         training_job_names=training_job_names,
-        post_key=post_key,
-        post_job_name=post_job_name,
+        agg_keys=agg_keys,
+        agg_job_names=agg_job_names,
+        ensemble_keys=ensemble_keys,
+        ensemble_job_names=ensemble_job_names,
+        ensemble_agg_key=ensemble_agg_key,
+        ensemble_agg_job_name=ensemble_agg_job_name,
         perm_keys=perm_keys,
         perm_job_names=permutation_job_names,
         perm_agg_keys=perm_agg_keys,
@@ -1144,11 +1330,14 @@ def _submit_orchestrator_pipeline(
 
     orchestrator_job_display = orchestrator_job_id or f"DRYRUN_{orchestrator_orch_name}"
     pipeline_logger.info("-- HPC Pipeline Summary --")
-    pipeline_logger.info("Mode:             orchestrator")
+    pipeline_logger.info("Mode:             orchestrator (parallel post-aggregation)")
     pipeline_logger.info(f"Run ID:           {run_id}")
     pipeline_logger.info(
         f"Training jobs:    {expected_training_jobs} ({len(models)} models x {len(split_seeds)} seeds)"
     )
+    pipeline_logger.info(f"Aggregation jobs: {len(agg_keys)} (parallel per model)")
+    if enable_ensemble:
+        pipeline_logger.info(f"Ensemble jobs:    {len(ensemble_keys)} training + 1 aggregation")
     pipeline_logger.info(f"Orchestrator job: {orchestrator_job_display}")
     pipeline_logger.info(f"Sentinel dir:     {sentinel_dir}/")
     pipeline_logger.info(f"Scripts dir:      {scripts_dir}/")
@@ -1159,7 +1348,9 @@ def _submit_orchestrator_pipeline(
     return {
         "run_id": run_id,
         "training_jobs": training_job_names,
-        "postprocessing_job": f"ORCH_{post_job_name}",
+        "aggregation_jobs": agg_job_names,
+        "ensemble_jobs": ensemble_job_names,
+        "ensemble_agg_job": ensemble_agg_job_name,
         "panel_optimization_jobs": panel_job_names,
         "consensus_job": f"ORCH_{consensus_job_name}" if enable_consensus else None,
         "permutation_jobs": permutation_job_names,

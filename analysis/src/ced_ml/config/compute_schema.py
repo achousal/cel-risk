@@ -49,8 +49,14 @@ class OrchestratorConfig(BaseModel):
     training_timeout: float = Field(
         default=4.0, ge=0.5, description="Hours to wait for training jobs"
     )
+    aggregation_timeout: float = Field(
+        default=2.0, ge=0.25, description="Hours to wait for per-model aggregation"
+    )
+    ensemble_timeout: float = Field(
+        default=2.0, ge=0.25, description="Hours to wait for ensemble training/aggregation"
+    )
     post_timeout: float = Field(
-        default=2.0, ge=0.25, description="Hours to wait for post-processing"
+        default=2.0, ge=0.25, description="Hours to wait for post-processing (legacy fallback)"
     )
     perm_timeout: float = Field(
         default=4.0, ge=0.25, description="Hours to wait for permutation jobs"

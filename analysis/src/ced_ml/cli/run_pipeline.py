@@ -519,7 +519,12 @@ def _run_hpc_mode(
     hpc_logger.info("=" * 70)
     hpc_logger.info(f"Run ID: {result['run_id']}")
     hpc_logger.info(f"Training jobs: {len(result['training_jobs'])}")
-    hpc_logger.info(f"Post-processing job: {result['postprocessing_job']}")
+    if result.get("aggregation_jobs"):
+        hpc_logger.info(f"Aggregation jobs: {len(result['aggregation_jobs'])} (parallel per model)")
+    if result.get("ensemble_jobs"):
+        hpc_logger.info(
+            f"Ensemble jobs: {len(result['ensemble_jobs'])} training + 1 aggregation (parallel)"
+        )
     if result.get("orchestrator_job"):
         hpc_logger.info(f"Orchestrator job: {result['orchestrator_job']}")
 

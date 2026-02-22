@@ -8,7 +8,10 @@ from pathlib import Path
 from ced_ml.config.schema import HPCConfig
 from ced_ml.hpc.common import (
     EnvironmentInfo,
+    _build_aggregation_command,
     _build_consensus_panel_command,
+    _build_ensemble_aggregation_command,
+    _build_ensemble_training_command,
     _build_orchestrator_bash_functions,
     _build_orchestrator_script,
     _build_panel_optimization_command,
@@ -47,6 +50,12 @@ def _orchestrator_script_for_test(
     hpc_config: HPCConfig | None = None,
     training_job_ids: list[str] | None = None,
     training_job_names: list[str] | None = None,
+    agg_keys: list[str] | None = None,
+    agg_job_names: list[str] | None = None,
+    ensemble_keys: list[str] | None = None,
+    ensemble_job_names: list[str] | None = None,
+    ensemble_agg_key: str | None = None,
+    ensemble_agg_job_name: str | None = None,
     perm_keys: list[str] | None = None,
     perm_job_names: list[str] | None = None,
     perm_agg_keys: list[str] | None = None,
@@ -75,6 +84,14 @@ def _orchestrator_script_for_test(
             "CeD_20260212_151826_RF_s0",
         ]
 
+    if agg_keys is None:
+        agg_keys = ["agg_LR_EN", "agg_RF"]
+    if agg_job_names is None:
+        agg_job_names = [
+            "CeD_20260212_151826_agg_LR_EN",
+            "CeD_20260212_151826_agg_RF",
+        ]
+
     return _build_orchestrator_script(
         scheduler=_LSF,
         run_id=run_id,
@@ -87,8 +104,12 @@ def _orchestrator_script_for_test(
         wrapper_script_path=scripts_dir / "CeD_20260212_151826_job_wrapper.sh",
         training_job_ids=training_job_ids,
         training_job_names=training_job_names,
-        post_key="post",
-        post_job_name=f"CeD_{run_id}_post",
+        agg_keys=agg_keys,
+        agg_job_names=agg_job_names,
+        ensemble_keys=ensemble_keys or [],
+        ensemble_job_names=ensemble_job_names or [],
+        ensemble_agg_key=ensemble_agg_key,
+        ensemble_agg_job_name=ensemble_agg_job_name,
         perm_keys=perm_keys or [],
         perm_job_names=perm_job_names or [],
         perm_agg_keys=perm_agg_keys or [],
@@ -125,8 +146,35 @@ def test_build_training_command():
     assert "--outdir" in cmd
 
 
+def test_build_aggregation_command():
+    """Test per-model aggregation command builder."""
+    cmd = _build_aggregation_command(run_id="20260130_120000", model="LR_EN")
+    assert cmd == "ced aggregate-splits --run-id 20260130_120000 --model LR_EN"
+
+
+def test_build_ensemble_training_command():
+    """Test per-seed ensemble training command builder."""
+    cmd = _build_ensemble_training_command(
+        config_file=Path("/path/to/config.yaml"),
+        run_id="20260130_120000",
+        split_seed=0,
+        split_index=0,
+    )
+    assert "ced train-ensemble" in cmd
+    assert "--run-id 20260130_120000" in cmd
+    assert "--split-seed 0" in cmd
+    assert "--split-index 0" in cmd
+    assert '--config "/path/to/config.yaml"' in cmd
+
+
+def test_build_ensemble_aggregation_command():
+    """Test ensemble aggregation command builder."""
+    cmd = _build_ensemble_aggregation_command(run_id="20260130_120000")
+    assert cmd == "ced aggregate-splits --run-id 20260130_120000 --model ENSEMBLE"
+
+
 def test_build_postprocessing_command_basic():
-    """Test post-processing command builder without ensemble."""
+    """Test legacy post-processing command builder without ensemble."""
     cmd = _build_postprocessing_command(
         config_file=Path("/path/to/config.yaml"),
         run_id="20260130_120000",
@@ -146,7 +194,7 @@ def test_build_postprocessing_command_basic():
 
 
 def test_build_postprocessing_command_with_ensemble():
-    """Test post-processing command builder with ensemble enabled."""
+    """Test legacy post-processing command builder with ensemble enabled."""
     cmd = _build_postprocessing_command(
         config_file=Path("/path/to/config.yaml"),
         run_id="20260130_120000",
@@ -179,6 +227,28 @@ def test_build_panel_optimization_command():
     assert cmd == "ced optimize-panel --run-id 20260130_120000 --model LR_EN"
 
 
+def test_build_panel_optimization_command_with_n_jobs():
+    """Test panel optimization command passes --n-jobs when specified."""
+    cmd = _build_panel_optimization_command(
+        run_id="20260130_120000",
+        model="LR_EN",
+        n_jobs=-1,
+    )
+    assert cmd == "ced optimize-panel --run-id 20260130_120000 --model LR_EN --n-jobs -1"
+
+
+def test_build_panel_optimization_command_seed_ignores_n_jobs():
+    """Per-seed panel optimization should not pass n_jobs (seed mode uses retune_n_jobs)."""
+    cmd = _build_panel_optimization_command(
+        run_id="20260130_120000",
+        model="LR_EN",
+        split_seed=0,
+        n_jobs=-1,
+    )
+    assert "--n-jobs" not in cmd
+    assert "--split-seed 0" in cmd
+
+
 def test_build_permutation_aggregation_command():
     """Test permutation aggregation command builds --aggregate-only CLI call."""
     cmd = _build_permutation_aggregation_command(run_id="20260130_120000", model="LR_EN")
@@ -187,10 +257,18 @@ def test_build_permutation_aggregation_command():
 
 
 def test_build_consensus_panel_command():
-    """Test consensus panel command builder."""
+    """Test consensus panel command builder passes --n-jobs by default."""
     cmd = _build_consensus_panel_command(run_id="20260130_120000")
 
+    assert cmd == "ced consensus-panel --run-id 20260130_120000 --n-jobs -1"
+
+
+def test_build_consensus_panel_command_no_n_jobs():
+    """Test consensus panel command builder with n_jobs=1 omits the flag."""
+    cmd = _build_consensus_panel_command(run_id="20260130_120000", n_jobs=1)
+
     assert cmd == "ced consensus-panel --run-id 20260130_120000"
+    assert "--n-jobs" not in cmd
 
 
 def test_build_job_script_basic():
@@ -431,12 +509,14 @@ def test_submit_batch_writes_ids_to_file():
 
 
 def test_orchestrator_script_training_only(tmp_path):
-    """Training-only orchestrator should include post stage but no optional stages."""
+    """Training-only orchestrator should include aggregation but no optional stages."""
     script = _orchestrator_script_for_test(tmp_path)
 
     assert 'barrier_wait "training"' in script
-    assert 'barrier_wait "post-processing"' in script
-    assert 'submit_and_track "post" "post-processing"' in script
+    assert 'barrier_wait "aggregation"' in script
+    assert "AGG_KEYS=(" in script
+    # No optional stages
+    assert "ENSEMBLE_KEYS=(" not in script
     assert "PERM_KEYS=(" not in script
     assert "PANEL_SEED_KEYS=(" not in script
     assert 'barrier_wait "consensus"' not in script
@@ -447,10 +527,33 @@ def test_orchestrator_script_training_only(tmp_path):
     assert '>> "$SENTINEL_DIR/completed.log"' in script
 
 
-def test_orchestrator_script_full(tmp_path):
-    """Full orchestrator script should include permutation, panel, and consensus stages."""
+def test_orchestrator_script_with_ensemble(tmp_path):
+    """Orchestrator with ensemble should have ensemble training and aggregation stages."""
     script = _orchestrator_script_for_test(
         tmp_path,
+        ensemble_keys=["ensemble_s0", "ensemble_s1"],
+        ensemble_job_names=[
+            "CeD_20260212_151826_ensemble_s0",
+            "CeD_20260212_151826_ensemble_s1",
+        ],
+        ensemble_agg_key="ensemble_agg",
+        ensemble_agg_job_name="CeD_20260212_151826_ensemble_agg",
+    )
+
+    assert "ENSEMBLE_KEYS=(" in script
+    assert 'barrier_wait "ensemble-training"' in script
+    assert 'submit_and_track "ensemble_agg" "ensemble-aggregation"' in script
+    assert 'barrier_wait "downstream-aggregation"' in script
+
+
+def test_orchestrator_script_full(tmp_path):
+    """Full orchestrator script should include all parallel stages."""
+    script = _orchestrator_script_for_test(
+        tmp_path,
+        ensemble_keys=["ensemble_s0"],
+        ensemble_job_names=["CeD_20260212_151826_ensemble_s0"],
+        ensemble_agg_key="ensemble_agg",
+        ensemble_agg_job_name="CeD_20260212_151826_ensemble_agg",
         perm_keys=["perm_LR_EN_s0", "perm_RF_s0"],
         perm_job_names=[
             "CeD_20260212_151826_perm_LR_EN_s0",
@@ -475,14 +578,17 @@ def test_orchestrator_script_full(tmp_path):
         consensus_job_name="CeD_20260212_151826_consensus",
     )
 
+    # All stage barriers should be present
+    assert 'barrier_wait "training"' in script
+    assert 'barrier_wait "aggregation"' in script
+    assert 'barrier_wait "ensemble-training"' in script
     assert "PERM_KEYS=(" in script
     assert 'barrier_wait "permutation-tests"' in script
     assert "PERM_AGG_KEYS=(" in script
-    assert 'barrier_wait "permutation-aggregation"' in script
     assert "PANEL_SEED_KEYS=(" in script
     assert 'barrier_wait "panel-seed"' in script
     assert "PANEL_AGG_KEYS=(" in script
-    assert 'barrier_wait "panel-aggregation"' in script
+    assert 'barrier_wait "downstream-aggregation"' in script
     assert 'barrier_wait "consensus"' in script
 
 
@@ -492,6 +598,8 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
         orchestrator={
             "poll_interval": 30,
             "training_timeout": 2.0,
+            "aggregation_timeout": 0.75,
+            "ensemble_timeout": 1.0,
             "post_timeout": 1.0,
             "perm_timeout": 2.5,
             "panel_timeout": 1.5,
@@ -506,6 +614,10 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
     script = _orchestrator_script_for_test(
         tmp_path,
         hpc_config=hpc_config,
+        ensemble_keys=["ensemble_s0"],
+        ensemble_job_names=["CeD_ensemble_s0"],
+        ensemble_agg_key="ensemble_agg",
+        ensemble_agg_job_name="CeD_ensemble_agg",
         perm_keys=["perm"],
         perm_job_names=["CeD_perm"],
         perm_agg_keys=["perm_agg"],
@@ -519,13 +631,11 @@ def test_orchestrator_per_stage_timeouts(tmp_path):
     )
 
     assert 'barrier_wait "training" 7200 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "post-processing" 3600 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "permutation-tests" 9000 "$POLL_INTERVAL"' in script
-    # perm aggregation uses post_timeout (1.0h = 3600s)
-    assert 'barrier_wait "permutation-aggregation" 3600 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "panel-seed" 5400 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "panel-aggregation" 5400 "$POLL_INTERVAL"' in script
-    assert 'barrier_wait "consensus" 1800 "$POLL_INTERVAL"' in script
+    assert 'barrier_wait "aggregation" 2700 "$POLL_INTERVAL"' in script  # 0.75h
+    assert 'barrier_wait "ensemble-training" 3600 "$POLL_INTERVAL"' in script  # 1.0h
+    assert 'barrier_wait "permutation-tests" 9000 "$POLL_INTERVAL"' in script  # 2.5h
+    assert 'barrier_wait "panel-seed" 5400 "$POLL_INTERVAL"' in script  # 1.5h
+    assert 'barrier_wait "consensus" 1800 "$POLL_INTERVAL"' in script  # 0.5h
 
 
 def test_orchestrator_batch_chunking(tmp_path):
@@ -535,6 +645,8 @@ def test_orchestrator_batch_chunking(tmp_path):
             "max_concurrent_submissions": 7,
             "poll_interval": 60,
             "training_timeout": 1.0,
+            "aggregation_timeout": 0.5,
+            "ensemble_timeout": 0.5,
             "post_timeout": 0.5,
             "perm_timeout": 1.0,
             "panel_timeout": 0.5,
@@ -577,6 +689,32 @@ def test_orchestrator_state_file(tmp_path):
     assert "orchestrator_state.jsonl" in script
     assert '"status":"done"' in script
     assert '"status":"timeout"' in script
+
+
+def test_orchestrator_parallel_post_aggregation(tmp_path):
+    """Ensemble, perm, and panel seeds should all be submitted before any barrier."""
+    script = _orchestrator_script_for_test(
+        tmp_path,
+        ensemble_keys=["ensemble_s0"],
+        ensemble_job_names=["CeD_ensemble_s0"],
+        ensemble_agg_key="ensemble_agg",
+        ensemble_agg_job_name="CeD_ensemble_agg",
+        perm_keys=["perm_LR_EN_s0"],
+        perm_job_names=["CeD_perm_LR_EN_s0"],
+        panel_seed_keys=["panel_LR_EN_s0"],
+        panel_seed_job_names=["CeD_panel_LR_EN_s0"],
+    )
+
+    # All three groups should be submitted before the first post-agg barrier
+    ensemble_submit = script.index('submit_batch "$MAX_CHUNK" "$ENSEMBLE_IDS_FILE"')
+    perm_submit = script.index('submit_batch "$MAX_CHUNK" "$PERM_IDS_FILE"')
+    panel_submit = script.index('submit_batch "$MAX_CHUNK" "$PANEL_SEED_IDS_FILE"')
+    ensemble_barrier = script.index('barrier_wait "ensemble-training"')
+
+    # All submissions happen before the first wait
+    assert ensemble_submit < ensemble_barrier
+    assert perm_submit < ensemble_barrier
+    assert panel_submit < ensemble_barrier
 
 
 def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
@@ -650,7 +788,7 @@ def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
         models=["LR_EN", "RF"],
         split_seeds=[0],
         run_id=run_id,
-        enable_ensemble=False,
+        enable_ensemble=True,
         enable_consensus=True,
         enable_optimize_panel=True,
         enable_permutation_test=True,
@@ -666,7 +804,10 @@ def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
     assert manifest_path.exists()
 
     manifest = json.loads(manifest_path.read_text())
-    assert "post" in manifest
+    # New structure: per-model aggregation instead of monolithic post
+    assert any(key.startswith("agg_") for key in manifest)
+    assert any(key.startswith("ensemble_") for key in manifest)
+    assert "ensemble_agg" in manifest
     assert "consensus" in manifest
     assert any(key.startswith("perm_") for key in manifest)
     assert any(key.startswith("panel_") for key in manifest)
@@ -677,6 +818,16 @@ def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
         assert "sentinel" not in entry
         decoded = base64.b64decode(entry["command_b64"]).decode("utf-8")
         assert decoded.startswith("ced ") or decoded.startswith("echo ")
+
+    # Verify consensus command includes --n-jobs
+    consensus_decoded = base64.b64decode(manifest["consensus"]["command_b64"]).decode("utf-8")
+    assert "--n-jobs -1" in consensus_decoded
+
+    # Verify panel agg commands include --n-jobs
+    for key, entry in manifest.items():
+        if key.startswith("panel_") and key.endswith("_agg"):
+            decoded = base64.b64decode(entry["command_b64"]).decode("utf-8")
+            assert "--n-jobs -1" in decoded
 
     run_metadata_path = tmp_path / "results" / f"run_{run_id}" / "run_metadata.json"
     assert run_metadata_path.exists()

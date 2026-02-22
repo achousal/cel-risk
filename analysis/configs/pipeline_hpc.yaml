@@ -32,7 +32,9 @@ hpc:
   orchestrator:
     poll_interval: 60  # sec
     training_timeout: 20.0  # hr
-    post_timeout: 2.0  # hr
+    aggregation_timeout: 2.0  # hr (per-model aggregation, parallel)
+    ensemble_timeout: 4.0  # hr (ensemble training + aggregation)
+    post_timeout: 2.0  # hr (legacy fallback)
     perm_timeout: 20.0  # hr
     panel_timeout: 10.0  # hr
     consensus_timeout: 20.0  # hr
