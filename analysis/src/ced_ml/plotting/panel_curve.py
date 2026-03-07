@@ -58,6 +58,7 @@ def plot_pareto_curve(
     feature_selection_method: str | None = None,
     run_id: str | None = None,
     full_model_auroc: float | None = None,
+    selection_result: object | None = None,
 ) -> None:
     """Plot validation AUROC vs panel size curve with bootstrap CI and annotations.
 
@@ -82,6 +83,9 @@ def plot_pareto_curve(
         run_id: Run identifier (optional).
         full_model_auroc: AUROC of the full model (all features, full tuning) as
             a horizontal reference line on the plot.
+        selection_result: Optional PanelSelectionResult from select_optimal_panel.
+            When provided, annotates each curve point with non-inferiority test
+            outcome (pass/fail) and marks the selected optimal panel size.
 
     Returns:
         None. Saves plot to out_path.
@@ -264,6 +268,10 @@ def plot_pareto_curve(
         thresholds_to_show,
     )
 
+    # Add non-inferiority selection annotations if available
+    if selection_result is not None:
+        _add_selection_annotations(ax, sizes, aurocs_val, selection_result)
+
     # Styling
     ax.set_xlabel("Panel Size (number of proteins)", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC", fontsize=FONT_LABEL)
@@ -347,6 +355,96 @@ def plot_pareto_curve(
 
     plt.savefig(out_path, dpi=DPI, bbox_inches=BBOX_INCHES)
     plt.close(fig)
+
+
+def _add_selection_annotations(
+    ax,
+    sizes: np.ndarray,
+    aurocs: np.ndarray,
+    selection_result: object,
+) -> None:
+    """Annotate Pareto curve with non-inferiority test results.
+
+    Marks each evaluated panel size with pass/fail status from the
+    deterministic selection procedure and highlights the selected
+    optimal panel.
+
+    Args:
+        ax: Matplotlib axes object.
+        sizes: Array of panel sizes (sorted descending from plot).
+        aurocs: Array of AUROC means.
+        selection_result: PanelSelectionResult with decision_table.
+    """
+    if not _HAS_PLOTTING:
+        return
+
+    decision_table = getattr(selection_result, "decision_table", [])
+    selected_size = getattr(selection_result, "selected_size", 0)
+
+    if not decision_table:
+        return
+
+    # Build lookup from decision table
+    decisions_by_size = {d.size: d for d in decision_table}
+
+    # Annotate each curve point with pass/fail markers
+    for sz, auc_val in zip(sizes, aurocs, strict=False):
+        sz_int = int(sz)
+        if sz_int not in decisions_by_size:
+            continue
+
+        decision = decisions_by_size[sz_int]
+
+        if decision.accepted:
+            marker_color = COLOR_THRESHOLD_GREEN
+            marker = "v"  # down triangle = pass
+        elif decision.rejection_reason.startswith("Unstable"):
+            marker_color = COLOR_THRESHOLD_AMBER
+            marker = "x"  # x = unstable
+        else:
+            marker_color = COLOR_THRESHOLD_RED
+            marker = "^"  # up triangle = fail
+
+        ax.scatter(
+            [sz],
+            [auc_val],
+            s=50,
+            c=marker_color,
+            marker=marker,
+            zorder=8,
+            alpha=0.8,
+            linewidths=1,
+        )
+
+    # Highlight the selected optimal panel with a prominent marker
+    if selected_size > 0:
+        idx = np.where(sizes == selected_size)[0]
+        if len(idx) > 0:
+            opt_auroc = aurocs[idx[0]]
+            ax.scatter(
+                [selected_size],
+                [opt_auroc],
+                s=200,
+                facecolors="none",
+                edgecolors=COLOR_THRESHOLD_GREEN,
+                marker="o",
+                linewidths=2.5,
+                zorder=12,
+                label=f"Optimal panel (n={selected_size})",
+            )
+
+            # Add non-inferiority margin band
+            full_auroc = getattr(selection_result, "full_model_auroc", 0.0)
+            delta_used = getattr(selection_result, "delta_used", 0.02)
+            if full_auroc > 0:
+                ax.axhspan(
+                    full_auroc - delta_used,
+                    full_auroc,
+                    color=COLOR_THRESHOLD_GREEN,
+                    alpha=0.08,
+                    zorder=0,
+                    label=f"NI margin (delta={delta_used})",
+                )
 
 
 def _add_comparison_annotations(

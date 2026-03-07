@@ -965,4 +965,131 @@ def run_optimize_panel_aggregated(
         logger.warning(f"Drop-column validation failed: {e}", exc_info=True)
         logger.warning("Continuing without essentiality validation")
 
+    # -- Optimal panel selection (deterministic stopping rules) --
+    try:
+        logger.info("\n" + "=" * 60)
+        logger.info("Running deterministic optimal panel selection...")
+        logger.info("=" * 60)
+
+        from typing import Any
+
+        from ced_ml.features.panel_selection import (
+            decision_table_to_dict,
+            select_optimal_panel,
+        )
+
+        # Collect full-model AUROC per seed from per-seed RFE results
+        full_auroc_by_seed = [r.max_auroc for r in per_seed_results]
+
+        # Load essentiality results if available
+        essentiality_map: dict[int, Any] = {}
+        essentiality_dir = results_path / "optimize_panel" / "essentiality"
+        if essentiality_dir.exists():
+            for ess_file in essentiality_dir.glob("panel_*_essentiality.csv"):
+                try:
+                    ess_df = pd.read_csv(ess_file)
+                    threshold_name = ess_file.stem.replace("panel_", "").replace(
+                        "_essentiality", ""
+                    )
+                    if threshold_name in result.recommended_panels:
+                        panel_size = result.recommended_panels[threshold_name]
+                        essentiality_map[panel_size] = ess_df
+                        logger.info(
+                            f"  Loaded essentiality for {threshold_name} " f"(size={panel_size})"
+                        )
+                except Exception as e:
+                    logger.debug(f"  Could not load {ess_file}: {e}")
+
+        # Use pooled val AUROC as full-model reference if available,
+        # otherwise use mean of per-seed max AUROCs
+        full_ref_auroc = (
+            [_full_model_auroc] * len(per_seed_results)
+            if _full_model_auroc is not None
+            else full_auroc_by_seed
+        )
+
+        selection_result = select_optimal_panel(
+            curve=result.curve,
+            full_auroc_by_seed=full_ref_auroc,
+            essentiality=essentiality_map if essentiality_map else None,
+        )
+
+        # Save optimal_panel_selection.json (full audit trail)
+        import json
+
+        selection_json_path = Path(outdir) / "optimal_panel_selection.json"
+        selection_dict = decision_table_to_dict(selection_result)
+        selection_dict["model_name"] = model_name
+        selection_dict["run_id"] = _run_id
+        selection_dict["n_seeds"] = n_seeds
+        selection_dict["full_auroc_by_seed"] = [float(v) for v in full_ref_auroc]
+
+        with open(selection_json_path, "w") as f:
+            json.dump(selection_dict, f, indent=2)
+        logger.info(f"Saved selection audit trail to {selection_json_path}")
+
+        # Save optimal_panel.txt (one protein per line, for --fixed-panel)
+        if selection_result.selected_size > 0:
+            panel_txt_path = Path(outdir) / "optimal_panel.txt"
+            with open(panel_txt_path, "w") as f:
+                for protein in selection_result.selected_proteins:
+                    f.write(protein + "\n")
+            logger.info(
+                f"Saved optimal panel ({selection_result.selected_size} proteins) "
+                f"to {panel_txt_path}"
+            )
+            paths["optimal_panel_txt"] = str(panel_txt_path)
+
+            print(f"\n{'=' * 60}")
+            print(f"OPTIMAL PANEL SELECTED: {selection_result.selected_size} proteins")
+            print(f"  Delta margin: {selection_result.delta_used}")
+            print(f"  Full-model AUROC: " f"{selection_result.full_model_auroc:.4f}")
+            if selection_result.n_passengers_removed > 0:
+                print(f"  Passengers removed: " f"{selection_result.n_passengers_removed}")
+            if selection_result.sensitivity_size > 0:
+                print(
+                    f"  Sensitivity panel (delta=0.01): "
+                    f"{selection_result.sensitivity_size} proteins"
+                )
+            print(f"  Panel file: {panel_txt_path}")
+            print(f"  Audit trail: {selection_json_path}")
+            print(f"{'=' * 60}\n")
+        else:
+            logger.warning(
+                "No panel passed all decision rules. Check "
+                "optimal_panel_selection.json for the decision audit trail."
+            )
+            print(
+                "\nWARNING: No panel passed all decision rules. "
+                "See optimal_panel_selection.json for details."
+            )
+
+        paths["optimal_panel_selection_json"] = str(selection_json_path)
+
+        # Regenerate Pareto plot with non-inferiority annotations
+        try:
+            annotated_plot_path = Path(outdir) / "panel_curve_annotated.png"
+            plot_pareto_curve(
+                curve=result.curve,
+                recommended=result.recommended_panels,
+                out_path=annotated_plot_path,
+                title=f"Panel Size Optimization ({model_name}, {n_seeds} seeds)",
+                model_name=model_name,
+                n_splits=n_seeds,
+                feature_selection_method="Aggregated RFE",
+                run_id=_run_id,
+                full_model_auroc=_full_model_auroc,
+                selection_result=selection_result,
+            )
+            paths["panel_curve_annotated"] = str(annotated_plot_path)
+            logger.info(f"Saved annotated panel curve to {annotated_plot_path}")
+        except Exception as e:
+            logger.warning(f"Could not generate annotated plot: {e}")
+
+        logger.info("Optimal panel selection completed successfully")
+
+    except Exception as e:
+        logger.warning(f"Optimal panel selection failed: {e}", exc_info=True)
+        logger.warning("Continuing without optimal panel selection")
+
     return result
