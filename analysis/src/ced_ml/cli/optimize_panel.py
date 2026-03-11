@@ -978,8 +978,12 @@ def run_optimize_panel_aggregated(
             select_optimal_panel,
         )
 
-        # Collect full-model AUROC per seed from per-seed RFE results
-        full_auroc_by_seed = [r.max_auroc for r in per_seed_results]
+        # Per-seed full-model AUROCs for the non-inferiority reference.
+        # RFE seeds share the same train/val split, so max_auroc is typically
+        # constant across seeds (same model evaluated on the same val set).
+        # This is correct: the paired test in select_optimal_panel uses
+        # SE = std(diffs) / sqrt(n), which properly handles a constant reference.
+        full_ref_auroc = [r.max_auroc for r in per_seed_results]
 
         # Load essentiality results if available
         essentiality_map: dict[int, Any] = {}
@@ -999,14 +1003,6 @@ def run_optimize_panel_aggregated(
                         )
                 except Exception as e:
                     logger.debug(f"  Could not load {ess_file}: {e}")
-
-        # Use pooled val AUROC as full-model reference if available,
-        # otherwise use mean of per-seed max AUROCs
-        full_ref_auroc = (
-            [_full_model_auroc] * len(per_seed_results)
-            if _full_model_auroc is not None
-            else full_auroc_by_seed
-        )
 
         selection_result = select_optimal_panel(
             curve=result.curve,

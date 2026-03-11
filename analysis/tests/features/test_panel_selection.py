@@ -380,6 +380,90 @@ class TestSelectOptimalPanel:
         if skipped_10:
             assert not skipped_10[0].accepted or skipped_10[0].size != 10
 
+    def test_constant_full_auroc_uses_correct_se(self):
+        """Constant full_auroc_by_seed (known reference) should use SE = std_k / sqrt(n).
+
+        Previously the code used SE = std_k (sample SD, not SE of mean),
+        making CI_upper ~ delta + 1.645 * 0.033 ~ 0.056, always > 0.02.
+        The correct SE = 0.033 / sqrt(30) ~ 0.006 gives CI ~ 0.012 < 0.02.
+        """
+        full_aurocs_constant = [0.870] * 30
+        curve = [
+            {
+                "size": 10,
+                "auroc_val": 0.868,
+                "auroc_val_std": 0.033,
+                "n_seeds": 30,
+                "proteins": [f"P{i}" for i in range(10)],
+            },
+        ]
+        result = select_optimal_panel(
+            curve=curve,
+            full_auroc_by_seed=full_aurocs_constant,
+            delta_primary=0.02,
+        )
+        # SE = 0.033 / sqrt(30) ~ 0.006; CI_upper ~ 0.002 + 1.645*0.006 ~ 0.012 < 0.02
+        assert result.selected_size == 10, (
+            "Panel with delta=0.002 and SE=0.006 should pass non-inferiority "
+            f"(CI_upper ~ 0.012 < 0.02), got selected_size={result.selected_size}"
+        )
+        ni = result.decision_table[0].noninferiority
+        assert ni.ci_upper < 0.02, f"CI_upper={ni.ci_upper:.4f} should be < 0.02"
+
+    def test_truly_inferior_panel_rejected(self):
+        """Panel with large delta should still be rejected even with correct SE."""
+        full_aurocs = [0.900] * 30
+        curve = [
+            {
+                "size": 5,
+                "auroc_val": 0.860,
+                "auroc_val_std": 0.030,
+                "n_seeds": 30,
+                "proteins": [f"P{i}" for i in range(5)],
+            },
+        ]
+        result = select_optimal_panel(
+            curve=curve,
+            full_auroc_by_seed=full_aurocs,
+            delta_primary=0.02,
+        )
+        # delta = 0.04 >> 0.02, should be rejected
+        assert result.selected_size == 0, "Panel with delta=0.04 should be rejected"
+
+    def test_paired_noninferiority_with_per_seed_data(self):
+        """Paired test using auroc_val_by_seed should produce tight CI."""
+        import numpy as np
+
+        rng = np.random.default_rng(99)
+        n = 30
+        # Full-model AUROCs with real cross-seed variance
+        full_aurocs = (0.870 + rng.normal(0, 0.03, n)).tolist()
+        # Panel AUROCs: slightly lower but highly correlated (same seed effect)
+        panel_aurocs = [f - 0.002 + rng.normal(0, 0.003) for f in full_aurocs]
+
+        curve = [
+            {
+                "size": 10,
+                "auroc_val": float(np.mean(panel_aurocs)),
+                "auroc_val_std": float(np.std(panel_aurocs, ddof=1)),
+                "auroc_val_by_seed": panel_aurocs,
+                "n_seeds": n,
+                "proteins": [f"P{i}" for i in range(10)],
+            },
+        ]
+        result = select_optimal_panel(
+            curve=curve,
+            full_auroc_by_seed=full_aurocs,
+            delta_primary=0.02,
+        )
+        # Paired diffs have small variance (~0.003), so SE ~ 0.003/sqrt(30) ~ 0.0005
+        # CI_upper ~ 0.002 + 1.645*0.0005 ~ 0.003 << 0.02
+        assert (
+            result.selected_size == 10
+        ), "Paired test with correlated seeds should pass non-inferiority"
+        ni = result.decision_table[0].noninferiority
+        assert ni.ci_upper < 0.02, f"Paired CI_upper={ni.ci_upper:.4f} should be << 0.02"
+
 
 # ---------------------------------------------------------------------------
 # Serialization

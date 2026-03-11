@@ -621,6 +621,9 @@ def aggregate_rfe_results(results: list[RFEResult]) -> RFEResult:
             agg["auroc_val_ci_low"] = agg["auroc_val"]
             agg["auroc_val_ci_high"] = agg["auroc_val"]
 
+        # Preserve per-seed AUROCs for paired non-inferiority testing
+        agg["auroc_val_by_seed"] = [float(v) for v in auroc_vals]
+
         agg["auroc_cv_std"] = agg.get("auroc_cv_std", 0.0)
         agg["n_seeds"] = len(points)
 

@@ -468,18 +468,33 @@ def select_optimal_panel(
             continue
 
         # -- Rule 1: Non-inferiority test --
-        # Use point estimate for non-inferiority (paired bootstrap requires
-        # raw predictions which we may not have at aggregation time).
-        # Fall back to normal approximation when raw predictions unavailable.
+        # Paired test when per-seed data available (cancels cross-seed variance).
+        # Falls back to independent normal approximation otherwise.
         delta_est = full_mean - mean_auroc_k
 
-        # Approximate SE of the difference from cross-seed variability
-        full_std = float(np.std(full_auroc_by_seed, ddof=1)) if len(full_auroc_by_seed) > 1 else 0.0
-        # Combined SE (conservative: assume independent)
-        se_diff = np.sqrt(full_std**2 + std_auroc_k**2) if n_seeds > 1 else 0.0
-
-        # Normal approximation for CI upper bound
         from scipy.stats import norm
+
+        paired_diffs = None
+        if "auroc_val_by_seed" in point and len(point["auroc_val_by_seed"]) == len(
+            full_auroc_by_seed
+        ):
+            panel_by_seed = np.array(point["auroc_val_by_seed"])
+            full_by_seed = np.array(full_auroc_by_seed)
+            paired_diffs = full_by_seed - panel_by_seed
+            delta_est = float(np.mean(paired_diffs))
+            if n_seeds > 1:
+                se_diff = float(np.std(paired_diffs, ddof=1) / np.sqrt(n_seeds))
+            else:
+                se_diff = 0.0
+        else:
+            # Fallback: independent SE of the mean difference.
+            # std_auroc_k is the sample SD; convert to SE by dividing by sqrt(n).
+            full_std = (
+                float(np.std(full_auroc_by_seed, ddof=1)) if len(full_auroc_by_seed) > 1 else 0.0
+            )
+            se_full = full_std / np.sqrt(n_seeds) if n_seeds > 1 else 0.0
+            se_panel = std_auroc_k / np.sqrt(n_seeds) if n_seeds > 1 else 0.0
+            se_diff = float(np.sqrt(se_full**2 + se_panel**2))
 
         z = norm.ppf(1 - alpha)
         ci_upper = delta_est + z * se_diff
