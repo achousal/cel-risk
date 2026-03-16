@@ -6,8 +6,8 @@ metric: auroc             # Metric to evaluate (only 'auroc' supported per ADR-0
 random_state: 42          # Random seed for reproducibility
 
 # Split Seed Range
-split_seed_start: 110       # First split seed to test
-n_split_seeds: 10          # Number of consecutive seeds to test (seeds: start .. start + n - 1)
+split_seed_start: 100       # First split seed to test (must match splits_config.yaml seed_start)
+n_split_seeds: 30          # Number of consecutive seeds to test (must match splits_config.yaml n_splits)
 
 # Parallelization
 n_jobs: 1                 # Parallel jobs for local execution (1 = sequential; -1 = all CPUs)

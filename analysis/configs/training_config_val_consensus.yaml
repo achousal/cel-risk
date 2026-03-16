@@ -1,8 +1,9 @@
-# Training config for consensus panel validation (seeds 105-109)
-# Validates discovery run 20260309_155812 consensus panel on fresh seeds.
+# Training config for consensus panel validation
+# Validates discovery consensus panel on fresh non-overlapping seeds (200-209).
 # All settings inherited from training_config.yaml except feature selection.
+# UPDATE: After Phase 1 discovery run completes, set fixed_panel_csv to the new consensus panel.
 _base: training_config.yaml
 
 features:
   feature_selection_strategy: fixed_panel
-  fixed_panel_csv: "fixed_panel_consensus_20260309_155812.csv"
+  fixed_panel_csv: "PENDING_DISCOVERY_RUN_ID.csv"  # Replace after Phase 1 completes

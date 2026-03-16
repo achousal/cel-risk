@@ -1,11 +1,12 @@
-# Pipeline config for consensus panel validation (seeds 105-109)
-# Validates discovery run 20260309_155812 consensus panel on fresh seeds.
+# Pipeline config for consensus panel validation
+# Validates discovery consensus panel on fresh non-overlapping seeds.
 # Inherits all HPC settings from pipeline_hpc.yaml.
 # Disables optimize_panel, consensus, and permutation_test (not applicable for validation).
 _base: pipeline_hpc.yaml
 
 configs:
   training: configs/training_config_val_consensus.yaml
+  splits: configs/splits_config_val_consensus.yaml
 
 pipeline:
   optimize_panel: false
