@@ -1,6 +1,6 @@
 #!/bin/bash
 #BSUB -J factorial_2x2x2
-#BSUB -P acc_Chipuk_Laboratory
+#BSUB -P acc_vascbrain
 #BSUB -q premium
 #BSUB -n 8
 #BSUB -W 24:00

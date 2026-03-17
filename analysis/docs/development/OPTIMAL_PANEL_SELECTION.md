@@ -85,7 +85,7 @@ For k in [smallest ... largest] on Pareto curve:
 ## HPC Experiment Plan
 
 Discovery seeds: 100-104. Validation seeds: 105-109.
-All jobs on Minerva LSF (`acc_Chipuk_Laboratory`, `premium` queue, 12 cores, 96 GB).
+All jobs on Minerva LSF (`acc_vascbrain`, `premium` queue, 12 cores, 96 GB).
 
 ### Step 0: Generate Splits
 

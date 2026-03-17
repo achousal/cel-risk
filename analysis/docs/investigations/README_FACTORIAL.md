@@ -47,7 +47,7 @@ Both scripts:
 - Auto-detect repository root (no path editing needed)
 - Match settings from `configs/pipeline_hpc.yaml`
 - Allocate 8 CPUs, 8GB per CPU, 24-hour walltime
-- Use `acc_Chipuk_Laboratory` account and `premium` queue
+- Use `acc_vascbrain` account and `premium` queue
 
 ---
 
