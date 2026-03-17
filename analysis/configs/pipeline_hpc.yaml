@@ -24,7 +24,7 @@ pipeline:
 # HPC Settings (LSF/Slurm)
 hpc:
   scheduler: lsf  # lsf or slurm
-  project: acc_Chipuk_Laboratory  # update before use
+  project: acc_vascbrain
   queue: premium
   walltime: "24:00"  # hours:minutes
   cores: 12
