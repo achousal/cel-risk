@@ -160,22 +160,38 @@ EOF
         if [ "$stat" = "EXIT" ] || [ "$stat" = "TERM" ]; then
             local jname
             jname=$(bjobs -noheader -o "job_name" "$jid" 2>/dev/null | awk 'NF {print $1; exit}')
-            echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs)"
-            exit 1
+            if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) but sentinel present -- continuing"
+            else
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel"
+                exit 1
+            fi
         fi
 
         if [ -z "$stat" ] || echo "$raw" | grep -qi "not found"; then
             local hist_exit
             hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}' || true)
             if [ -n "$hist_exit" ]; then
-                echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist): $hist_exit"
-                exit 1
+                local hjname
+                hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' || true)
+                if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) but sentinel present -- continuing"
+                else
+                    echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel: $hist_exit"
+                    exit 1
+                fi
             fi
             local hist_term
             hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}' || true)
             if [ -n "$hist_term" ]; then
-                echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist): $hist_term"
-                exit 1
+                local tjname
+                tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' || true)
+                if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) but sentinel present -- continuing"
+                else
+                    echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel: $hist_term"
+                    exit 1
+                fi
             fi
         fi
     done

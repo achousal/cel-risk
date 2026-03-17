@@ -118,6 +118,15 @@ def test_slurm_orchestrator_status_func():
     assert "CANCELLED" in func
 
 
+def test_slurm_check_upstream_sentinel_aware():
+    """check_upstream_failures should warn (not FATAL) when sentinel exists for FAILED job."""
+    func = _SLURM.build_orchestrator_status_func()
+
+    assert 'grep -qx "$jname" "$SENTINEL_DIR/completed.log"' in func
+    assert "but sentinel present -- continuing" in func
+    assert "and no sentinel" in func
+
+
 def test_slurm_orchestrator_header():
     header = _SLURM.build_orchestrator_header(
         project="acc_test",

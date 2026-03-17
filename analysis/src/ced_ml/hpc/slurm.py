@@ -126,8 +126,12 @@ EOF
         if [ "$stat" = "FAILED" ] || [ "$stat" = "CANCELLED" ] || [ "$stat" = "TIMEOUT" ] || [ "$stat" = "NODE_FAIL" ]; then
             local jname
             jname=$(sacct -j "$jid" --noheader --parsable2 -o JobName 2>/dev/null | head -1)
-            echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (sacct)"
-            exit 1
+            if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (sacct) but sentinel present -- continuing"
+            else
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (sacct) and no sentinel"
+                exit 1
+            fi
         fi
 
         if [ -z "$stat" ]; then

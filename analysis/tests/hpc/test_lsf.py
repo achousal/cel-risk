@@ -449,6 +449,22 @@ def test_barrier_bash_no_grep_p():
     assert "grep -P" not in bash
 
 
+def test_check_upstream_sentinel_aware():
+    """check_upstream_failures should warn (not FATAL) when sentinel exists for EXIT job."""
+    bash = _build_orchestrator_bash_functions(_LSF)
+
+    # bjobs EXIT path: must check sentinel before exit 1
+    assert 'grep -qx "$jname" "$SENTINEL_DIR/completed.log"' in bash
+    # bhist EXIT path: must check sentinel before exit 1
+    assert 'grep -qx "$hjname" "$SENTINEL_DIR/completed.log"' in bash
+    # bhist TERM path: must check sentinel before exit 1
+    assert 'grep -qx "$tjname" "$SENTINEL_DIR/completed.log"' in bash
+    # WARNING message for sentinel-present case
+    assert "but sentinel present -- continuing" in bash
+    # FATAL message for no-sentinel case
+    assert "and no sentinel" in bash
+
+
 def test_barrier_wait_uses_consolidated_log():
     """barrier_wait should check completion via grep in consolidated log."""
     bash = _build_orchestrator_bash_functions(_LSF)
