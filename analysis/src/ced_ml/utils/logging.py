@@ -153,13 +153,15 @@ def auto_log_path(
     """
     outdir = Path(outdir).resolve()
 
-    # Find CeliacRisks project root by traversing up
-    # This is more reliable than looking for logs/results which may exist at multiple levels
+    # Find project root by traversing up, using the same marker-directory
+    # heuristic as paths.py (data/ + analysis/ present).
+    from ced_ml.utils.paths import _is_project_root
+
     current = outdir
     project_root = None
 
     for parent in [current] + list(current.parents):
-        if parent.name == "CeliacRisks":
+        if _is_project_root(parent):
             project_root = parent
             break
 
