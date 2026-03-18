@@ -173,7 +173,7 @@ EOF
             hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}' || true)
             if [ -n "$hist_exit" ]; then
                 local hjname
-                hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' || true)
+                hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
                 if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) but sentinel present -- continuing"
                 else
@@ -185,7 +185,7 @@ EOF
             hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}' || true)
             if [ -n "$hist_term" ]; then
                 local tjname
-                tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' || true)
+                tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
                 if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) but sentinel present -- continuing"
                 else
