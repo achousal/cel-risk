@@ -29,6 +29,7 @@ from .aggregation import explicit_shap_normalized_aggregate, geometric_mean_rank
 from .builder import ConsensusResult, build_consensus_panel, save_consensus_results
 from .clustering import cluster_and_select_representatives
 from .ranking import compute_per_model_ranking
+from .significance import rra_permutation_test
 
 __all__ = [
     "ConsensusResult",
@@ -37,5 +38,6 @@ __all__ = [
     "compute_per_model_ranking",
     "explicit_shap_normalized_aggregate",
     "geometric_mean_rank_aggregate",
+    "rra_permutation_test",
     "save_consensus_results",
 ]

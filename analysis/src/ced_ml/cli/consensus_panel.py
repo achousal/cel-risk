@@ -731,6 +731,9 @@ def run_consensus_panel(
     require_significance: bool = False,
     significance_alpha: float = 0.05,
     min_significant_models: int = 2,
+    rra_significance: bool = False,
+    rra_significance_perms: int = 10_000,
+    rra_significance_alpha: float = 0.05,
     run_essentiality: bool = True,
     essentiality_corr_threshold: float = 0.75,
     include_brier: bool = True,
@@ -763,6 +766,10 @@ def run_consensus_panel(
         require_significance: Whether to filter models by permutation test significance.
         significance_alpha: P-value threshold for significance filtering.
         min_significant_models: Minimum number of significant models required.
+        rra_significance: Run permutation null on RRA consensus scores. When True,
+            overrides target_size with the count of significant proteins.
+        rra_significance_perms: Number of permutations for RRA significance test.
+        rra_significance_alpha: BH-corrected alpha for RRA significance.
         run_essentiality: Whether to run within-panel essentiality validation (default True).
             Refits a model on only the consensus panel features and runs drop-column
             to measure each cluster's contribution. This is a post-hoc
@@ -1012,6 +1019,49 @@ def run_consensus_panel(
 
     logger.info(f"Training data: {len(df_train)} samples")
 
+    # --- RRA significance test (optional, overrides target_size) ---
+    rra_sig_result = None
+    if rra_significance:
+        from ced_ml.features.consensus.ranking import compute_per_model_ranking
+        from ced_ml.features.consensus.significance import rra_permutation_test
+
+        logger.info("Computing per-model rankings for RRA significance test...")
+        sig_rankings = {}
+        for model_name, stability_df in model_stability.items():
+            stable_df = stability_df[
+                stability_df["selection_fraction"] >= stability_threshold
+            ].copy()
+            if len(stable_df) == 0:
+                continue
+            oof_df = model_oof_importance.get(model_name) if model_oof_importance else None
+            sig_rankings[model_name] = compute_per_model_ranking(
+                stability_df=stable_df,
+                stability_col="selection_fraction",
+                oof_importance_df=oof_df,
+            )
+
+        if len(sig_rankings) >= 2:
+            rra_sig_result = rra_permutation_test(
+                per_model_rankings=sig_rankings,
+                n_perms=rra_significance_perms,
+                alpha=rra_significance_alpha,
+            )
+            n_significant = int(rra_sig_result["significant"].sum())
+            logger.info(
+                f"RRA significance: {n_significant} proteins significant "
+                f"(BH alpha={rra_significance_alpha})"
+            )
+            if n_significant > 0:
+                target_size = n_significant
+                logger.info(f"Overriding target_size to {target_size}")
+            else:
+                logger.warning(
+                    "No proteins reached significance — keeping original "
+                    f"target_size={target_size}"
+                )
+        else:
+            logger.warning("RRA significance requires >= 2 models with rankings; skipping")
+
     # Build consensus panel
     logger.info("Building consensus panel...")
     result = build_consensus_panel(
@@ -1033,6 +1083,12 @@ def run_consensus_panel(
         outdir = Path(outdir)
 
     _paths = save_consensus_results(result, outdir)  # noqa: F841
+
+    # Save RRA significance artifact
+    if rra_sig_result is not None:
+        rra_sig_path = outdir / "rra_significance.csv"
+        rra_sig_result.to_csv(rra_sig_path, index=False)
+        logger.info(f"Saved RRA significance results to {rra_sig_path}")
 
     # --- Within-panel essentiality validation (post-hoc interpretation) ---
     # After the consensus panel is built, refit all models on the panel proteins
@@ -1117,6 +1173,22 @@ def run_consensus_panel(
         print(f"  Minimum models: {min_significant_models}")
         print(f"  Significant models used: {list(model_dirs.keys())}")
 
+    if rra_sig_result is not None:
+        n_sig = int(rra_sig_result["significant"].sum())
+        n_total = len(rra_sig_result)
+        print(f"\nRRA Permutation Significance ({rra_significance_perms} permutations):")
+        print(f"  Significant proteins: {n_sig}/{n_total} (BH alpha={rra_significance_alpha})")
+        print(f"  Target size override: {target_size}")
+        # Show top significant proteins
+        sig_proteins = rra_sig_result[rra_sig_result["significant"]].head(10)
+        if not sig_proteins.empty:
+            print("  Top significant proteins:")
+            for _, row in sig_proteins.iterrows():
+                print(
+                    f"    {row['protein']}: RRA={row['observed_rra']:.4f}, "
+                    f"p={row['bh_adjusted_p']:.4f}"
+                )
+
     print("\nTop 10 proteins in consensus panel:")
     for i, protein in enumerate(result.final_panel[:10], 1):
         protein_row = result.consensus_ranking[result.consensus_ranking["protein"] == protein]
@@ -1194,6 +1266,8 @@ def run_consensus_panel(
     print("  - per_model_rankings.csv")
     print("  - correlation_clusters.csv")
     print("  - consensus_metadata.json")
+    if rra_sig_result is not None:
+        print("  - rra_significance.csv (permutation test results)")
     if essentiality_summary:
         if essentiality_summary.get("validation_type") == "multimodel_within_panel":
             print("  - essentiality/per_model/essentiality_*.csv (per-model results)")

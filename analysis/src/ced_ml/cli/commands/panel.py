@@ -811,6 +811,27 @@ def optimize_panel(ctx, config, **kwargs):
     help="Minimum number of significant models required (default: 2)",
 )
 @click.option(
+    "--rra-significance/--no-rra-significance",
+    default=None,
+    help=(
+        "Run permutation test on RRA consensus scores to determine "
+        "statistically significant proteins. When enabled, overrides "
+        "--target-size with the number of significant proteins."
+    ),
+)
+@click.option(
+    "--rra-significance-perms",
+    type=int,
+    default=None,
+    help="Number of permutations for RRA significance test (default: 10000)",
+)
+@click.option(
+    "--rra-significance-alpha",
+    type=float,
+    default=None,
+    help="BH-corrected alpha for RRA significance (default: 0.05)",
+)
+@click.option(
     "--run-essentiality/--no-run-essentiality",
     default=None,
     help="Run drop-column essentiality validation on consensus panel (default: True)",
@@ -945,6 +966,9 @@ def consensus_panel(ctx, config, **kwargs):
     # Extract essentiality config
     essentiality_cfg = config_params.get("essentiality", {})
 
+    # Extract RRA significance config
+    rra_sig_cfg = config_params.get("rra_significance", {})
+
     # Run consensus panel generation
     run_consensus_panel(
         run_id=kwargs["run_id"],
@@ -976,6 +1000,21 @@ def consensus_panel(ctx, config, **kwargs):
             kwargs.get("min_significant_models"),
             significance_cfg.get("min_significant_models"),
             2,
+        ),
+        rra_significance=_resolve_cli_or_config(
+            kwargs.get("rra_significance"),
+            rra_sig_cfg.get("enabled"),
+            False,
+        ),
+        rra_significance_perms=_resolve_cli_or_config(
+            kwargs.get("rra_significance_perms"),
+            rra_sig_cfg.get("n_perms"),
+            10_000,
+        ),
+        rra_significance_alpha=_resolve_cli_or_config(
+            kwargs.get("rra_significance_alpha"),
+            rra_sig_cfg.get("alpha"),
+            0.05,
         ),
         run_essentiality=(
             kwargs.get("run_essentiality")
