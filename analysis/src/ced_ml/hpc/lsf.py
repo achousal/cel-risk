@@ -163,8 +163,15 @@ EOF
             if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
                 echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) but sentinel present -- continuing"
             else
-                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel"
-                exit 1
+                # NFS propagation delay: sentinel may not be visible yet. Retry after delay.
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) and no sentinel -- waiting 30s for NFS propagation"
+                sleep 30
+                if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) sentinel appeared after retry -- continuing"
+                else
+                    echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel after retry"
+                    exit 1
+                fi
             fi
         fi
 
@@ -177,8 +184,14 @@ EOF
                 if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) but sentinel present -- continuing"
                 else
-                    echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel: $hist_exit"
-                    exit 1
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) and no sentinel -- waiting 30s for NFS propagation"
+                    sleep 30
+                    if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                        echo "[$(date '+%F %T')] WARNING: upstream job $jid sentinel appeared after retry -- continuing"
+                    else
+                        echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel after retry: $hist_exit"
+                        exit 1
+                    fi
                 fi
             fi
             local hist_term
@@ -189,8 +202,14 @@ EOF
                 if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) but sentinel present -- continuing"
                 else
-                    echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel: $hist_term"
-                    exit 1
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) and no sentinel -- waiting 30s for NFS propagation"
+                    sleep 30
+                    if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                        echo "[$(date '+%F %T')] WARNING: upstream job $jid sentinel appeared after retry -- continuing"
+                    else
+                        echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel after retry: $hist_term"
+                        exit 1
+                    fi
                 fi
             fi
         fi
