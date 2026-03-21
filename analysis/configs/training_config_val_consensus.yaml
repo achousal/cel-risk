@@ -1,9 +1,9 @@
-# Training config for consensus panel validation
-# Validates discovery consensus panel on fresh non-overlapping seeds (200-209).
+# Training config for Phase 2: consensus panel validation
+# Validates 7-protein RRA-significant panel (BH p<0.05) on fresh non-overlapping seeds (200-209).
 # All settings inherited from training_config.yaml except feature selection.
-# UPDATE: After Phase 1 discovery run completes, set fixed_panel_csv to the new consensus panel.
+# Source: run_20260317_131842/consensus/final_panel.csv
 _base: training_config.yaml
 
 features:
   feature_selection_strategy: fixed_panel
-  fixed_panel_csv: "PENDING_DISCOVERY_RUN_ID.csv"  # Replace after Phase 1 completes
+  fixed_panel_csv: "fixed_panel.csv"  # 7-protein RRA-significant panel from Phase 1
