@@ -10,4 +10,4 @@ features:
 
 # Reduced Optuna trials for fixed panel (7 features doesn't need 300 trials)
 optuna:
-  n_trials: 50
+  n_trials: 100
