@@ -599,9 +599,12 @@ def _encode_command_b64(command: str) -> str:
 def _build_wrapper_script(env_activation: str) -> str:
     """Build a generic wrapper that decodes and executes command payloads.
 
-    Sentinel write appends the job name to a single ``completed.log`` file
-    in the sentinel directory.  The write is a short single-line echo
-    (well under PIPE_BUF) so it is effectively atomic on POSIX/NFS.
+    Sentinel write uses a two-layer strategy for NFS reliability:
+    1. Per-job sentinel file (``$JOB_NAME.done``) -- file existence is more
+       NFS-cache-reliable than grepping a shared append-only file.
+    2. Consolidated ``completed.log`` append -- backward-compatible with
+       orchestrator grep checks.
+    Both writes are followed by ``sync`` to flush to the NFS server.
     The sentinel is written in an EXIT trap so that ``set -e`` cannot skip
     it -- the orchestrator always sees completion (success or failure) and
     ``check_upstream_failures`` handles EXIT/TERM detection separately via
@@ -628,9 +631,15 @@ if [ -z "${{CED_SENTINEL_DIR:-}}" ]; then
     exit 1
 fi
 
-# Append job name to consolidated sentinel log on exit so set -e cannot skip it.
+# Write per-job sentinel file + append to consolidated log on exit.
+# Per-job file gives NFS-reliable existence check; consolidated log is a fallback.
+# sync flushes writes to the NFS server before the process exits.
 _ced_rc=0
-trap 'echo "${{CED_JOB_NAME}}" >> "$CED_SENTINEL_DIR/completed.log"' EXIT
+trap '
+  touch "$CED_SENTINEL_DIR/${{CED_JOB_NAME}}.done"
+  echo "${{CED_JOB_NAME}}" >> "$CED_SENTINEL_DIR/completed.log"
+  sync
+' EXIT
 
 COMMAND=$(python - "$CED_JOB_COMMAND_B64" <<'PY'
 import base64
@@ -669,7 +678,46 @@ def _build_wrapped_command(
 
 def _build_shared_orchestrator_bash_functions() -> str:
     """Scheduler-agnostic bash functions for the orchestrator."""
-    return """manifest_job_tsv() {
+    return """# Check if a job has a sentinel via per-job file or consolidated log.
+# Returns 0 if found, 1 if not. Refreshes NFS attribute cache first.
+sentinel_exists() {
+    local name="$1"
+    # Per-job .done file (most NFS-reliable)
+    if [ -f "$SENTINEL_DIR/${name}.done" ]; then
+        return 0
+    fi
+    # Fallback: consolidated log
+    if grep -qx "${name}" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Like sentinel_exists but forces NFS attribute cache refresh first.
+sentinel_exists_refresh() {
+    local name="$1"
+    # Force NFS attribute cache invalidation by listing the directory
+    ls "$SENTINEL_DIR/" > /dev/null 2>&1 || true
+    sentinel_exists "$name"
+}
+
+# Retry sentinel check with exponential backoff (10s, 30s, 60s).
+# Returns 0 if sentinel eventually found, 1 if not after all retries.
+sentinel_wait_retry() {
+    local name="$1"
+    local delay
+    for delay in 10 30 60; do
+        echo "[$(date '+%F %T')] WARNING: upstream job ($name) no sentinel -- retrying in ${delay}s"
+        sleep "$delay"
+        if sentinel_exists_refresh "$name"; then
+            echo "[$(date '+%F %T')] WARNING: upstream job ($name) sentinel appeared after retry"
+            return 0
+        fi
+    done
+    return 1
+}
+
+manifest_job_tsv() {
     local job_key="$1"
     python - "$MANIFEST_PATH" "$job_key" <<'PY'
 import json
@@ -719,7 +767,7 @@ barrier_wait() {
         local missing=0
         local name
         for name in "${job_names[@]}"; do
-            grep -qx "${name}" "$SENTINEL_DIR/completed.log" 2>/dev/null || missing=$((missing + 1))
+            sentinel_exists "${name}" || missing=$((missing + 1))
         done
 
         if [ "$missing" -eq 0 ]; then
@@ -732,7 +780,7 @@ barrier_wait() {
             echo "[$(date '+%F %T')] TIMEOUT: $label after ${timeout}s ($((total - missing))/$total done)"
             echo "[$(date '+%F %T')] Missing jobs:"
             for name in "${job_names[@]}"; do
-                grep -qx "${name}" "$SENTINEL_DIR/completed.log" 2>/dev/null || echo "  $name"
+                sentinel_exists "${name}" || echo "  $name"
             done
             printf '{"stage":"%s","status":"timeout","ts":"%s"}\\n' "$label" "$(date -u '+%FT%TZ')" >> "$STATE_FILE"
             exit 1

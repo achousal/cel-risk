@@ -119,12 +119,13 @@ def test_slurm_orchestrator_status_func():
 
 
 def test_slurm_check_upstream_sentinel_aware():
-    """check_upstream_failures should warn (not FATAL) when sentinel exists for FAILED job."""
+    """check_upstream_failures should use sentinel helpers and retry on failure."""
     func = _SLURM.build_orchestrator_status_func()
 
-    assert 'grep -qx "$jname" "$SENTINEL_DIR/completed.log"' in func
+    assert 'sentinel_exists "$jname"' in func
+    assert 'sentinel_wait_retry "$jname"' in func
     assert "but sentinel present -- continuing" in func
-    assert "and no sentinel" in func
+    assert "and no sentinel after retries" in func
 
 
 def test_slurm_orchestrator_header():

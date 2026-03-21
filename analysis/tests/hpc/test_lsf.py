@@ -408,18 +408,19 @@ def test_detect_environment_raises_with_checked_paths(tmp_path, monkeypatch):
 
 
 def test_wrapper_script_decodes_base64_and_marks_sentinel():
-    """Wrapper script should decode command payload and append to consolidated log."""
+    """Wrapper script should write per-job sentinel file and append to consolidated log."""
     script = _build_wrapper_script('source "/venv/bin/activate"')
 
     assert "CED_JOB_COMMAND_B64" in script
     assert "CED_JOB_NAME" in script
     assert "CED_SENTINEL_DIR" in script
     assert "base64.b64decode" in script
-    # Consolidated sentinel via EXIT trap
+    # Two-layer sentinel via EXIT trap: per-job .done file + consolidated log
+    assert ".done" in script
     assert '>> "$CED_SENTINEL_DIR/completed.log"' in script
     assert "trap" in script
-    # Old per-job touch must be gone
-    assert ".done" not in script
+    # sync must be called to flush NFS writes
+    assert "sync" in script
 
 
 def test_barrier_bash_uses_bjobs_and_bhist():
@@ -450,28 +451,34 @@ def test_barrier_bash_no_grep_p():
 
 
 def test_check_upstream_sentinel_aware():
-    """check_upstream_failures should warn (not FATAL) when sentinel exists for EXIT job."""
+    """check_upstream_failures should use sentinel helpers and retry on failure."""
     bash = _build_orchestrator_bash_functions(_LSF)
 
-    # bjobs EXIT path: must check sentinel before exit 1
-    assert 'grep -qx "$jname" "$SENTINEL_DIR/completed.log"' in bash
-    # bhist EXIT path: must check sentinel before exit 1
-    assert 'grep -qx "$hjname" "$SENTINEL_DIR/completed.log"' in bash
-    # bhist TERM path: must check sentinel before exit 1
-    assert 'grep -qx "$tjname" "$SENTINEL_DIR/completed.log"' in bash
+    # Must use sentinel_exists helper for all check paths
+    assert 'sentinel_exists "$jname"' in bash
+    assert 'sentinel_exists "$hjname"' in bash
+    assert 'sentinel_exists "$tjname"' in bash
+    # Must use sentinel_wait_retry for NFS backoff
+    assert 'sentinel_wait_retry "$jname"' in bash
+    assert 'sentinel_wait_retry "$hjname"' in bash
+    assert 'sentinel_wait_retry "$tjname"' in bash
     # WARNING message for sentinel-present case
     assert "but sentinel present -- continuing" in bash
     # FATAL message for no-sentinel case
-    assert "and no sentinel" in bash
+    assert "and no sentinel after retries" in bash
 
 
-def test_barrier_wait_uses_consolidated_log():
-    """barrier_wait should check completion via grep in consolidated log."""
+def test_barrier_wait_uses_sentinel_helpers():
+    """barrier_wait should check completion via sentinel_exists helper."""
     bash = _build_orchestrator_bash_functions(_LSF)
 
-    assert 'grep -qx "${name}" "$SENTINEL_DIR/completed.log"' in bash
-    # Old per-job file check must be gone
-    assert ".done" not in bash
+    # Uses sentinel_exists helper (checks .done file + completed.log)
+    assert 'sentinel_exists "${name}"' in bash
+    # sentinel_exists and sentinel_wait_retry must be defined
+    assert "sentinel_exists()" in bash
+    assert "sentinel_wait_retry()" in bash
+    # Per-job .done file checked inside sentinel_exists
+    assert ".done" in bash
 
 
 def test_submit_and_track_uses_sed_for_id():

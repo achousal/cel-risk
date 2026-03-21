@@ -160,18 +160,13 @@ EOF
         if [ "$stat" = "EXIT" ] || [ "$stat" = "TERM" ]; then
             local jname
             jname=$(bjobs -noheader -o "job_name" "$jid" 2>/dev/null | awk 'NF {print $1; exit}')
-            if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+            if sentinel_exists "$jname"; then
                 echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) but sentinel present -- continuing"
+            elif sentinel_wait_retry "$jname"; then
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) sentinel found after retry -- continuing"
             else
-                # NFS propagation delay: sentinel may not be visible yet. Retry after delay.
-                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) and no sentinel -- waiting 30s for NFS propagation"
-                sleep 30
-                if grep -qx "$jname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) sentinel appeared after retry -- continuing"
-                else
-                    echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel after retry"
-                    exit 1
-                fi
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel after retries"
+                exit 1
             fi
         fi
 
@@ -181,17 +176,13 @@ EOF
             if [ -n "$hist_exit" ]; then
                 local hjname
                 hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
-                if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                if sentinel_exists "$hjname"; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) but sentinel present -- continuing"
+                elif sentinel_wait_retry "$hjname"; then
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) sentinel found after retry -- continuing"
                 else
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) and no sentinel -- waiting 30s for NFS propagation"
-                    sleep 30
-                    if grep -qx "$hjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
-                        echo "[$(date '+%F %T')] WARNING: upstream job $jid sentinel appeared after retry -- continuing"
-                    else
-                        echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel after retry: $hist_exit"
-                        exit 1
-                    fi
+                    echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel after retries: $hist_exit"
+                    exit 1
                 fi
             fi
             local hist_term
@@ -199,17 +190,13 @@ EOF
             if [ -n "$hist_term" ]; then
                 local tjname
                 tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
-                if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
+                if sentinel_exists "$tjname"; then
                     echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) but sentinel present -- continuing"
+                elif sentinel_wait_retry "$tjname"; then
+                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) sentinel found after retry -- continuing"
                 else
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) and no sentinel -- waiting 30s for NFS propagation"
-                    sleep 30
-                    if grep -qx "$tjname" "$SENTINEL_DIR/completed.log" 2>/dev/null; then
-                        echo "[$(date '+%F %T')] WARNING: upstream job $jid sentinel appeared after retry -- continuing"
-                    else
-                        echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel after retry: $hist_term"
-                        exit 1
-                    fi
+                    echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel after retries: $hist_term"
+                    exit 1
                 fi
             fi
         fi
