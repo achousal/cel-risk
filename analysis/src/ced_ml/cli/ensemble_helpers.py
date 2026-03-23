@@ -300,6 +300,26 @@ def save_ensemble_artifacts(
 
     coef = ensemble.get_meta_model_coef()
 
+    # Inherit resolved_columns and scenario from first base model bundle
+    # so that downstream consumers (eval-holdout, permutation-test) can
+    # reconstruct the feature set without re-parsing configs.
+    resolved_columns = {}
+    scenario = None
+    for base_model in available_models:
+        base_bundle_path = (
+            outdir.parent.parent.parent
+            / base_model
+            / "splits"
+            / f"split_seed{split_seed}"
+            / "core"
+            / f"{base_model}__final_model.joblib"
+        )
+        if base_bundle_path.exists():
+            base_bundle = joblib.load(base_bundle_path)
+            resolved_columns = base_bundle.get("resolved_columns", {})
+            scenario = base_bundle.get("scenario")
+            break
+
     model_bundle = {
         "model": ensemble,
         "model_name": "ENSEMBLE",
@@ -310,6 +330,8 @@ def save_ensemble_artifacts(
         "split_seed": split_seed,
         "random_state": random_state,
         "base_calibration_strategies": results.get("calibration_strategies", {}),
+        "resolved_columns": resolved_columns,
+        "scenario": scenario,
         "versions": {
             "sklearn": sklearn.__version__,
             "pandas": pd.__version__,
