@@ -58,12 +58,20 @@ def _ensure_splits_exist(
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    # Load splits config to check overwrite flag
+    # Load splits config to check overwrite flag and expected seeds
     splits_config = load_splits_config(config_file=config_file, overrides=overrides or [])
     overwrite = splits_config.overwrite
 
-    # Check if splits need to be generated
-    needs_generation = overwrite or not any(split_dir.glob("train_idx_*_seed*.csv"))
+    # Check if the specific seeds from config exist, not just any splits
+    expected_seeds = list(
+        range(splits_config.seed_start, splits_config.seed_start + splits_config.n_splits)
+    )
+    missing_seeds = [
+        s for s in expected_seeds if not any(split_dir.glob(f"train_idx_*_seed{s}.csv"))
+    ]
+    needs_generation = overwrite or bool(missing_seeds)
+    if missing_seeds and not overwrite:
+        logger.info(f"Missing splits for seeds: {missing_seeds}")
 
     if needs_generation:
         logger.info("Generating splits...")
