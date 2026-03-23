@@ -14,7 +14,7 @@ cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis
 MODELS=("LR_EN" "LinSVM_cal" "RF" "XGBoost" "ENSEMBLE")
 SEEDS=(200 201 202 203 204 205 206 207 208 209)
 INFILE="../data/Celiac_dataset_proteomics_w_demo.parquet"
-HOLDOUT_IDX="../splits/holdout_indices_IncidentPlusPrevalent.csv"
+HOLDOUT_IDX="../splits/HOLDOUT_idx_IncidentPlusPrevalent.csv"
 
 echo "=== Submitting holdout evaluation for ${RUN_ID} ==="
 
