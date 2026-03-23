@@ -173,8 +173,9 @@ def load_hpc_config(config_path: Path) -> HPCConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"HPC config not found: {config_path}")
 
-    with open(config_path) as f:
-        raw_config = yaml.safe_load(f)
+    from ced_ml.config.loader import load_yaml
+
+    raw_config = load_yaml(config_path)
 
     hpc_dict = raw_config.get("hpc", {})
     if not hpc_dict:
