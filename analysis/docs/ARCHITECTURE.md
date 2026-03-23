@@ -1,4 +1,4 @@
-# CeliacRisks Architecture
+# cel-risk Architecture
 
 **Version:** 2.2
 **Date:** 2026-02-03
@@ -163,6 +163,8 @@ Base Models → OOF Predictions → Meta-Learner (L2 LR) → Calibrated Ensemble
 3. No leakage: meta-learner never sees predictions from samples in training fold
 
 **Configuration:** Opt-in via `ensemble.enabled=true` in config.
+
+**Ensemble calibration:** The meta-learner supports optional post-hoc calibration via `calibrate_meta: true` (default: `false`). When enabled, the LR meta-learner is wrapped in `CalibratedClassifierCV` using isotonic calibration (configurable via `meta_calibration_method`). The regularization strength defaults to `meta_c: 1.0` but can be set to higher values (e.g., `100.0`) to avoid probability compression when few base-model features are present. These settings are configurable via `EnsembleConfig` in `config/ensemble_schema.py`.
 
 **See ADR:**
 - [ADR-007: OOF Stacking Ensemble](adr/ADR-007-oof-stacking-ensemble.md)

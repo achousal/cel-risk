@@ -1,4 +1,4 @@
-# CeliacRisks Output Artifacts
+# cel-risk Output Artifacts
 
 **Version:** 3.0
 **Date:** 2026-01-29

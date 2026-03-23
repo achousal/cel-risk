@@ -55,7 +55,7 @@ cat logs/run_<RUN_ID>/orchestrator.log
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--config`, `-c` | PATH | - | Training config YAML |
-| `--pipeline-config` | PATH | - | Pipeline execution config YAML |
+| `--pipeline-config` | PATH | - | Pipeline execution config YAML. If omitted and `--hpc-config` is provided, `--hpc-config` is used as the pipeline config fallback (a single file can contain both HPC and pipeline settings via `_base` inheritance). |
 | `--infile` | PATH | Auto-detect | Input proteomics file |
 | `--split-dir` | PATH | Auto | Splits directory |
 | `--outdir` | PATH | `results/` | Output directory |

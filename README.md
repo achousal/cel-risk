@@ -1,4 +1,4 @@
-# CeliacRisks
+# cel-risk
 
 **Production-grade ML pipeline for disease risk prediction from high-dimensional biomarker data**
 
@@ -18,12 +18,12 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/achousal/CeliacRisks.git
+git clone https://github.com/achousal/cel-risk.git
 ```
 
 ### Local
 ```bash
-cd CeliacRisks/
+cd cel-risk/
 pip install -e analysis/
 
 conda activate ced_ml
@@ -33,7 +33,7 @@ ced run-pipeline
 
 ### HPC
 ```bash
-cd CeliacRisks/
+cd cel-risk/
 bash analysis/scripts/hpc_setup.sh
 
 source analysis/venv/bin/activate  # Required if using venv
@@ -53,7 +53,7 @@ squeue -u $USER #slurm
 ### 1. Run the Full Pipeline (Local)
 
 ```bash
-cd CeliacRisks/
+cd cel-risk/
 ced run-pipeline
 ```
 
@@ -63,7 +63,7 @@ ced run-pipeline
 Submit batch jobs with automated resource management and dependency chains:
 
 ```bash
-cd CeliacRisks/
+cd cel-risk/
 ced run-pipeline --hpc
 
 # Monitor jobs
@@ -150,11 +150,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
 ## Citation
 
 ```bibtex
-@software{chousal2026celiacrisks,
+@software{chousal2026celrisk,
   author = {Chousal, Andres and Chowell Lab},
-  title = {CeliacRisks: ML Pipeline for Disease Risk Prediction},
+  title = {cel-risk: ML Pipeline for Disease Risk Prediction},
   year = {2026},
-  url = {https://github.com/achousal/CeliacRisks}
+  url = {https://github.com/achousal/cel-risk}
 }
 ```
 

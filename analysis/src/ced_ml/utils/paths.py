@@ -4,7 +4,7 @@ Path utilities for standardized file/directory operations.
 This module provides path resolution for CLI commands.
 
 Project structure:
-    CeliacRisks/                    <- Project root (run ced here)
+    cel-risk/                    <- Project root (run ced here)
     ├── data/                       <- Input data
     ├── splits/                     <- Split indices
     ├── results/                    <- Model outputs
@@ -14,8 +14,8 @@ Project structure:
     │   └── tests/                  <- Test suite
 
 Path resolution:
-    - Run from CeliacRisks/: paths like "data/" resolve correctly
-    - Run from CeliacRisks/analysis/: root auto-detected by walking up
+    - Run from cel-risk/: paths like "data/" resolve correctly
+    - Run from cel-risk/analysis/: root auto-detected by walking up
     - Paths in configs are relative to analysis/ directory
 """
 
@@ -26,7 +26,7 @@ _MAX_SEARCH_DEPTH = 5
 
 
 def _is_project_root(path: Path) -> bool:
-    """Return True if *path* looks like the CeliacRisks project root."""
+    """Return True if *path* looks like the cel-risk project root."""
     return (path / "data").is_dir() and (path / "analysis").is_dir()
 
 
@@ -37,7 +37,7 @@ def _is_project_root(path: Path) -> bool:
 
 def get_project_root() -> Path:
     """
-    Get the project root directory (CeliacRisks/).
+    Get the project root directory (cel-risk/).
 
     Resolution order:
         1. Current working directory (CWD)
@@ -66,7 +66,7 @@ def get_project_root() -> Path:
             return candidate
 
     raise RuntimeError(
-        f"Could not locate project root (CeliacRisks/).\n"
+        f"Could not locate project root (cel-risk/).\n"
         f"Current directory: {cwd}\n"
         f"Searched {_MAX_SEARCH_DEPTH} levels up.\n"
         f"Expected structure: data/, analysis/, splits/, results/"

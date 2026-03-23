@@ -1,1 +1,1 @@
-"""End-to-end tests for the CeliacRisks ML pipeline."""
+"""End-to-end tests for the cel-risk ML pipeline."""

@@ -322,13 +322,13 @@ def test_optuna_trials_aggregation_with_model_prefix(temp_results_dir):
     """Test aggregation of model-prefixed optuna_trials.csv files (bug fix regression test)."""
     from ced_ml.cli.aggregate_splits import run_aggregate_splits
 
-    # Create CeliacRisks directory structure for auto_log_path compatibility
-    celiac_root = temp_results_dir / "CeliacRisks"
+    # Create cel-risk directory structure for auto_log_path compatibility
+    celiac_root = temp_results_dir / "cel-risk"
     celiac_root.mkdir(parents=True)
     results_base = celiac_root / "results" / "run_test" / "LinSVM_cal" / "splits"
 
     # Create mock optuna_trials files with model prefix (real-world format)
-    # Directory structure: CeliacRisks/results/run_test/LinSVM_cal/splits/split_seed*/
+    # Directory structure: cel-risk/results/run_test/LinSVM_cal/splits/split_seed*/
     splits_base = results_base
     for seed in [0, 1]:
         split_dir = splits_base / f"split_seed{seed}"

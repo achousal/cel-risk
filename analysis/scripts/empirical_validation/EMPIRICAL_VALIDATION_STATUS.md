@@ -23,7 +23,7 @@ All three empirical validation studies (T1, T2, T4) have been **implemented and 
 ### 1. Test with Synthetic Data (Recommended First Step)
 
 ```bash
-cd /path/to/CeliacRisks/analysis/scripts/empirical_validation
+cd /path/to/cel-risk/analysis/scripts/empirical_validation
 
 # T1: Consensus weight sensitivity (7 configurations)
 python t1_consensus_weight_sensitivity.py --synthetic \
@@ -47,7 +47,7 @@ python t4_prevalence_adjustment_validation.py --synthetic \
 
 ```bash
 # First, ensure you have a completed pipeline run
-cd /path/to/CeliacRisks
+cd /path/to/cel-risk
 ced run-pipeline --models LR_EN,RF,XGBoost --split-seeds 0,1,2
 
 # Get the run ID

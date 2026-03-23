@@ -1,4 +1,4 @@
-# CeliacRisks Project Documentation
+# cel-risk Project Documentation
 
 **Project**: Machine Learning Pipeline for Incident Celiac Disease Risk Prediction
 **Version**: 1.0.0
@@ -34,7 +34,7 @@ Blood proteomics panel → ML risk score → [High risk?] → Anti-tTG antibody 
 
 ---
 
-**Important**: All `ced` commands must be run from the project root (`CeliacRisks/`).
+**Important**: All `ced` commands must be run from the project root (`cel-risk/`).
 
 ```bash
 ced --help
@@ -71,6 +71,7 @@ ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
 - `configs/training_config.yaml` - Models, CV, feature selection
 - `configs/output_config.yaml` - Artifact and plot generation controls
 - `configs/pipeline_local.yaml` - Execution settings
+- `configs/pipeline_hpc_val_consensus.yaml` - Phase 2 validation (inherits HPC settings via `_base`, points to splits and training configs)
 
 ### 3. Feature Selection
 
@@ -112,9 +113,11 @@ ced train-ensemble --run-id 20260127_115115
 1. `configs/training_config.yaml` (model settings, feature selection)
 2. `configs/output_config.yaml` (artifact and plot generation controls)
 3. `configs/splits_config.yaml` (CV split settings)
-4. `configs/pipeline_local.yaml` or `pipeline_hpc.yaml` (execution settings)
+4. `configs/pipeline_local.yaml` or `pipeline_hpc.yaml` (execution settings; supports `_base` inheritance)
 5. Environment variables (e.g., `RUN_MODELS`, `DRY_RUN`)
 6. CLI flags (e.g., `--model`, `--split-seed`)
+
+**Pipeline config resolution:** `--pipeline-config` > `--hpc-config` (when `--pipeline-config` is omitted, `--hpc-config` doubles as the pipeline config) > auto-detect. Config files support `_base` key for YAML inheritance (base loaded first, current file deep-merged on top).
 
 ## CLI Reference
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Module Loading Script for CeliacRisks on HPC
+# Module Loading Script for cel-risk on HPC
 #
 # Purpose: Load required software modules for running the pipeline on HPC.
 #          This script is HPC-specific and should be customized for your cluster.
@@ -13,7 +13,7 @@
 # Author: Andres Chousal
 # Date: 2026-01-19
 
-echo "Loading modules for CeliacRisks pipeline..."
+echo "Loading modules for cel-risk pipeline..."
 
 # ==============================================================================
 # CUSTOMIZE THESE FOR YOUR HPC ENVIRONMENT
@@ -72,7 +72,7 @@ if command -v git &> /dev/null; then
 fi
 
 echo ""
-echo "Environment ready for CeliacRisks pipeline"
+echo "Environment ready for cel-risk pipeline"
 echo ""
 echo "Next steps:"
 echo "  1. Run setup script (first time only):"

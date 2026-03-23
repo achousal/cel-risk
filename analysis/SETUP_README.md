@@ -1,4 +1,4 @@
-# CeliacRisks Setup Guide
+# cel-risk Setup Guide
 
 **Version**: 1.0.0
 **Updated**: 2026-01-30
@@ -26,7 +26,7 @@ If you already have a conda environment:
 
 ```bash
 # 1. Ensure you're in the project root
-cd CeliacRisks/
+cd cel-risk/
 
 # 2. Install the package in your conda environment
 pip install -e analysis/
@@ -46,7 +46,7 @@ For HPC job submission with LSF (`bsub`):
 
 ```bash
 # 1. Run automated setup (creates venv, installs package)
-cd CeliacRisks/
+cd cel-risk/
 bash analysis/scripts/hpc_setup.sh
 
 source analysis/venv/bin/activate  # Required if using venv

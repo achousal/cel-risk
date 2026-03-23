@@ -1,4 +1,4 @@
-# End-to-End Test Implementation Plan for CeliacRisks ML Pipeline
+# End-to-End Test Implementation Plan for cel-risk ML Pipeline
 
 ## Summary
 

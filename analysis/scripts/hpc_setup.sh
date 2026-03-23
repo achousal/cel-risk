@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# HPC Setup Script for CeliacRisks v1.0.0
+# HPC Setup Script for cel-risk v1.0.0
 #
 # Purpose: Automated setup of Python environment and package installation
 #          Works for both LOCAL and HPC environments
@@ -51,11 +51,11 @@ error() {
 
 # Print header
 echo "=========================================="
-echo "  CeliacRisks HPC Setup (v1.0.0)"
+echo "  cel-risk HPC Setup (v1.0.0)"
 echo "=========================================="
 echo ""
 
-# Detect project root (CeliacRisks/)
+# Detect project root (cel-risk/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ANALYSIS_DIR="$PROJECT_ROOT/analysis"
@@ -131,7 +131,7 @@ pip install --upgrade pip setuptools wheel
 success "pip upgraded to version $(pip --version | awk '{print $2}')"
 
 # Install package
-info "Installing CeliacRisks package (this may take several minutes on HPC)..."
+info "Installing cel-risk package (this may take several minutes on HPC)..."
 mkdir -p ../logs/setup
 SETUP_LOG="../logs/setup/install_$(date +%Y%m%d_%H%M%S).log"
 pip install -e . 2>&1 | tee "${SETUP_LOG}"

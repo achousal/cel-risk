@@ -29,7 +29,7 @@ python t4_prevalence_adjustment_validation.py --synthetic
 
 ```bash
 # First, ensure you have a completed pipeline run
-cd /path/to/CeliacRisks
+cd /path/to/cel-risk
 ced run-pipeline --models LR_EN,RF,XGBoost --split-seeds 0,1,2
 
 # Get the run ID (e.g., 20260208_120000)
@@ -207,7 +207,7 @@ results/empirical_validation/
 
 ## Dependencies
 
-All scripts require the CeliacRisks Python environment:
+All scripts require the cel-risk Python environment:
 
 ```bash
 cd analysis

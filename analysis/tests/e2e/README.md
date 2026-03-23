@@ -1,4 +1,4 @@
-# End-to-End Tests for CeliacRisks ML Pipeline
+# End-to-End Tests for cel-risk ML Pipeline
 
 **Purpose**: Comprehensive E2E test suite for the complete `ced run-pipeline` workflow and all CLI commands.
 
@@ -414,7 +414,7 @@ For a complete detailed inventory of all E2E tests with line counts, test classe
 
 ## Additional Resources
 
-- **Project docs**: `CeliacRisks/CLAUDE.md` - Project overview and workflows
+- **Project docs**: `cel-risk/CLAUDE.md` - Project overview and workflows
 - **CLI reference**: `analysis/docs/reference/CLI_REFERENCE.md` - Complete CLI documentation
 - **Architecture**: `analysis/docs/ARCHITECTURE.md` - System architecture
 - **ADRs**: `analysis/docs/adr/` - Architecture decision records
