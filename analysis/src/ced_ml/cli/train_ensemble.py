@@ -476,10 +476,16 @@ def run_train_ensemble(
         config_file, results_dir, base_models, run_id, split_seed
     )
 
+    # Read ensemble settings from config, with CLI overrides taking precedence
+    ensemble_cfg = config.ensemble if config is not None else None
     if meta_penalty is None:
-        meta_penalty = "l2"
+        meta_penalty = ensemble_cfg.meta_penalty if ensemble_cfg is not None else "l2"
     if meta_c is None:
-        meta_c = 1.0
+        meta_c = ensemble_cfg.meta_c if ensemble_cfg is not None else 1.0
+    calibrate_meta = ensemble_cfg.calibrate_meta if ensemble_cfg is not None else False
+    meta_calibration_method = (
+        ensemble_cfg.meta_calibration_method if ensemble_cfg is not None else "isotonic"
+    )
 
     logger.info(f"Meta-learner: LogisticRegression(penalty={meta_penalty}, C={meta_c})")
 
@@ -489,13 +495,6 @@ def run_train_ensemble(
     logger.info(f"Using {len(available_models)} base models: {available_models}")
 
     random_state = config.cv.random_state if config else 42
-
-    # Read ensemble-specific calibration settings from config (if available)
-    ensemble_cfg = config.ensemble if config is not None else None
-    calibrate_meta = ensemble_cfg.calibrate_meta if ensemble_cfg is not None else False
-    meta_calibration_method = (
-        ensemble_cfg.meta_calibration_method if ensemble_cfg is not None else "isotonic"
-    )
 
     ensemble, oof_dict, y_train, train_idx, cat_train, calibration_info = train_meta_learner(
         available_models,

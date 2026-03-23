@@ -9,6 +9,10 @@ class EnsembleConfig(BaseModel):
     """Configuration for the stacking ensemble meta-learner.
 
     Attributes:
+        meta_penalty: Regularization type for the LR meta-learner.
+        meta_c: Inverse regularization strength. Larger C = less regularization.
+            With only 4 base-model features and n~900, high C avoids probability
+            compression from over-regularization.
         calibrate_meta: Whether to wrap the LR meta-learner in CalibratedClassifierCV.
             Defaults to False because base models are already OOF-calibrated and the
             logistic regression meta-learner is inherently calibrated via its logistic
@@ -21,6 +25,19 @@ class EnsembleConfig(BaseModel):
             Only used when calibrate_meta=True.
     """
 
+    meta_penalty: Literal["l1", "l2", "none"] = Field(
+        default="l2",
+        description="Meta-learner regularization type.",
+    )
+    meta_c: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Inverse regularization strength for meta-learner. "
+            "Higher values = less regularization. With few features (4 base models) "
+            "and ample samples, high C prevents probability compression."
+        ),
+    )
     calibrate_meta: bool = Field(
         default=False,
         description=(

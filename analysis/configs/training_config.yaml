@@ -14,12 +14,12 @@ cv:
 
 # Ensemble training: Use separate CLI command `ced train-ensemble`
 # See docs/reference/CLI_REFERENCE.md for usage
-# ensemble:
-#   calibrate_meta: false  # Wrap meta-learner in CalibratedClassifierCV. Default false:
-#                          # base models are already OOF-calibrated and LR calibrates
-#                          # naturally via the logistic link.
-#   meta_calibration_method: isotonic  # Options: isotonic, sigmoid (only used when calibrate_meta=true)
-#   calibration_cv: 5  # CV folds for meta-learner calibration (only used when calibrate_meta=true)
+ensemble:
+  meta_penalty: l2
+  meta_c: 100.0  # High C: 4 features, n~900 — no overfitting risk; avoids probability compression
+  # calibrate_meta: false
+  # meta_calibration_method: isotonic  # Options: isotonic, sigmoid (only used when calibrate_meta=true)
+  # calibration_cv: 5  # CV folds for meta-learner calibration (only used when calibrate_meta=true)
 
 # Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
 optuna:
