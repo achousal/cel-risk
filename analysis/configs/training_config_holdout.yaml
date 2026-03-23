@@ -1,0 +1,4 @@
+# Training config for Phase 3: holdout evaluation
+# Fixed 7-protein panel, holdout mode splits.
+# Inherits from Phase 2 validation config.
+_base: training_config_val_consensus.yaml
