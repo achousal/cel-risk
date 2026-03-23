@@ -215,10 +215,9 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
         """
         splits_config_path = pcfg.get("splits_config")
         if splits_config_path and Path(splits_config_path).exists():
-            import yaml
+            from ced_ml.config.loader import load_yaml
 
-            with open(splits_config_path) as f:
-                splits_raw = yaml.safe_load(f) or {}
+            splits_raw = load_yaml(Path(splits_config_path))
             seed_start = splits_raw.get("seed_start", 0)
             n_splits = splits_raw.get("n_splits", 3)
             return parse_seed_range(seed_start, n_splits)
@@ -232,12 +231,16 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     pipeline_config_cli = kwargs.pop("pipeline_config", None)
 
     # --- Load pipeline config -----------------------------------------------
-    # Priority: --pipeline-config > auto-detect (local/hpc) > hardcoded defaults
-    pcfg_path = (
-        Path(pipeline_config_cli)
-        if pipeline_config_cli
-        else resolve_pipeline_config_path(hpc=hpc_flag)
-    )
+    # Priority: --pipeline-config > --hpc-config (same file format) > auto-detect > defaults
+    # When --hpc-config is provided without --pipeline-config, use it as the pipeline
+    # config too — a single file like pipeline_hpc_val_consensus.yaml contains both
+    # HPC settings (inherited via _base) and pipeline overrides (splits, training configs).
+    if pipeline_config_cli:
+        pcfg_path = Path(pipeline_config_cli)
+    elif hpc_flag and hpc_config_cli:
+        pcfg_path = Path(hpc_config_cli)
+    else:
+        pcfg_path = resolve_pipeline_config_path(hpc=hpc_flag)
     pcfg = load_pipeline_config(pcfg_path) if pcfg_path else {}
 
     # Helper: first non-None wins (CLI > config > fallback)
