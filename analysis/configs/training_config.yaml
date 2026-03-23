@@ -16,10 +16,10 @@ cv:
 # See docs/reference/CLI_REFERENCE.md for usage
 ensemble:
   meta_penalty: l2
-  meta_c: 100.0  # High C: 4 features, n~900 — no overfitting risk; avoids probability compression
-  # calibrate_meta: false
-  # meta_calibration_method: isotonic  # Options: isotonic, sigmoid (only used when calibrate_meta=true)
-  # calibration_cv: 5  # CV folds for meta-learner calibration (only used when calibrate_meta=true)
+  meta_c: 100.0  # High C: 4 features, n~900 — no overfitting risk
+  calibrate_meta: true  # Isotonic post-hoc corrects structural probability compression from stacking
+  meta_calibration_method: isotonic
+  calibration_cv: 5
 
 # Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
 optuna:
