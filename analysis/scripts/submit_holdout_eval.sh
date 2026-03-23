@@ -37,7 +37,7 @@ for model in "${MODELS[@]}"; do
             -J "${JOB_NAME}" \
             -oo "../logs/holdout_${model}_s${seed}_%J.stdout" \
             -eo "../logs/holdout_${model}_s${seed}_%J.stderr" \
-            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load python/3.10.0 && source venv/bin/activate && ${CMD}"
+            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load anaconda3/2024.06 && source venv/bin/activate && ${CMD}"
 
         echo "SUBMITTED: ${JOB_NAME}"
     done

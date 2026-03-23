@@ -20,7 +20,7 @@ RANDOM_STATE=42
 cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis
 
 # Activate environment
-module load python/3.10.0
+module load anaconda3/2024.06
 source /sc/arion/projects/vascbrain/andres/cel-risk/analysis/venv/bin/activate
 
 MODELS=("LR_EN" "LinSVM_cal" "RF" "XGBoost")
@@ -54,7 +54,7 @@ for model in "${MODELS[@]}"; do
             -J "${JOB_NAME}" \
             -oo "../logs/perm_${model}_s${seed}_%J.stdout" \
             -eo "../logs/perm_${model}_s${seed}_%J.stderr" \
-            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load python/3.10.0 && source venv/bin/activate && ${CMD}" 2>&1 | grep -oP 'Job <\K\d+')
+            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load anaconda3/2024.06 && source venv/bin/activate && ${CMD}" 2>&1 | grep -oP 'Job <\K\d+')
 
         echo "SUBMITTED: ${JOB_NAME} -> Job ${JOB_ID}"
         perm_job_names+=("${JOB_NAME}")
@@ -74,7 +74,7 @@ for model in "${MODELS[@]}"; do
             -w "${DEP_EXPR}" \
             -oo "../logs/perm_${model}_agg_%J.stdout" \
             -eo "../logs/perm_${model}_agg_%J.stderr" \
-            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load python/3.10.0 && source venv/bin/activate && ${AGG_CMD}" 2>&1 | grep -oP 'Job <\K\d+')
+            bash -c "cd /sc/arion/projects/vascbrain/andres/cel-risk/analysis && module load anaconda3/2024.06 && source venv/bin/activate && ${AGG_CMD}" 2>&1 | grep -oP 'Job <\K\d+')
 
         echo "SUBMITTED: ${AGG_NAME} -> Job ${AGG_ID} (depends on ${#perm_job_names[@]} perm jobs)"
     fi
