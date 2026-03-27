@@ -20,9 +20,11 @@ from .screening import (
     f_statistic_screen,
     mann_whitney_screen,
     screen_proteins,
+    wald_screen,
 )
 from .screening_cache import ScreeningCache, get_screening_cache
 from .stability import (
+    bootstrap_stability_selection,
     compute_selection_frequencies,
     extract_stable_panel,
     rank_proteins_by_frequency,
@@ -47,10 +49,12 @@ __all__ = [
     "f_statistic_screen",
     "mann_whitney_screen",
     "screen_proteins",
+    "wald_screen",
     # Screening cache
     "ScreeningCache",
     "get_screening_cache",
     # Stability
+    "bootstrap_stability_selection",
     "compute_selection_frequencies",
     "extract_stable_panel",
     "rank_proteins_by_frequency",
