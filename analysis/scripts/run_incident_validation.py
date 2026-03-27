@@ -296,6 +296,25 @@ def compute_class_weight(scheme: str, y: np.ndarray) -> dict | str | None:
 # ============================================================================
 
 
+def _downsample_controls(
+    X: np.ndarray, y: np.ndarray, max_ratio: int, rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Downsample controls to max_ratio:1 for faster inner CV fitting."""
+    case_mask = y == 1
+    ctrl_mask = y == 0
+    n_cases = int(case_mask.sum())
+    n_ctrls = int(ctrl_mask.sum())
+    target_ctrls = n_cases * max_ratio
+
+    if n_ctrls <= target_ctrls:
+        return X, y
+
+    ctrl_idx = np.where(ctrl_mask)[0]
+    keep_ctrl = rng.choice(ctrl_idx, size=target_ctrls, replace=False)
+    keep = np.sort(np.concatenate([np.where(case_mask)[0], keep_ctrl]))
+    return X[keep], y[keep]
+
+
 def _optuna_objective(
     trial: optuna.Trial,
     X_train: np.ndarray,
@@ -305,10 +324,13 @@ def _optuna_objective(
     max_iter: int,
     solver: str,
     seed: int,
+    inner_ctrl_ratio: int = 10,
 ) -> float:
     """Optuna objective: mean AUPRC across inner CV folds."""
     C = trial.suggest_float("C", 1e-4, 100.0, log=True)
     l1_ratio = trial.suggest_float("l1_ratio", 0.01, 0.99)
+
+    rng = np.random.default_rng(seed + trial.number)
 
     inner_cv = StratifiedKFold(n_splits=n_inner_folds, shuffle=True, random_state=seed)
     auprcs = []
@@ -317,9 +339,12 @@ def _optuna_objective(
         X_tr, X_va = X_train[train_ix], X_train[val_ix]
         y_tr, y_va = y_train[train_ix], y_train[val_ix]
 
+        # Downsample controls in inner training fold for speed
+        X_tr_ds, y_tr_ds = _downsample_controls(X_tr, y_tr, inner_ctrl_ratio, rng)
+
         # Scale inside inner fold
         scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr)
+        X_tr_s = scaler.fit_transform(X_tr_ds)
         X_va_s = scaler.transform(X_va)
 
         model = LogisticRegression(
@@ -332,7 +357,7 @@ def _optuna_objective(
         )
 
         try:
-            model.fit(X_tr_s, y_tr)
+            model.fit(X_tr_s, y_tr_ds)
             y_prob = model.predict_proba(X_va_s)[:, 1]
             auprcs.append(average_precision_score(y_va, y_prob))
         except Exception:

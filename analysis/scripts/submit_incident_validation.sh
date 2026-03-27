@@ -26,7 +26,7 @@ JOB_NAME="CeD_incident_val"
 if [[ "${1:-}" == "--smoke" ]]; then
     SMOKE_FLAG="--smoke"
     OUTDIR="${BASEDIR}/results/incident_validation_smoke"
-    WALLTIME="01:00"
+    WALLTIME="02:00"
     MEM="8000"
     CORES=4
     JOB_NAME="CeD_incident_val_smoke"
