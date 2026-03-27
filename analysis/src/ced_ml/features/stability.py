@@ -14,6 +14,7 @@ Design:
 import json
 import logging
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,140 @@ def extract_stable_panel(
     )
 
     return panel_df, stable_proteins, repeat_unions
+
+
+def bootstrap_stability_selection(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    protein_cols: list[str],
+    screen_method: str = "wald",
+    n_bootstrap: int = 100,
+    top_k: int = 200,
+    stability_threshold: float = 0.70,
+    seed: int = 42,
+) -> tuple[list[str], dict[str, float], pd.DataFrame]:
+    """Bootstrap stability feature selection.
+
+    Draws stratified bootstrap resamples (preserving case/control counts),
+    ranks proteins by the chosen screening statistic in each resample,
+    keeps the top_k, and retains proteins appearing in >= stability_threshold
+    fraction of resamples.
+
+    Parameters
+    ----------
+    X : pd.DataFrame
+        Feature matrix (samples x proteins)
+    y : np.ndarray
+        Binary labels (0=control, 1=case)
+    protein_cols : list[str]
+        Protein column names
+    screen_method : str, default="wald"
+        Screening method passed to screen_proteins ("wald", "mannwhitney", "f_classif")
+    n_bootstrap : int, default=100
+        Number of bootstrap resamples
+    top_k : int, default=200
+        Number of top features to keep per resample
+    stability_threshold : float, default=0.70
+        Minimum selection frequency to retain a feature
+    seed : int, default=42
+        Random seed for reproducibility
+
+    Returns
+    -------
+    stable_proteins : list[str]
+        Proteins meeting the stability threshold, sorted by frequency descending
+    selection_freq : dict[str, float]
+        {protein: selection frequency} for all proteins ever selected
+    bootstrap_log : pd.DataFrame
+        Per-resample details: columns [resample, n_selected, top_protein, top_stat]
+    """
+    from ced_ml.features.screening import screen_proteins
+
+    y = np.asarray(y, dtype=int)
+    case_idx = np.where(y == 1)[0]
+    ctrl_idx = np.where(y == 0)[0]
+    n_cases = len(case_idx)
+    n_ctrls = len(ctrl_idx)
+
+    rng = np.random.default_rng(seed)
+
+    # Track selection counts
+    counts: dict[str, int] = {}
+    log_rows = []
+
+    for b in range(n_bootstrap):
+        # Stratified bootstrap: resample cases and controls separately
+        boot_cases = rng.choice(case_idx, size=n_cases, replace=True)
+        boot_ctrls = rng.choice(ctrl_idx, size=n_ctrls, replace=True)
+        boot_idx = np.concatenate([boot_cases, boot_ctrls])
+
+        X_boot = X.iloc[boot_idx]
+        y_boot = y[boot_idx]
+
+        # Screen proteins
+        selected, stats, _ = screen_proteins(
+            X_boot,
+            y_boot,
+            protein_cols,
+            method=screen_method,
+            top_n=top_k,
+            use_cache=False,
+            verbose=False,
+        )
+
+        # Update counts
+        for prot in selected:
+            counts[prot] = counts.get(prot, 0) + 1
+
+        # Log
+        top_prot = selected[0] if selected else ""
+        if screen_method == "wald" and not stats.empty:
+            top_stat = (
+                float(stats.iloc[0]["wald_statistic"]) if "wald_statistic" in stats.columns else 0.0
+            )
+        elif not stats.empty and "p_value" in stats.columns:
+            top_stat = float(stats.iloc[0]["p_value"])
+        else:
+            top_stat = 0.0
+
+        log_rows.append(
+            {
+                "resample": b,
+                "n_selected": len(selected),
+                "top_protein": top_prot,
+                "top_stat": top_stat,
+            }
+        )
+
+        if (b + 1) % 25 == 0:
+            logger.info(f"  Bootstrap {b + 1}/{n_bootstrap} complete")
+
+    # Compute selection frequencies
+    selection_freq = {prot: count / n_bootstrap for prot, count in counts.items()}
+
+    # Filter by threshold
+    stable_proteins = sorted(
+        [p for p, f in selection_freq.items() if f >= stability_threshold],
+        key=lambda p: (-selection_freq[p], p),
+    )
+
+    bootstrap_log = pd.DataFrame(log_rows)
+
+    logger.info(
+        f"Bootstrap stability: {len(stable_proteins)} proteins >= {stability_threshold:.0%} "
+        f"({len(counts)} ever selected across {n_bootstrap} resamples)"
+    )
+
+    # Fallback: if nothing meets threshold, take top 20 by frequency
+    if len(stable_proteins) == 0:
+        top_by_freq = sorted(selection_freq.items(), key=lambda x: (-x[1], x[0]))[:20]
+        stable_proteins = [p for p, _ in top_by_freq]
+        logger.warning(
+            f"No proteins met threshold {stability_threshold:.0%}; "
+            f"falling back to top {len(stable_proteins)} by frequency"
+        )
+
+    return stable_proteins, selection_freq, bootstrap_log
 
 
 def rank_proteins_by_frequency(selection_frequencies: dict[str, float]) -> list[str]:

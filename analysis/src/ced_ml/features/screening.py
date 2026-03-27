@@ -251,6 +251,136 @@ def f_statistic_screen(
     return selected, df_stats
 
 
+def wald_screen(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    protein_cols: list[str],
+    top_n: int,
+    max_iter: int = 25,
+    tol: float = 1e-8,
+) -> tuple[list[str], pd.DataFrame]:
+    """
+    Screen proteins using absolute Wald statistic from univariate logistic regression.
+
+    For each protein, fits y ~ beta0 + beta1 * x via IRLS, computes
+    Wald = |beta1 / SE(beta1)|. All 2920 proteins are processed in a single
+    vectorized pass per Newton-Raphson iteration.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training features with protein columns
+    y_train : np.ndarray
+        Binary labels (0=control, 1=case)
+    protein_cols : list[str]
+        Protein column names to screen
+    top_n : int
+        Number of top proteins to return (0=keep all)
+    max_iter : int, default=25
+        Maximum Newton-Raphson iterations
+    tol : float, default=1e-8
+        Convergence tolerance for coefficient updates
+
+    Returns
+    -------
+    selected_proteins : list[str]
+        Top N proteins ranked by |Wald| descending
+    screening_stats : pd.DataFrame
+        Statistics with columns: protein, wald_statistic, coefficient, std_error
+    """
+    if len(protein_cols) == 0:
+        return protein_cols, pd.DataFrame()
+
+    effective_top_n = len(protein_cols) if top_n <= 0 else top_n
+    y = np.asarray(y_train, dtype=float)
+    if np.unique(y.astype(int)).size < 2:
+        return protein_cols, pd.DataFrame()
+
+    # Extract protein matrix (n_samples x n_proteins)
+    valid_cols = [p for p in protein_cols if p in X_train.columns]
+    X = X_train[valid_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    n, p = X.shape
+
+    # Standardize for numerical stability (zero mean, unit variance)
+    x_mean = X.mean(axis=0)
+    x_std = X.std(axis=0)
+    x_std[x_std == 0] = 1.0
+    X_std = (X - x_mean) / x_std
+
+    # Initialize: intercept = log-odds of prevalence, slope = 0
+    prev = np.clip(y.mean(), 1e-6, 1 - 1e-6)
+    beta0 = np.full(p, np.log(prev / (1 - prev)))  # (p,)
+    beta1 = np.zeros(p)  # (p,)
+
+    # Newton-Raphson (vectorized across all proteins)
+    for _ in range(max_iter):
+        # eta_j[i] = beta0_j + beta1_j * X_std[i, j]
+        eta = beta0[np.newaxis, :] + beta1[np.newaxis, :] * X_std  # (n, p)
+        eta = np.clip(eta, -30, 30)
+        mu = 1.0 / (1.0 + np.exp(-eta))  # (n, p)
+        mu = np.clip(mu, 1e-10, 1 - 1e-10)
+
+        W = mu * (1 - mu)  # (n, p)
+        r = y[:, np.newaxis] - mu  # (n, p) residuals
+
+        # Gradient: g0 = sum_i(r_ij), g1 = sum_i(r_ij * x_ij)
+        g0 = r.sum(axis=0)  # (p,)
+        g1 = (r * X_std).sum(axis=0)  # (p,)
+
+        # Hessian components (2x2 per protein)
+        h00 = W.sum(axis=0)  # (p,)
+        h01 = (W * X_std).sum(axis=0)  # (p,)
+        h11 = (W * X_std**2).sum(axis=0)  # (p,)
+
+        det = h00 * h11 - h01**2  # (p,)
+        det = np.where(np.abs(det) < 1e-20, 1e-20, det)
+
+        # Newton step: delta = H^{-1} g
+        d0 = (h11 * g0 - h01 * g1) / det
+        d1 = (-h01 * g0 + h00 * g1) / det
+
+        beta0 += d0
+        beta1 += d1
+
+        if np.max(np.abs(d0)) < tol and np.max(np.abs(d1)) < tol:
+            break
+
+    # Final SE from information matrix
+    eta = beta0[np.newaxis, :] + beta1[np.newaxis, :] * X_std
+    eta = np.clip(eta, -30, 30)
+    mu = 1.0 / (1.0 + np.exp(-eta))
+    mu = np.clip(mu, 1e-10, 1 - 1e-10)
+    W = mu * (1 - mu)
+
+    h00 = W.sum(axis=0)
+    h01 = (W * X_std).sum(axis=0)
+    h11 = (W * X_std**2).sum(axis=0)
+    det = h00 * h11 - h01**2
+    det = np.where(np.abs(det) < 1e-20, 1e-20, det)
+
+    var_beta1 = h00 / det  # Var(slope) from 2x2 inverse
+    se_beta1 = np.sqrt(np.maximum(var_beta1, 0))
+
+    wald_stats = np.where(se_beta1 > 0, np.abs(beta1) / se_beta1, 0.0)
+
+    # Build results
+    rows = []
+    for j, prot in enumerate(valid_cols):
+        rows.append(
+            {
+                "protein": prot,
+                "wald_statistic": float(wald_stats[j]),
+                "coefficient": float(beta1[j]),
+                "std_error": float(se_beta1[j]),
+            }
+        )
+
+    df_stats = pd.DataFrame(rows).sort_values("wald_statistic", ascending=False, na_position="last")
+    selected = df_stats["protein"].head(min(effective_top_n, len(df_stats))).tolist()
+
+    return selected, df_stats
+
+
 def screen_proteins(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
@@ -338,8 +468,12 @@ def screen_proteins(
         )
     elif method == "f_classif":
         selected, stats = f_statistic_screen(X_train, y_train, protein_cols, top_n, min_n_per_group)
+    elif method == "wald":
+        selected, stats = wald_screen(X_train, y_train, protein_cols, top_n)
     else:
-        raise ValueError(f"Unknown screen_method='{method}'. Valid: 'mannwhitney', 'f_classif'")
+        raise ValueError(
+            f"Unknown screen_method='{method}'. Valid: 'mannwhitney', 'f_classif', 'wald'"
+        )
 
     # Store in cache
     if use_cache and not stats.empty:
@@ -367,6 +501,17 @@ def screen_proteins(
             logger.debug(
                 f"  P-value range: [{p_vals.min():.2e}, {p_vals.max():.2e}], "
                 f"sig: p<0.001={int((p_vals < 0.001).sum())}, p<0.01={int((p_vals < 0.01).sum())}"
+            )
+    elif "wald_statistic" in stats.columns:
+        w_stats = stats["wald_statistic"].dropna()
+        if len(w_stats) > 0:
+            log_level(
+                f"Screened {method}: {n_selected}/{len(protein_cols)} proteins "
+                f"(n={len(X_train)}, Wald_median={w_stats.median():.2f})"
+            )
+            logger.debug(
+                f"  Wald range: [{w_stats.min():.2f}, {w_stats.max():.2f}], "
+                f">2.0={int((w_stats > 2.0).sum())}"
             )
     elif "F_score" in stats.columns:
         f_scores = stats["F_score"].dropna()

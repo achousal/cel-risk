@@ -34,7 +34,7 @@ class FeatureConfig(BaseModel):
     )
 
     # Screening (common to both strategies)
-    screen_method: Literal["mannwhitney", "f_classif"] = "mannwhitney"
+    screen_method: Literal["mannwhitney", "f_classif", "wald"] = "mannwhitney"
     screen_top_n: int = Field(default=0, ge=0)
 
     # Multi-stage strategy parameters (used when strategy="multi_stage")
