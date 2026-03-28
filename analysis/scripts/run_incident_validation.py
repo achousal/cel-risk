@@ -306,7 +306,7 @@ def _downsample_controls(
     n_ctrls = int(ctrl_mask.sum())
     target_ctrls = n_cases * max_ratio
 
-    if n_ctrls <= target_ctrls:
+    if max_ratio <= 0 or n_ctrls <= target_ctrls:
         return X, y
 
     ctrl_idx = np.where(ctrl_mask)[0]
@@ -324,7 +324,7 @@ def _optuna_objective(
     max_iter: int,
     solver: str,
     seed: int,
-    inner_ctrl_ratio: int = 10,
+    inner_ctrl_ratio: int = 0,
 ) -> float:
     """Optuna objective: mean AUPRC across inner CV folds."""
     C = trial.suggest_float("C", 1e-4, 100.0, log=True)
