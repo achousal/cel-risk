@@ -1,6 +1,6 @@
 # cel-risk
 
-**Production-grade ML pipeline for disease risk prediction from high-dimensional biomarker data**
+**ML for for disease risk prediction from high-dimensional biomarker data**
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
