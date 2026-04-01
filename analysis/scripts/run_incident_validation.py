@@ -65,7 +65,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
+    force=True,
 )
+# Force unbuffered stderr so LSF bpeek shows live progress
+import functools
+logging.getLogger().handlers[0].stream = open(sys.stderr.fileno(), "w", buffering=1, closefd=False)
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -94,11 +98,11 @@ class Config:
     corr_method: str = "spearman"
 
     # Optuna
-    n_optuna_trials: int = 80
+    n_optuna_trials: int = 50
     n_inner_folds: int = 3
 
     # Elastic net
-    max_iter: int = 10_000
+    max_iter: int = 2_000
     solver: str = "saga"
 
     # Evaluation
@@ -419,6 +423,7 @@ def tune_and_evaluate_fold(
         "best_l1_ratio": best_l1,
         "best_inner_auprc": study.best_value,
         "n_nonzero_coefs": int(np.sum(model.coef_ != 0)),
+        "coefs": model.coef_.ravel().copy(),
     }
 
 
@@ -555,7 +560,18 @@ def run_cv(cfg: Config, data: dict, features: dict) -> pd.DataFrame:
 
             all_results.extend(fold_results)
 
-    return pd.DataFrame(all_results)
+    # Extract per-fold coefficients before DataFrame conversion (arrays can't go in flat CSV)
+    fold_coefs = []
+    for r in all_results:
+        coefs = r.pop("coefs")
+        fold_coefs.append({
+            "fold": r["fold"],
+            "strategy": r["strategy"],
+            "weight_scheme": r["weight_scheme"],
+            "coefs": coefs,
+        })
+
+    return pd.DataFrame(all_results), fold_coefs
 
 
 # ============================================================================
@@ -728,7 +744,7 @@ def final_refit_and_test(
 # ============================================================================
 
 
-def save_results(cfg: Config, data: dict, features: dict, cv_results: pd.DataFrame, final: dict):
+def save_results(cfg: Config, data: dict, features: dict, cv_results: pd.DataFrame, final: dict, fold_coefs: list):
     """Save all outputs to disk."""
     out = cfg.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -736,6 +752,21 @@ def save_results(cfg: Config, data: dict, features: dict, cv_results: pd.DataFra
     # 1. CV results
     cv_results.to_csv(out / "cv_results.csv", index=False)
     logger.info("Saved: %s", out / "cv_results.csv")
+
+    # Per-fold coefficients (one row per protein per fold per combo)
+    protein_panel = features["pruned_proteins"]
+    coef_rows = []
+    for entry in fold_coefs:
+        for i, p in enumerate(protein_panel):
+            coef_rows.append({
+                "fold": entry["fold"],
+                "strategy": entry["strategy"],
+                "weight_scheme": entry["weight_scheme"],
+                "protein": p,
+                "coefficient": entry["coefs"][i],
+            })
+    pd.DataFrame(coef_rows).to_csv(out / "fold_coefficients.csv", index=False)
+    logger.info("Saved: %s", out / "fold_coefficients.csv")
 
     # 2. Strategy comparison summary
     final["summary"].to_csv(out / "strategy_comparison.csv", index=False)
@@ -861,11 +892,69 @@ def _build_report(
 # ============================================================================
 
 
+def _save_features(cfg: Config, data: dict, features: dict):
+    """Save feature selection artifacts to output dir for downstream jobs."""
+    out = cfg.output_dir
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Feature panel
+    panel_df = pd.DataFrame({
+        "protein": features["pruned_proteins"],
+        "stability_freq": [features["selection_freq"].get(p, 0.0) for p in features["pruned_proteins"]],
+    })
+    panel_df.to_csv(out / "feature_panel.csv", index=False)
+
+    # Bootstrap log
+    features["bootstrap_log"].to_csv(out / "bootstrap_log.csv", index=False)
+
+    # Prune map
+    prune_df = pd.DataFrame(features["prune_map"])
+    prune_df.to_csv(out / "corr_prune_map.csv", index=False)
+
+    # Config
+    cfg_dict = {k: str(v) if isinstance(v, Path) else v for k, v in cfg.__dict__.items()}
+    (out / "config.json").write_text(json.dumps(cfg_dict, indent=2))
+
+    logger.info("Feature selection artifacts saved to %s", out)
+
+
+def _load_features(cfg: Config) -> dict:
+    """Load pre-computed feature selection artifacts from output dir."""
+    out = cfg.output_dir
+    panel_df = pd.read_csv(out / "feature_panel.csv")
+    pruned_proteins = panel_df["protein"].tolist()
+    selection_freq = dict(zip(panel_df["protein"], panel_df["stability_freq"]))
+
+    # Bootstrap log and prune map are optional for CV but load for completeness
+    bootstrap_log = pd.read_csv(out / "bootstrap_log.csv") if (out / "bootstrap_log.csv").exists() else pd.DataFrame()
+    prune_map = pd.read_csv(out / "corr_prune_map.csv").to_dict("records") if (out / "corr_prune_map.csv").exists() else []
+
+    logger.info("Loaded feature panel: %d proteins from %s", len(pruned_proteins), out / "feature_panel.csv")
+
+    return {
+        "stable_proteins": pruned_proteins,  # approximate; full list not saved
+        "pruned_proteins": pruned_proteins,
+        "selection_freq": selection_freq,
+        "bootstrap_log": bootstrap_log,
+        "prune_map": prune_map,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Incident validation pipeline")
     parser.add_argument("--smoke", action="store_true", help="Reduced params for quick test")
     parser.add_argument("--output-dir", type=str, default=None, help="Override output directory")
     parser.add_argument("--data-path", type=str, default=None, help="Override data path")
+
+    # Parallel mode flags
+    parser.add_argument(
+        "--phase", type=str, default="all",
+        choices=["all", "features", "cv", "aggregate"],
+        help="Pipeline phase: all (sequential), features (step 1-2), cv (step 3), aggregate (step 4-5)",
+    )
+    parser.add_argument("--strategy", type=str, default=None, help="Single strategy for --phase=cv")
+    parser.add_argument("--weight-scheme", type=str, default=None, help="Single weight scheme for --phase=cv")
+
     args = parser.parse_args()
 
     cfg = Config(smoke=args.smoke)
@@ -876,28 +965,96 @@ def main():
 
     t0 = time.time()
     logger.info("=" * 60)
-    logger.info("INCIDENT VALIDATION PIPELINE")
+    logger.info("INCIDENT VALIDATION PIPELINE (phase=%s)", args.phase)
     logger.info("=" * 60)
     if cfg.smoke:
         logger.info("*** SMOKE TEST MODE ***")
 
-    # Step 1: Load and split
-    data = load_and_split(cfg)
+    if args.phase == "all":
+        # Original sequential mode
+        data = load_and_split(cfg)
+        features = run_feature_selection(cfg, data)
+        cv_results, fold_coefs = run_cv(cfg, data, features)
+        final = final_refit_and_test(cfg, data, features, cv_results)
+        save_results(cfg, data, features, cv_results, final, fold_coefs)
 
-    # Step 2: Feature selection
-    features = run_feature_selection(cfg, data)
+    elif args.phase == "features":
+        # Step 1-2: Load data + feature selection, save artifacts
+        data = load_and_split(cfg)
+        features = run_feature_selection(cfg, data)
+        _save_features(cfg, data, features)
 
-    # Step 3: Cross-validation
-    cv_results = run_cv(cfg, data, features)
+    elif args.phase == "cv":
+        # Step 3: Run CV for a single (strategy, weight) combo
+        if not args.strategy or not args.weight_scheme:
+            parser.error("--phase=cv requires --strategy and --weight-scheme")
 
-    # Step 4: Final refit and test
-    final = final_refit_and_test(cfg, data, features, cv_results)
+        cfg.strategies = [args.strategy]
+        cfg.weight_schemes = [args.weight_scheme]
 
-    # Step 5: Save everything
-    save_results(cfg, data, features, cv_results, final)
+        data = load_and_split(cfg)
+        features = _load_features(cfg)
+        cv_results, fold_coefs = run_cv(cfg, data, features)
+
+        # Save per-combo results to a unique file
+        combo_tag = f"{args.strategy}_{args.weight_scheme}"
+        combo_dir = cfg.output_dir / "combos"
+        combo_dir.mkdir(parents=True, exist_ok=True)
+        cv_results.to_csv(combo_dir / f"cv_{combo_tag}.csv", index=False)
+
+        # Save fold coefficients
+        protein_panel = features["pruned_proteins"]
+        coef_rows = []
+        for entry in fold_coefs:
+            for i, p in enumerate(protein_panel):
+                coef_rows.append({
+                    "fold": entry["fold"],
+                    "strategy": entry["strategy"],
+                    "weight_scheme": entry["weight_scheme"],
+                    "protein": p,
+                    "coefficient": entry["coefs"][i],
+                })
+        pd.DataFrame(coef_rows).to_csv(combo_dir / f"coefs_{combo_tag}.csv", index=False)
+
+        logger.info("Saved combo results to %s", combo_dir)
+
+    elif args.phase == "aggregate":
+        # Step 4-5: Merge combo results, final refit, test eval, save
+        combo_dir = cfg.output_dir / "combos"
+        if not combo_dir.exists():
+            raise FileNotFoundError(f"No combo results at {combo_dir}")
+
+        cv_parts = sorted(combo_dir.glob("cv_*.csv"))
+        coef_parts = sorted(combo_dir.glob("coefs_*.csv"))
+
+        if not cv_parts:
+            raise FileNotFoundError(f"No cv_*.csv files in {combo_dir}")
+
+        cv_results = pd.concat([pd.read_csv(f) for f in cv_parts], ignore_index=True)
+        logger.info("Merged %d combo files → %d CV rows", len(cv_parts), len(cv_results))
+
+        # Reconstruct fold_coefs list from CSVs
+        fold_coefs_df = pd.concat([pd.read_csv(f) for f in coef_parts], ignore_index=True)
+
+        data = load_and_split(cfg)
+        features = _load_features(cfg)
+        final = final_refit_and_test(cfg, data, features, cv_results)
+
+        # Convert fold_coefs_df back to list format for save_results
+        fold_coefs_list = []
+        for (fold, strat, wt), grp in fold_coefs_df.groupby(["fold", "strategy", "weight_scheme"]):
+            grp_sorted = grp.set_index("protein").loc[features["pruned_proteins"]]
+            fold_coefs_list.append({
+                "fold": fold,
+                "strategy": strat,
+                "weight_scheme": wt,
+                "coefs": grp_sorted["coefficient"].values,
+            })
+
+        save_results(cfg, data, features, cv_results, final, fold_coefs_list)
 
     elapsed = time.time() - t0
-    logger.info("Pipeline complete in %.1f minutes", elapsed / 60)
+    logger.info("Phase '%s' complete in %.1f minutes", args.phase, elapsed / 60)
 
 
 if __name__ == "__main__":
