@@ -786,7 +786,7 @@ def save_results(cfg: Config, data: dict, features: dict, cv_results: pd.DataFra
     features["bootstrap_log"].to_csv(out / "bootstrap_log.csv", index=False)
 
     # 5. Correlation prune map
-    features["prune_map"].to_csv(out / "corr_prune_map.csv", index=False)
+    pd.DataFrame(features["prune_map"]).to_csv(out / "corr_prune_map.csv", index=False)
 
     # 6. Feature coefficients
     final["coef_df"].to_csv(out / "feature_coefficients.csv", index=False)
