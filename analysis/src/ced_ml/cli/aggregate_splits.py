@@ -40,6 +40,7 @@ def run_aggregate_splits(
     plot_shap_summary: bool = True,
     plot_shap_dependence: bool = True,
     plot_shap_heatmap: bool = True,
+    plot_model_comparison_curves: bool = True,
     control_spec_targets: list[float] | None = None,
 ) -> dict[str, Any]:
     """
@@ -174,5 +175,6 @@ def run_aggregate_splits(
         plot_shap_summary=plot_shap_summary,
         plot_shap_dependence=plot_shap_dependence,
         plot_shap_heatmap=plot_shap_heatmap,
+        plot_model_comparison_curves=plot_model_comparison_curves,
         logger=logger,
     )

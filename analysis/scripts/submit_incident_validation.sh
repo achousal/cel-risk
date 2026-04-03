@@ -18,7 +18,7 @@ mkdir -p "${LOGDIR}"
 
 SMOKE_FLAG=""
 OUTDIR="${BASEDIR}/results/incident_validation"
-WALLTIME="06:00"
+WALLTIME="48:00"
 MEM="16000"
 CORES=8
 JOB_NAME="CeD_incident_val"

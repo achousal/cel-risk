@@ -26,6 +26,7 @@ from ced_ml.cli.aggregation.orchestrator import (
 from ced_ml.cli.aggregation.plot_generator import (
     generate_aggregated_plots,
     generate_aggregated_shap_plots,
+    generate_comparison_plots,
     generate_model_comparison_report,
 )
 from ced_ml.cli.aggregation.reporting import (
@@ -59,6 +60,7 @@ __all__ = [
     # Plot Generation
     "generate_aggregated_plots",
     "generate_aggregated_shap_plots",
+    "generate_comparison_plots",
     "generate_model_comparison_report",
     # Orchestration
     "aggregate_shap_metadata",

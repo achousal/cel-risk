@@ -954,6 +954,10 @@ def run_pipeline(
             plot_shap_heatmap=aggregate_cfg.get(
                 "plot_shap_heatmap", getattr(out_cfg, "plot_shap_heatmap", True)
             ),
+            plot_model_comparison_curves=aggregate_cfg.get(
+                "plot_model_comparison_curves",
+                getattr(out_cfg, "plot_model_comparison_curves", True),
+            ),
             control_spec_targets=agg_control_spec_targets,
             log_level=log_level,
         )
@@ -1020,6 +1024,10 @@ def run_pipeline(
             ),
             plot_shap_heatmap=aggregate_cfg.get(
                 "plot_shap_heatmap", getattr(training_config.output, "plot_shap_heatmap", True)
+            ),
+            plot_model_comparison_curves=aggregate_cfg.get(
+                "plot_model_comparison_curves",
+                getattr(training_config.output, "plot_model_comparison_curves", True),
             ),
             control_spec_targets=agg_control_spec_targets,
             log_level=log_level,

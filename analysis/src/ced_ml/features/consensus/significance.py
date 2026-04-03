@@ -20,6 +20,7 @@ def rra_permutation_test(
     n_perms: int = 10_000,
     alpha: float = 0.05,
     seed: int = 42,
+    universe_size: int | None = None,
 ) -> pd.DataFrame:
     """Permutation null for RRA consensus scores.
 
@@ -34,6 +35,14 @@ def rra_permutation_test(
         n_perms: Number of permutations (default 10,000).
         alpha: FDR threshold for BH correction (default 0.05).
         seed: Random seed for reproducibility.
+        universe_size: Total number of features in the original search space
+            (e.g. 2920 proteins). When provided, overrides per-model max_rank
+            for normalization and adds (universe_size - n_tested) implicit
+            null p-values of 1.0 to the BH correction denominator. This
+            calibrates the null distribution against the full feature space
+            rather than the pre-filtered subset. See Bourgon et al. 2010
+            (PNAS) and Zehetmayer & Posch 2012 (BMC Bioinformatics).
+            When None (default), uses per-model list length (legacy behavior).
 
     Returns:
         DataFrame with columns:
@@ -42,6 +51,7 @@ def rra_permutation_test(
             - perm_p: Empirical permutation p-value
             - bh_adjusted_p: Benjamini-Hochberg adjusted p-value
             - significant: Boolean, True if bh_adjusted_p < alpha
+            - universe_size: The universe_size used (for provenance)
     """
     from statsmodels.stats.multitest import multipletests
 
@@ -74,7 +84,16 @@ def rra_permutation_test(
             rank_matrix[i, j] = lookup.get(protein, missing_rank)
 
     # Precompute max_rank array for normalization
-    max_rank_arr = np.array([max_ranks[m] for m in model_names], dtype=np.float64)
+    # When universe_size is set, use it as the normalization denominator
+    # for all models (calibrates against full search space)
+    if universe_size is not None:
+        max_rank_arr = np.full(n_models, float(universe_size), dtype=np.float64)
+        logger.info(
+            f"Using universe_size={universe_size} for normalization "
+            f"(overrides per-model max_rank: {max_ranks})"
+        )
+    else:
+        max_rank_arr = np.array([max_ranks[m] for m in model_names], dtype=np.float64)
 
     def _compute_rra_scores(rmat: np.ndarray) -> np.ndarray:
         """Geometric mean of normalized reciprocal ranks."""
@@ -105,7 +124,27 @@ def rra_permutation_test(
     perm_p = (1 + count_ge) / (1 + n_perms)
 
     # BH correction
-    reject, bh_p, _, _ = multipletests(perm_p, alpha=alpha, method="fdr_bh")
+    # When universe_size is set, pad with p=1.0 for the (universe_size - n_tested)
+    # proteins that were filtered out before RRA. This ensures the BH denominator
+    # reflects the full search space. The padding p-values cannot produce false
+    # discoveries (they are 1.0) but they make the BH thresholds stricter.
+    if universe_size is not None and universe_size > n_proteins:
+        n_pad = universe_size - n_proteins
+        padded_p = np.concatenate([perm_p, np.ones(n_pad)])
+        logger.info(
+            f"BH correction over {universe_size} hypotheses "
+            f"({n_proteins} tested + {n_pad} padded at p=1.0)"
+        )
+    else:
+        padded_p = perm_p
+
+    reject_all, bh_p_all, _, _ = multipletests(padded_p, alpha=alpha, method="fdr_bh")
+
+    # Extract only the tested proteins (first n_proteins entries)
+    reject = reject_all[:n_proteins]
+    bh_p = bh_p_all[:n_proteins]
+
+    effective_universe = universe_size if universe_size is not None else n_proteins
 
     result = pd.DataFrame(
         {
@@ -114,6 +153,7 @@ def rra_permutation_test(
             "perm_p": perm_p,
             "bh_adjusted_p": bh_p,
             "significant": reject,
+            "universe_size": effective_universe,
         }
     )
 
@@ -122,7 +162,7 @@ def rra_permutation_test(
     n_sig = result["significant"].sum()
     logger.info(
         f"RRA permutation test complete: {n_sig}/{n_proteins} proteins significant "
-        f"at BH-adjusted alpha={alpha}"
+        f"at BH-adjusted alpha={alpha} (universe_size={effective_universe})"
     )
 
     return result

@@ -734,6 +734,7 @@ def run_consensus_panel(
     rra_significance: bool = False,
     rra_significance_perms: int = 10_000,
     rra_significance_alpha: float = 0.05,
+    rra_universe_size: int | None = None,
     run_essentiality: bool = True,
     essentiality_corr_threshold: float = 0.75,
     include_brier: bool = True,
@@ -770,6 +771,9 @@ def run_consensus_panel(
             overrides target_size with the count of significant proteins.
         rra_significance_perms: Number of permutations for RRA significance test.
         rra_significance_alpha: BH-corrected alpha for RRA significance.
+        rra_universe_size: Total features in the original search space (e.g. 2920).
+            When set, calibrates the permutation null and BH correction against
+            the full feature universe instead of the pre-filtered subset.
         run_essentiality: Whether to run within-panel essentiality validation (default True).
             Refits a model on only the consensus panel features and runs drop-column
             to measure each cluster's contribution. This is a post-hoc
@@ -1045,6 +1049,7 @@ def run_consensus_panel(
                 per_model_rankings=sig_rankings,
                 n_perms=rra_significance_perms,
                 alpha=rra_significance_alpha,
+                universe_size=rra_universe_size,
             )
             n_significant = int(rra_sig_result["significant"].sum())
             logger.info(
