@@ -8,6 +8,12 @@ Publication-quality visualization for model evaluation:
 """
 
 from ced_ml.plotting.calibration import plot_calibration_curve
+from ced_ml.plotting.comparison import (
+    plot_calibration_comparison,
+    plot_dca_comparison,
+    plot_pr_comparison,
+    plot_roc_comparison,
+)
 from ced_ml.plotting.dca import apply_plot_metadata, plot_dca, plot_dca_curve
 from ced_ml.plotting.ensemble import (
     plot_aggregated_weights,
@@ -29,6 +35,11 @@ from ced_ml.plotting.risk_dist import (
 from ced_ml.plotting.roc_pr import plot_pr_curve, plot_roc_curve
 
 __all__ = [
+    # Comparison plots (multi-model overlay)
+    "plot_roc_comparison",
+    "plot_pr_comparison",
+    "plot_calibration_comparison",
+    "plot_dca_comparison",
     # DCA plotting
     "apply_plot_metadata",
     "plot_dca",

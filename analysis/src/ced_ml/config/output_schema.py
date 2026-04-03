@@ -47,6 +47,9 @@ class OutputConfig(BaseModel):
     plot_optuna: bool = True
     optuna_plot_format: str = "html"  # "html" (HPC-safe) or "png"/"pdf" (requires Kaleido/Chrome)
 
+    # Comparison plots (multi-model overlay)
+    plot_model_comparison_curves: bool = True
+
     # Ensemble-specific plots
     plot_ensemble_weights: bool = True
     plot_ensemble_comparison: bool = True

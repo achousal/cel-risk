@@ -1,0 +1,662 @@
+[
+  {
+    "order": "rra",
+    "size": 4,
+    "run_id": "sweep_rra_4p",
+    "reuse": "run_phase3_holdout_4protein",
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_4p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_4p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_4p.yaml",
+    "n_proteins": 4
+  },
+  {
+    "order": "rra",
+    "size": 5,
+    "run_id": "sweep_rra_5p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_5p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_5p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_5p.yaml",
+    "n_proteins": 5
+  },
+  {
+    "order": "rra",
+    "size": 6,
+    "run_id": "sweep_rra_6p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_6p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_6p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_6p.yaml",
+    "n_proteins": 6
+  },
+  {
+    "order": "rra",
+    "size": 7,
+    "run_id": "sweep_rra_7p",
+    "reuse": "run_phase3_holdout",
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_7p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_7p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_7p.yaml",
+    "n_proteins": 7
+  },
+  {
+    "order": "rra",
+    "size": 8,
+    "run_id": "sweep_rra_8p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_8p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_8p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_8p.yaml",
+    "n_proteins": 8
+  },
+  {
+    "order": "rra",
+    "size": 9,
+    "run_id": "sweep_rra_9p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_9p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_9p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_9p.yaml",
+    "n_proteins": 9
+  },
+  {
+    "order": "rra",
+    "size": 10,
+    "run_id": "sweep_rra_10p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_10p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_10p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_10p.yaml",
+    "n_proteins": 10
+  },
+  {
+    "order": "rra",
+    "size": 11,
+    "run_id": "sweep_rra_11p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_11p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_11p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_11p.yaml",
+    "n_proteins": 11
+  },
+  {
+    "order": "rra",
+    "size": 12,
+    "run_id": "sweep_rra_12p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_12p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_12p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_12p.yaml",
+    "n_proteins": 12
+  },
+  {
+    "order": "rra",
+    "size": 13,
+    "run_id": "sweep_rra_13p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_13p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_13p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_13p.yaml",
+    "n_proteins": 13
+  },
+  {
+    "order": "rra",
+    "size": 14,
+    "run_id": "sweep_rra_14p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_14p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_14p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_14p.yaml",
+    "n_proteins": 14
+  },
+  {
+    "order": "rra",
+    "size": 15,
+    "run_id": "sweep_rra_15p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_15p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_15p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_15p.yaml",
+    "n_proteins": 15
+  },
+  {
+    "order": "rra",
+    "size": 16,
+    "run_id": "sweep_rra_16p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_16p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_16p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_16p.yaml",
+    "n_proteins": 16
+  },
+  {
+    "order": "rra",
+    "size": 17,
+    "run_id": "sweep_rra_17p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_17p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_17p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_17p.yaml",
+    "n_proteins": 17
+  },
+  {
+    "order": "rra",
+    "size": 18,
+    "run_id": "sweep_rra_18p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_18p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_18p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_18p.yaml",
+    "n_proteins": 18
+  },
+  {
+    "order": "rra",
+    "size": 19,
+    "run_id": "sweep_rra_19p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_19p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_19p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_19p.yaml",
+    "n_proteins": 19
+  },
+  {
+    "order": "rra",
+    "size": 20,
+    "run_id": "sweep_rra_20p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_20p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_20p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_20p.yaml",
+    "n_proteins": 20
+  },
+  {
+    "order": "rra",
+    "size": 21,
+    "run_id": "sweep_rra_21p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_21p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_21p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_21p.yaml",
+    "n_proteins": 21
+  },
+  {
+    "order": "rra",
+    "size": 22,
+    "run_id": "sweep_rra_22p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_22p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_22p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_22p.yaml",
+    "n_proteins": 22
+  },
+  {
+    "order": "rra",
+    "size": 23,
+    "run_id": "sweep_rra_23p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_23p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_23p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_23p.yaml",
+    "n_proteins": 23
+  },
+  {
+    "order": "rra",
+    "size": 24,
+    "run_id": "sweep_rra_24p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_24p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_24p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_24p.yaml",
+    "n_proteins": 24
+  },
+  {
+    "order": "rra",
+    "size": 25,
+    "run_id": "sweep_rra_25p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/rra_25p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_rra_25p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_rra_25p.yaml",
+    "n_proteins": 25
+  },
+  {
+    "order": "importance",
+    "size": 4,
+    "run_id": "sweep_importance_4p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_4p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_4p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_4p.yaml",
+    "n_proteins": 4
+  },
+  {
+    "order": "importance",
+    "size": 5,
+    "run_id": "sweep_importance_5p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_5p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_5p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_5p.yaml",
+    "n_proteins": 5
+  },
+  {
+    "order": "importance",
+    "size": 6,
+    "run_id": "sweep_importance_6p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_6p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_6p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_6p.yaml",
+    "n_proteins": 6
+  },
+  {
+    "order": "importance",
+    "size": 7,
+    "run_id": "sweep_importance_7p",
+    "reuse": "run_phase3_holdout",
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_7p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_7p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_7p.yaml",
+    "n_proteins": 7
+  },
+  {
+    "order": "importance",
+    "size": 8,
+    "run_id": "sweep_importance_8p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_8p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_8p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_8p.yaml",
+    "n_proteins": 8
+  },
+  {
+    "order": "importance",
+    "size": 9,
+    "run_id": "sweep_importance_9p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_9p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_9p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_9p.yaml",
+    "n_proteins": 9
+  },
+  {
+    "order": "importance",
+    "size": 10,
+    "run_id": "sweep_importance_10p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_10p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_10p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_10p.yaml",
+    "n_proteins": 10
+  },
+  {
+    "order": "importance",
+    "size": 11,
+    "run_id": "sweep_importance_11p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_11p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_11p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_11p.yaml",
+    "n_proteins": 11
+  },
+  {
+    "order": "importance",
+    "size": 12,
+    "run_id": "sweep_importance_12p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_12p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_12p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_12p.yaml",
+    "n_proteins": 12
+  },
+  {
+    "order": "importance",
+    "size": 13,
+    "run_id": "sweep_importance_13p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_13p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_13p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_13p.yaml",
+    "n_proteins": 13
+  },
+  {
+    "order": "importance",
+    "size": 14,
+    "run_id": "sweep_importance_14p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_14p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_14p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_14p.yaml",
+    "n_proteins": 14
+  },
+  {
+    "order": "importance",
+    "size": 15,
+    "run_id": "sweep_importance_15p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_15p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_15p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_15p.yaml",
+    "n_proteins": 15
+  },
+  {
+    "order": "importance",
+    "size": 16,
+    "run_id": "sweep_importance_16p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_16p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_16p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_16p.yaml",
+    "n_proteins": 16
+  },
+  {
+    "order": "importance",
+    "size": 17,
+    "run_id": "sweep_importance_17p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_17p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_17p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_17p.yaml",
+    "n_proteins": 17
+  },
+  {
+    "order": "importance",
+    "size": 18,
+    "run_id": "sweep_importance_18p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_18p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_18p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_18p.yaml",
+    "n_proteins": 18
+  },
+  {
+    "order": "importance",
+    "size": 19,
+    "run_id": "sweep_importance_19p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_19p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_19p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_19p.yaml",
+    "n_proteins": 19
+  },
+  {
+    "order": "importance",
+    "size": 20,
+    "run_id": "sweep_importance_20p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_20p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_20p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_20p.yaml",
+    "n_proteins": 20
+  },
+  {
+    "order": "importance",
+    "size": 21,
+    "run_id": "sweep_importance_21p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_21p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_21p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_21p.yaml",
+    "n_proteins": 21
+  },
+  {
+    "order": "importance",
+    "size": 22,
+    "run_id": "sweep_importance_22p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_22p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_22p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_22p.yaml",
+    "n_proteins": 22
+  },
+  {
+    "order": "importance",
+    "size": 23,
+    "run_id": "sweep_importance_23p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_23p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_23p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_23p.yaml",
+    "n_proteins": 23
+  },
+  {
+    "order": "importance",
+    "size": 24,
+    "run_id": "sweep_importance_24p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_24p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_24p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_24p.yaml",
+    "n_proteins": 24
+  },
+  {
+    "order": "importance",
+    "size": 25,
+    "run_id": "sweep_importance_25p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/importance_25p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_importance_25p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_importance_25p.yaml",
+    "n_proteins": 25
+  },
+  {
+    "order": "pathway",
+    "size": 4,
+    "run_id": "sweep_pathway_4p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_4p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_4p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_4p.yaml",
+    "n_proteins": 4
+  },
+  {
+    "order": "pathway",
+    "size": 5,
+    "run_id": "sweep_pathway_5p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_5p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_5p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_5p.yaml",
+    "n_proteins": 5
+  },
+  {
+    "order": "pathway",
+    "size": 6,
+    "run_id": "sweep_pathway_6p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_6p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_6p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_6p.yaml",
+    "n_proteins": 6
+  },
+  {
+    "order": "pathway",
+    "size": 7,
+    "run_id": "sweep_pathway_7p",
+    "reuse": "run_phase3_holdout",
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_7p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_7p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_7p.yaml",
+    "n_proteins": 7
+  },
+  {
+    "order": "pathway",
+    "size": 8,
+    "run_id": "sweep_pathway_8p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_8p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_8p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_8p.yaml",
+    "n_proteins": 8
+  },
+  {
+    "order": "pathway",
+    "size": 9,
+    "run_id": "sweep_pathway_9p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_9p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_9p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_9p.yaml",
+    "n_proteins": 9
+  },
+  {
+    "order": "pathway",
+    "size": 10,
+    "run_id": "sweep_pathway_10p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_10p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_10p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_10p.yaml",
+    "n_proteins": 10
+  },
+  {
+    "order": "pathway",
+    "size": 11,
+    "run_id": "sweep_pathway_11p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_11p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_11p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_11p.yaml",
+    "n_proteins": 11
+  },
+  {
+    "order": "pathway",
+    "size": 12,
+    "run_id": "sweep_pathway_12p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_12p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_12p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_12p.yaml",
+    "n_proteins": 12
+  },
+  {
+    "order": "pathway",
+    "size": 13,
+    "run_id": "sweep_pathway_13p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_13p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_13p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_13p.yaml",
+    "n_proteins": 13
+  },
+  {
+    "order": "pathway",
+    "size": 14,
+    "run_id": "sweep_pathway_14p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_14p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_14p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_14p.yaml",
+    "n_proteins": 14
+  },
+  {
+    "order": "pathway",
+    "size": 15,
+    "run_id": "sweep_pathway_15p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_15p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_15p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_15p.yaml",
+    "n_proteins": 15
+  },
+  {
+    "order": "pathway",
+    "size": 16,
+    "run_id": "sweep_pathway_16p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_16p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_16p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_16p.yaml",
+    "n_proteins": 16
+  },
+  {
+    "order": "pathway",
+    "size": 17,
+    "run_id": "sweep_pathway_17p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_17p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_17p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_17p.yaml",
+    "n_proteins": 17
+  },
+  {
+    "order": "pathway",
+    "size": 18,
+    "run_id": "sweep_pathway_18p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_18p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_18p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_18p.yaml",
+    "n_proteins": 18
+  },
+  {
+    "order": "pathway",
+    "size": 19,
+    "run_id": "sweep_pathway_19p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_19p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_19p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_19p.yaml",
+    "n_proteins": 19
+  },
+  {
+    "order": "pathway",
+    "size": 20,
+    "run_id": "sweep_pathway_20p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_20p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_20p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_20p.yaml",
+    "n_proteins": 20
+  },
+  {
+    "order": "pathway",
+    "size": 21,
+    "run_id": "sweep_pathway_21p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_21p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_21p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_21p.yaml",
+    "n_proteins": 21
+  },
+  {
+    "order": "pathway",
+    "size": 22,
+    "run_id": "sweep_pathway_22p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_22p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_22p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_22p.yaml",
+    "n_proteins": 22
+  },
+  {
+    "order": "pathway",
+    "size": 23,
+    "run_id": "sweep_pathway_23p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_23p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_23p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_23p.yaml",
+    "n_proteins": 23
+  },
+  {
+    "order": "pathway",
+    "size": 24,
+    "run_id": "sweep_pathway_24p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_24p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_24p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_24p.yaml",
+    "n_proteins": 24
+  },
+  {
+    "order": "pathway",
+    "size": 25,
+    "run_id": "sweep_pathway_25p",
+    "reuse": null,
+    "panel_csv": "analysis/experiments/panel_saturation_sweep/panels/pathway_25p.csv",
+    "training_config": "analysis/experiments/panel_saturation_sweep/configs/training_pathway_25p.yaml",
+    "pipeline_config": "analysis/experiments/panel_saturation_sweep/configs/pipeline_pathway_25p.yaml",
+    "n_proteins": 25
+  }
+]

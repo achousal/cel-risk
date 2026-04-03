@@ -77,6 +77,31 @@ COLOR_THRESHOLD_RED = "#ef4444"
 LW_SECONDARY = 1.5
 
 
+# -- Model comparison palette --
+# Maps canonical model names to colorblind-friendly colors
+MODEL_COLORS: dict[str, str] = {
+    "LR_EN": "#264653",  # dark teal
+    "RF": "#2a9d8f",  # teal
+    "LinSVM_cal": "#e9c46a",  # gold
+    "XGBoost": "#f4a261",  # orange
+    "ENSEMBLE": "#e76f51",  # coral (drawn last, on top)
+}
+MODEL_COLOR_FALLBACK = "#6c757d"  # gray for unknown models
+
+# -- Comparison plot style --
+ALPHA_CI_COMPARISON = 0.08  # Lower alpha for multi-model CI bands
+LW_COMPARISON = 1.8  # Slightly thinner lines for multi-model overlay
+LW_COMPARISON_ENSEMBLE = 2.5  # Thicker line for ensemble emphasis
+MARKER_SIZE_COMPARISON = 60  # Smaller threshold markers for comparison
+FIGSIZE_COMPARISON = (8, 6.5)  # Standard comparison figure size
+FIGSIZE_COMPARISON_DCA = (11, 6.5)  # Wider for DCA
+
+
+def get_model_color(model_name: str) -> str:
+    """Get color for a model name, with fallback for unknown models."""
+    return MODEL_COLORS.get(model_name, MODEL_COLOR_FALLBACK)
+
+
 def configure_backend() -> None:
     """Set non-interactive backend. Call at module level in plotting modules."""
     import matplotlib

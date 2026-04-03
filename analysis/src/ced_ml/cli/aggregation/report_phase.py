@@ -380,6 +380,7 @@ def run_report_phase(
     plot_shap_summary: bool = True,
     plot_shap_dependence: bool = True,
     plot_shap_heatmap: bool = True,
+    plot_model_comparison_curves: bool = True,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     """
@@ -556,6 +557,7 @@ def run_report_phase(
             plot_dca=plot_dca,
             plot_oof_combined=plot_oof_combined,
             target_specificity=target_specificity,
+            plot_model_comparison_curves=plot_model_comparison_curves,
         )
 
         # Aggregated SHAP plots

@@ -36,6 +36,7 @@ def generate_aggregated_plots(
     plot_dca: bool = True,
     plot_oof_combined: bool = True,
     target_specificity: float = 0.95,
+    plot_model_comparison_curves: bool = True,
 ) -> None:
     """
     Generate all aggregated diagnostic plots, separated by model.
@@ -336,6 +337,148 @@ def generate_aggregated_plots(
                                 logger.warning(
                                     f"Failed to generate OOF combined plots for {model_name}: {e}"
                                 )
+
+    # Generate comparison plots (multi-model overlay)
+    if plot_model_comparison_curves and len(all_models) >= 2:
+        generate_comparison_plots(
+            pooled_test_df=pooled_test_df,
+            pooled_val_df=pooled_val_df,
+            out_dir=out_dir,
+            threshold_info=threshold_info,
+            plot_formats=plot_formats,
+            meta_lines=meta_lines,
+            logger=logger,
+            target_specificity=target_specificity,
+            plot_roc=plot_roc,
+            plot_pr=plot_pr,
+            plot_calibration=plot_calibration,
+            plot_dca=plot_dca,
+        )
+
+
+def generate_comparison_plots(
+    pooled_test_df: pd.DataFrame,
+    pooled_val_df: pd.DataFrame,
+    out_dir: Path,
+    threshold_info: dict[str, Any],
+    plot_formats: list[str],
+    meta_lines: list[str] | None = None,
+    logger: logging.Logger | None = None,
+    target_specificity: float = 0.95,
+    plot_roc: bool = True,
+    plot_pr: bool = True,
+    plot_calibration: bool = True,
+    plot_dca: bool = True,
+) -> None:
+    """
+    Generate comparison plots overlaying all models on a single figure.
+
+    Called after per-model plots when at least 2 models are present.
+    """
+    try:
+        from ced_ml.plotting.comparison import (
+            ModelCurveData,
+            plot_calibration_comparison,
+            plot_dca_comparison,
+            plot_pr_comparison,
+            plot_roc_comparison,
+        )
+    except ImportError as e:
+        if logger:
+            logger.warning(f"Comparison plotting not available: {e}")
+        return
+
+    pred_col_names = ["y_prob_adjusted", "y_prob", "y_pred", "risk_score", "prob", "prediction"]
+
+    def _build_model_dict(
+        df: pd.DataFrame,
+    ) -> dict[str, ModelCurveData]:
+        """Build {model_name: ModelCurveData} from a pooled DataFrame."""
+        if df.empty or "model" not in df.columns:
+            return {}
+
+        result: dict[str, ModelCurveData] = {}
+        for model_name in df["model"].unique():
+            model_df = df[df["model"] == model_name]
+
+            pred_col = None
+            for col in pred_col_names:
+                if col in model_df.columns:
+                    pred_col = col
+                    break
+            if pred_col is None or "y_true" not in model_df.columns:
+                continue
+
+            y_true = model_df["y_true"].values
+            y_pred = model_df[pred_col].values
+            split_ids = model_df["split_seed"].values if "split_seed" in model_df.columns else None
+
+            # Compute threshold bundle
+            model_threshold_info = threshold_info.get(model_name, {})
+            dca_thr = model_threshold_info.get("dca_threshold")
+            bundle = compute_threshold_bundle(
+                y_true,
+                y_pred,
+                target_spec=target_specificity,
+                dca_threshold=dca_thr,
+            )
+
+            result[model_name] = ModelCurveData(
+                y_true=y_true,
+                y_pred=y_pred,
+                split_ids=split_ids,
+                threshold_bundle=bundle,
+            )
+        return result
+
+    plots_dir = out_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    for data_name, df in [("test", pooled_test_df), ("val", pooled_val_df)]:
+        model_dict = _build_model_dict(df)
+        if len(model_dict) < 2:
+            if logger:
+                logger.debug(f"Skipping {data_name} comparison plots: fewer than 2 models")
+            continue
+
+        if logger:
+            logger.info(
+                f"Generating {data_name} comparison plots for "
+                f"{len(model_dict)} models: {', '.join(sorted(model_dict.keys()))}"
+            )
+
+        for fmt in plot_formats:
+            if plot_roc:
+                plot_roc_comparison(
+                    models=model_dict,
+                    out_path=plots_dir / f"{data_name}_comparison_roc.{fmt}",
+                    title=f"Aggregated {data_name.capitalize()} Set ROC Comparison",
+                    meta_lines=meta_lines,
+                )
+
+            if plot_pr:
+                plot_pr_comparison(
+                    models=model_dict,
+                    out_path=plots_dir / f"{data_name}_comparison_pr.{fmt}",
+                    title=f"Aggregated {data_name.capitalize()} Set PR Comparison",
+                    meta_lines=meta_lines,
+                )
+
+            if plot_calibration:
+                plot_calibration_comparison(
+                    models=model_dict,
+                    out_path=plots_dir / f"{data_name}_comparison_calibration.{fmt}",
+                    title=f"Aggregated {data_name.capitalize()} Set Calibration Comparison",
+                    meta_lines=meta_lines,
+                )
+
+            if plot_dca:
+                plot_dca_comparison(
+                    models=model_dict,
+                    out_path=plots_dir / f"{data_name}_comparison_dca.{fmt}",
+                    title=f"Aggregated {data_name.capitalize()} Set DCA Comparison",
+                    meta_lines=meta_lines,
+                )
 
 
 def _load_pooled_parquet(out_dir: Path, filename: str) -> pd.DataFrame | None:

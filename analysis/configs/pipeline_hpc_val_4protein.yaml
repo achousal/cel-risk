@@ -1,0 +1,13 @@
+# Pipeline config for 4-protein panel validation
+# Head-to-head comparison with 7-protein Phase 2 (run_phase2_val_consensus).
+# Same seeds (200-209), same models, only the panel differs.
+_base: pipeline_hpc.yaml
+
+configs:
+  training: configs/training_config_val_4protein.yaml
+  splits: configs/splits_config_val_consensus.yaml  # same seeds as Phase 2
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false

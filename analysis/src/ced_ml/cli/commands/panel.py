@@ -832,6 +832,16 @@ def optimize_panel(ctx, config, **kwargs):
     help="BH-corrected alpha for RRA significance (default: 0.05)",
 )
 @click.option(
+    "--rra-universe-size",
+    type=int,
+    default=None,
+    help=(
+        "Total features in the original search space (e.g. 2920). "
+        "Calibrates permutation null and BH correction against the full "
+        "feature universe. Omit to use pre-filtered subset (legacy)."
+    ),
+)
+@click.option(
     "--run-essentiality/--no-run-essentiality",
     default=None,
     help="Run drop-column essentiality validation on consensus panel (default: True)",
@@ -1015,6 +1025,11 @@ def consensus_panel(ctx, config, **kwargs):
             kwargs.get("rra_significance_alpha"),
             rra_sig_cfg.get("alpha"),
             0.05,
+        ),
+        rra_universe_size=_resolve_cli_or_config(
+            kwargs.get("rra_universe_size"),
+            rra_sig_cfg.get("universe_size"),
+            None,
         ),
         run_essentiality=(
             kwargs.get("run_essentiality")

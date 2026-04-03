@@ -117,6 +117,7 @@ def aggregate_splits(ctx, config, **kwargs):
                     "plot_shap_summary",
                     "plot_shap_dependence",
                     "plot_shap_heatmap",
+                    "plot_model_comparison_curves",
                     "control_spec_targets",
                 ],
                 verbose=False,
@@ -184,6 +185,11 @@ def aggregate_splits(ctx, config, **kwargs):
     kwargs["plot_shap_heatmap"] = (
         kwargs["plot_shap_heatmap"] if kwargs.get("plot_shap_heatmap") is not None else True
     )
+    kwargs["plot_model_comparison_curves"] = (
+        kwargs["plot_model_comparison_curves"]
+        if kwargs.get("plot_model_comparison_curves") is not None
+        else True
+    )
     kwargs["control_spec_targets"] = (
         kwargs["control_spec_targets"]
         if kwargs.get("control_spec_targets") is not None
@@ -248,6 +254,9 @@ def aggregate_splits(ctx, config, **kwargs):
                     shap_plot_flags["plot_shap_heatmap"] = getattr(
                         cfg.output, "plot_shap_heatmap", True
                     )
+                    shap_plot_flags["plot_model_comparison_curves"] = getattr(
+                        cfg.output, "plot_model_comparison_curves", True
+                    )
             except Exception:
                 pass  # defaults to True via function signature
 
@@ -302,6 +311,10 @@ def aggregate_splits(ctx, config, **kwargs):
                 )
                 kwargs.setdefault(
                     "plot_shap_heatmap", getattr(cfg.output, "plot_shap_heatmap", True)
+                )
+                kwargs.setdefault(
+                    "plot_model_comparison_curves",
+                    getattr(cfg.output, "plot_model_comparison_curves", True),
                 )
                 break
     except Exception:
