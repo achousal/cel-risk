@@ -19,6 +19,8 @@ from ced_ml.models.hyperparams import (
     _randomize_float_list,
     _randomize_int_list,
     get_param_distributions,
+    resolve_class_weight,
+    resolve_class_weights_in_params,
 )
 
 
@@ -420,6 +422,74 @@ def test_parse_class_weight_options_whitespace():
     assert len(options) == 2
     assert None in options
     assert "balanced" in options
+
+
+def test_parse_class_weight_options_log():
+    """Test parsing 'log' class weight token."""
+    options = _parse_class_weight_options("log")
+    assert options == ["log"]
+
+
+def test_parse_class_weight_options_sqrt():
+    """Test parsing 'sqrt' class weight token."""
+    options = _parse_class_weight_options("sqrt")
+    assert options == ["sqrt"]
+
+
+def test_parse_class_weight_options_log_with_others():
+    """Test parsing log alongside other options."""
+    options = _parse_class_weight_options("None,log,balanced")
+    assert len(options) == 3
+    assert None in options
+    assert "log" in options
+    assert "balanced" in options
+
+
+def test_resolve_class_weight_log():
+    """Test log weight resolution from target array."""
+    y = np.array([0] * 100 + [1] * 10)  # 10:1 ratio
+    result = resolve_class_weight("log", y)
+    assert isinstance(result, dict)
+    assert result[0] == 1.0
+    assert abs(result[1] - np.log(10)) < 1e-6
+
+
+def test_resolve_class_weight_sqrt():
+    """Test sqrt weight resolution from target array."""
+    y = np.array([0] * 100 + [1] * 10)
+    result = resolve_class_weight("sqrt", y)
+    assert isinstance(result, dict)
+    assert result[0] == 1.0
+    assert abs(result[1] - np.sqrt(10)) < 1e-6
+
+
+def test_resolve_class_weight_passthrough():
+    """Test that non-dynamic values pass through unchanged."""
+    y = np.array([0, 0, 1])
+    assert resolve_class_weight(None, y) is None
+    assert resolve_class_weight("balanced", y) == "balanced"
+    assert resolve_class_weight({0: 1, 1: 5}, y) == {0: 1, 1: 5}
+
+
+def test_resolve_class_weight_no_positives():
+    """Test log/sqrt with no positive samples returns None."""
+    y = np.array([0, 0, 0])
+    assert resolve_class_weight("log", y) is None
+
+
+def test_resolve_class_weights_in_params():
+    """Test resolving class weights in a full params dict."""
+    y = np.array([0] * 100 + [1] * 10)
+    params = {
+        "clf__estimator__C": 1.0,
+        "clf__estimator__class_weight": "log",
+    }
+    resolved = resolve_class_weights_in_params(params, y)
+    assert resolved["clf__estimator__C"] == 1.0
+    assert isinstance(resolved["clf__estimator__class_weight"], dict)
+    assert resolved["clf__estimator__class_weight"][0] == 1.0
+    # Original not mutated
+    assert params["clf__estimator__class_weight"] == "log"
 
 
 # ==================== Integration Tests ====================

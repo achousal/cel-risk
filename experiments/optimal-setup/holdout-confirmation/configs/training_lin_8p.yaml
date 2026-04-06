@@ -1,0 +1,18 @@
+# Training config for lin-goal: 8-protein interpretable panel
+# Model: LinSVM_cal only
+# Panel: 8 stability-validated proteins from incident validation
+# Weight: log-equivalent (~5.7x upweight, from incident_only + log)
+_base: training_config.yaml
+
+features:
+  feature_selection_strategy: fixed_panel
+  fixed_panel_csv: "experiments/optimal-setup/holdout-confirmation/panels/lin_8p.csv"
+
+# Log weighting: resolved at training time to {0:1, 1:log(n_neg/n_pos)}
+# Matches incident validation winner (incident_only + log, AUPRC=0.215)
+svm:
+  class_weight_options: "log"
+
+# 50 trials sufficient for 8-feature panel (sweep finding #5)
+optuna:
+  n_trials: 50
