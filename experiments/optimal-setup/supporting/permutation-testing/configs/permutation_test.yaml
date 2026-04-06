@@ -1,0 +1,17 @@
+# Permutation Test Configuration
+
+# Permutation Test Parameters
+n_perms: 300              # Number of permutations (default: 200; increase for tighter p-values)
+metric: auroc             # Metric to evaluate (only 'auroc' supported per ADR-007)
+random_state: 42          # Random seed for reproducibility
+
+# Split Seed Range
+split_seed_start: 100       # First split seed to test (must match splits_config.yaml seed_start)
+n_split_seeds: 30          # Number of consecutive seeds to test (must match splits_config.yaml n_splits)
+
+# Parallelization
+n_jobs: 1                 # Parallel jobs for local execution (1 = sequential; -1 = all CPUs)
+                          # Note: HPC mode uses job arrays, not n_jobs
+
+# Output Settings
+outdir: null              # Output directory (null = auto-detect: {run_dir}/{model}/significance/)

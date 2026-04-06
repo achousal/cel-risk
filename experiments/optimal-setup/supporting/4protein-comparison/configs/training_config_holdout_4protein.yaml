@@ -1,0 +1,4 @@
+# Training config for Phase 3: holdout evaluation (4-protein panel)
+# Fixed 4-protein panel (universe-corrected RRA survivors), holdout mode splits.
+# Inherits from Phase 2 4-protein validation config.
+_base: training_config_val_4protein.yaml

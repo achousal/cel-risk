@@ -1,0 +1,6 @@
+# Training config for Phase 2: consensus panel validation (100 Optuna trials)
+# Same as training_config_val_consensus.yaml but with more hyperparameter search.
+_base: training_config_val_consensus.yaml
+
+optuna:
+  n_trials: 100
