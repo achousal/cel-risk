@@ -102,6 +102,8 @@ def _parse_class_weight_options(options_str: str) -> list:
             options.append(None)
         elif opt == "balanced":
             options.append("balanced")
+        elif opt in ("log", "sqrt"):
+            options.append(opt)
         elif opt.startswith("{"):
             # Parse dict: {0:1,1:5}
             try:
@@ -120,6 +122,59 @@ def _parse_class_weight_options(options_str: str) -> list:
                 )
 
     return options if options else [None]
+
+
+def resolve_class_weight(weight, y: np.ndarray):
+    """Resolve dynamic class weight tokens to sklearn-compatible values.
+
+    Converts 'log' and 'sqrt' tokens to {0: 1.0, 1: w} dicts using the
+    class ratio from y. Passes all other values (None, 'balanced', dicts)
+    through unchanged.
+
+    Args:
+        weight: Class weight value -- None, 'balanced', 'log', 'sqrt', or dict.
+        y: Binary target array (0/1) for computing class ratio.
+
+    Returns:
+        sklearn-compatible class_weight (None, 'balanced', or dict).
+    """
+    if weight not in ("log", "sqrt"):
+        return weight
+
+    n_pos = int((np.asarray(y) == 1).sum())
+    n_neg = int((np.asarray(y) == 0).sum())
+    if n_pos == 0:
+        return None
+
+    ratio = n_neg / n_pos
+    if weight == "log":
+        w1 = float(np.log(ratio))
+    else:  # sqrt
+        w1 = float(np.sqrt(ratio))
+
+    return {0: 1.0, 1: w1}
+
+
+def resolve_class_weights_in_params(params: dict, y: np.ndarray) -> dict:
+    """Resolve any 'log'/'sqrt' class_weight values in a params dict.
+
+    Scans for keys ending in 'class_weight' and resolves dynamic tokens.
+    Returns a new dict (does not mutate input).
+
+    Args:
+        params: Hyperparameter dict from Optuna suggestion.
+        y: Binary target array for computing class ratio.
+
+    Returns:
+        Copy of params with dynamic class weights resolved.
+    """
+    resolved = {}
+    for key, value in params.items():
+        if key.endswith("class_weight") and isinstance(value, str) and value in ("log", "sqrt"):
+            resolved[key] = resolve_class_weight(value, y)
+        else:
+            resolved[key] = value
+    return resolved
 
 
 # ============================================================================

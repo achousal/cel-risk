@@ -1,0 +1,12 @@
+# Pipeline config for lin-goal: 8p interpretable holdout evaluation
+# Single model (LinSVM_cal), fixed panel, holdout mode
+_base: pipeline_hpc.yaml
+
+configs:
+  training: experiments/optimal-setup/holdout-confirmation/configs/training_lin_8p.yaml
+  splits: configs/splits_config_holdout.yaml
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false

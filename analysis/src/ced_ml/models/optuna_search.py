@@ -23,6 +23,7 @@ from sklearn.base import BaseEstimator, clone
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
+from .hyperparams_common import resolve_class_weights_in_params
 from .optuna_callbacks import (
     check_tpe_hyperband_trials,
     create_trial_callback,
@@ -297,7 +298,10 @@ class OptunaSearchCV(BaseEstimator):
             _WORST_MO: tuple[float, float] = (0.0, -1.0)
 
             def objective(trial: optuna.Trial) -> tuple[float, float]:
-                params = self._suggest_params(trial)
+                params = resolve_class_weights_in_params(
+                    self._suggest_params(trial),
+                    y_arr,
+                )
                 estimator = clone(self.estimator)
                 try:
                     estimator.set_params(**params)
@@ -315,7 +319,10 @@ class OptunaSearchCV(BaseEstimator):
         else:
 
             def objective(trial: optuna.Trial) -> float:
-                params = self._suggest_params(trial)
+                params = resolve_class_weights_in_params(
+                    self._suggest_params(trial),
+                    y_arr,
+                )
                 estimator = clone(self.estimator)
                 try:
                     estimator.set_params(**params)
@@ -380,7 +387,8 @@ class OptunaSearchCV(BaseEstimator):
         # Refit best estimator
         if self.refit:
             self.best_estimator_ = clone(self.estimator)
-            self.best_estimator_.set_params(**self.best_params_)
+            refit_params = resolve_class_weights_in_params(self.best_params_, y_arr)
+            self.best_estimator_.set_params(**refit_params)
             self.best_estimator_.fit(X_arr, y_arr)
 
         # Log summary with hyperparameter importance

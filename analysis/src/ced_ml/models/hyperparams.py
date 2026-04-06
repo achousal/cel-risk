@@ -37,6 +37,8 @@ from .hyperparams_common import (
     _to_optuna_spec,
     get_rfe_tune_space,
     get_rfe_tune_spaces_from_training_config,
+    resolve_class_weight,
+    resolve_class_weights_in_params,
 )
 
 # Import model-specific functions (not re-exported as public API)
@@ -167,4 +169,7 @@ __all__ = [
     "_randomize_float_list",
     "_to_optuna_spec",
     "_is_log_spaced",
+    # Class weight resolution
+    "resolve_class_weight",
+    "resolve_class_weights_in_params",
 ]
