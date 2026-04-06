@@ -1,0 +1,60 @@
+# Consensus Panel Configuration
+# Configuration for cross-model consensus panel generation via geometric mean
+# rank aggregation (NOT formal Kolde RRA with beta-model p-values).
+#
+# Three-step workflow:
+#   1. Per-model ranking: stability as hard filter, OOF importance as rank
+#   2. Cross-model RRA: geometric mean of reciprocal ranks
+#   3. Post-hoc drop-column on final panel (interpretation, not ranking input)
+
+# Stability threshold: minimum selection fraction to include a protein
+# Proteins must be selected in >= this fraction of CV folds to be considered "stable"
+stability_threshold: 0.95
+
+# Correlation threshold for clustering redundant proteins
+# Proteins with |correlation| >= this threshold are grouped, and one representative
+# per cluster is kept (the one with highest consensus score)
+corr_threshold: 0.85
+
+# Target panel size after correlation pruning
+# This is the final number of proteins in the consensus panel
+target_size: 25
+
+# RRA aggregation method for combining rankings across models
+# Options:
+#   - geometric_mean: Geometric mean of reciprocal ranks (penalizes missing proteins)
+#   - borda: Borda count (sum of (N - rank + 1) across models)
+#   - median: Median rank across models
+rra_method: geometric_mean
+
+# Per-model ranking signal
+#   - oof_importance: grouped permutation/coef importance (default)
+#   - oof_shap: SHAP mean|value| from oof_shap_importance__{model}.csv
+ranking_signal: oof_importance
+
+# Explicit SHAP normalization for cross-model aggregation
+# When ranking_signal=oof_shap, applies explicit min-max normalization per model
+# (on |SHAP|, with sign restoration) before cross-model averaging.
+# This follows the normalization strategy used in Nature Medicine 2024
+# (s41591-024-03398-5) for multi-model SHAP comparability.
+shap_explicit_normalization: true
+
+# Significance Gating
+significance:
+  require_significance: true    # Only include significant models
+  alpha: 0.05                   # Significance threshold
+  min_significant_models: 2     # Minimum models required for consensus
+
+# Within-Panel Essentiality Validation (post-hoc interpretation)
+# After the consensus panel is built, optionally refit a model on ONLY the panel
+# features and run drop-column to measure each cluster's contribution.
+# This is a validation/interpretation artifact, NOT an input to panel selection.
+essentiality:
+  enabled: true                 # Run within-panel essentiality validation
+  refit_mode: "fixed_retune"    # "fixed" (clone, fast), "retune" (Optuna re-optimization),
+                                # or "fixed_retune" (both side-by-side for compensation analysis)
+  retune_n_trials: 300          # Optuna trials per cluster drop (retune modes only)
+  retune_inner_folds: 3         # Inner CV folds for retune's OptunaSearchCV
+  include_brier: true           # Include Brier score delta in output
+  include_pr_auc: true          # Include PR-AUC delta in output
+  corr_threshold: 0.85          # Correlation threshold for clustering features

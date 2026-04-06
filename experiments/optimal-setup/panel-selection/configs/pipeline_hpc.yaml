@@ -1,0 +1,44 @@
+# Pipeline Configuration - HPC Environment
+# Deep-merged on top of pipeline_local.yaml via _base.
+# Only values that differ from local defaults are listed here.
+
+_base: pipeline_local.yaml
+
+environment: hpc
+
+configs:
+  training: configs/training_config.yaml
+
+pipeline:
+  models:
+    - LR_EN
+    - LinSVM_cal
+    - RF
+    - XGBoost
+  ensemble: true
+  consensus: true
+  optimize_panel: true
+  permutation_test: true
+  dry_run: false
+
+# HPC Settings (LSF/Slurm)
+hpc:
+  scheduler: lsf  # lsf or slurm
+  project: acc_vascbrain
+  queue: premium
+  walltime: "24:00"  # hours:minutes
+  cores: 12
+  mem_per_core: 8000  # MB
+  orchestrator:
+    poll_interval: 60  # sec
+    training_timeout: 20.0  # hr
+    aggregation_timeout: 2.0  # hr (per-model aggregation, parallel)
+    ensemble_timeout: 4.0  # hr (ensemble training + aggregation)
+    post_timeout: 2.0  # hr (legacy fallback)
+    perm_timeout: 20.0  # hr
+    panel_timeout: 10.0  # hr
+    consensus_timeout: 20.0  # hr
+    max_concurrent_submissions: 20
+    cores: 1
+    mem_per_core: 2000
+    walltime: "72:00"

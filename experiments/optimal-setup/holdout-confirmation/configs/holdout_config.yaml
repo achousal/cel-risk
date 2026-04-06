@@ -1,0 +1,32 @@
+# Holdout Evaluation Configuration
+# Evaluate trained model on held-out test set
+
+# Data paths (required - must be specified via CLI or overrides)
+infile: ../data/Celiac_dataset_proteomics_w_demo.parquet
+holdout_idx: ../splits/holdout_indices.csv
+model_artifact: ../results/model_artifact.joblib
+outdir: ../holdout_results
+
+# Evaluation settings
+scenario: null  # Override scenario (if not in artifact)
+compute_dca: true
+save_preds: true
+toprisk_fracs:
+  - 0.01
+  - 0.05
+  - 0.10
+
+# DCA settings
+dca_threshold_min: 0.0005
+dca_threshold_max: 1.0
+dca_threshold_step: 0.001
+dca_report_points:
+  - 0.01
+  - 0.05
+  - 0.10
+  - 0.20
+dca_use_target_prevalence: false
+
+# Clinical thresholds
+clinical_threshold_points: []  # Add specific thresholds if needed
+target_prevalence: null  # Override if needed

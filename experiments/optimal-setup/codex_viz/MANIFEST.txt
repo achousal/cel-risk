@@ -1,0 +1,6 @@
+Generated figures
+- fig01_svm_panel_tendency
+- fig02_pathway_marker_heatmap
+- fig03_all_models_panel_size_comparison
+- fig04_order_route_map
+- fig05_model_by_size_heatmap
