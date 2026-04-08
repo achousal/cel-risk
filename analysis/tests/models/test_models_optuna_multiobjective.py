@@ -150,14 +150,21 @@ class TestOptunaSearchCVMultiObjective:
             multi_objective=True,
         )
 
-        scores = search._multi_objective_cv_score(estimator, X, y, cv)
+        means, auroc_folds, brier_folds = search._multi_objective_cv_score(estimator, X, y, cv)
 
-        assert isinstance(scores, tuple)
-        assert len(scores) == 2
-        assert isinstance(scores[0], float)  # AUROC
-        assert isinstance(scores[1], float)  # -Brier
-        assert 0 <= scores[0] <= 1  # AUROC in [0, 1]
-        assert scores[1] <= 0  # -Brier should be negative
+        assert isinstance(means, tuple)
+        assert len(means) == 2
+        assert isinstance(means[0], float)  # AUROC
+        assert isinstance(means[1], float)  # -Brier
+        assert 0 <= means[0] <= 1  # AUROC in [0, 1]
+        assert means[1] <= 0  # -Brier should be negative
+
+        # Fold-level arrays (Enhancement 4)
+        assert isinstance(auroc_folds, list)
+        assert isinstance(brier_folds, list)
+        assert len(auroc_folds) == len(brier_folds)
+        assert all(0 <= s <= 1 for s in auroc_folds)
+        assert all(s >= 0 for s in brier_folds)  # raw Brier is positive
 
 
 class TestParetoFrontierSelection:

@@ -259,7 +259,14 @@ def oof_predictions_with_nested_cv(
 
         # Build inner CV hyperparameter search
         search = _build_hyperparameter_search(
-            base_pipeline, model_name, config, random_state, xgb_spw, grid_rng
+            base_pipeline,
+            model_name,
+            config,
+            random_state,
+            xgb_spw,
+            grid_rng,
+            fold_idx=split_idx,
+            repeat_num=repeat_num,
         )
 
         # Fit model (with or without search)
@@ -710,6 +717,9 @@ def _build_hyperparameter_search(
     random_state: int,
     xgb_spw: float | None,
     grid_rng: np.random.Generator | None,
+    *,
+    fold_idx: int = 0,
+    repeat_num: int = 0,
 ):
     """
     Build hyperparameter search object (Optuna or RandomizedSearchCV).
@@ -726,6 +736,8 @@ def _build_hyperparameter_search(
         random_state: Random seed
         xgb_spw: XGBoost scale_pos_weight (if applicable)
         grid_rng: Optional RNG for grid randomization
+        fold_idx: Outer CV fold index (for study_name disambiguation)
+        repeat_num: Outer CV repeat number (for study_name disambiguation)
 
     Returns:
         OptunaSearchCV, RandomizedSearchCV, or None
@@ -766,6 +778,20 @@ def _build_hyperparameter_search(
         # Get scorer (handles custom scorers like tpr_at_fpr)
         scorer = get_scorer(config.cv.scoring, target_fpr=config.cv.scoring_target_fpr)
 
+        # Resolve study_name: {seed} template + fold suffix for disambiguation
+        study_name = config.optuna.study_name
+        if study_name:
+            if "{seed}" in study_name:
+                study_name = study_name.format(seed=random_state)
+            study_name = f"{study_name}__r{repeat_num}_f{fold_idx}"
+
+        # Augment user_attrs with per-fold context
+        user_attrs = dict(config.optuna.user_attrs) if config.optuna.user_attrs else {}
+        if user_attrs or study_name:
+            user_attrs["outer_fold"] = fold_idx
+            user_attrs["repeat"] = repeat_num
+            user_attrs["seed"] = random_state
+
         return OptunaSearchCV(
             estimator=pipeline,
             param_distributions=param_dists,
@@ -783,13 +809,18 @@ def _build_hyperparameter_search(
             pruner_n_startup_trials=config.optuna.pruner_n_startup_trials,
             pruner_percentile=config.optuna.pruner_percentile,
             storage=config.optuna.storage,
-            study_name=config.optuna.study_name,
+            study_name=study_name,
             load_if_exists=config.optuna.load_if_exists,
             verbose=0,
             # Multi-objective parameters
             multi_objective=config.optuna.multi_objective,
             objectives=config.optuna.objectives,
             pareto_selection=config.optuna.pareto_selection,
+            # Study persistence and metadata (Enhancements 1-3)
+            storage_backend=config.optuna.storage_backend,
+            user_attrs=user_attrs if user_attrs else None,
+            warm_start_params_file=config.optuna.warm_start_params_file,
+            warm_start_top_k=config.optuna.warm_start_top_k,
         )
 
     # === RandomizedSearchCV path (default) ===

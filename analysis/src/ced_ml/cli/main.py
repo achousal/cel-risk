@@ -24,7 +24,9 @@ from ced_ml.cli.commands.data import convert_to_parquet, save_splits
 from ced_ml.cli.commands.evaluation import eval_holdout
 from ced_ml.cli.commands.orchestration import run_pipeline
 from ced_ml.cli.commands.panel import consensus_panel, optimize_panel
+from ced_ml.cli.commands.recipes import derive_recipes, generate_v0
 from ced_ml.cli.commands.significance import permutation_test
+from ced_ml.cli.commands.sweep import sweep
 from ced_ml.cli.commands.training import train, train_ensemble
 from ced_ml.cli.options import log_level_option
 
@@ -74,6 +76,9 @@ cli.add_command(optimize_panel)
 cli.add_command(consensus_panel)
 cli.add_command(permutation_test)
 cli.add_command(run_pipeline)
+cli.add_command(derive_recipes)
+cli.add_command(generate_v0)
+cli.add_command(sweep)
 
 
 def main():

@@ -1,0 +1,31 @@
+id: "02_bootstrap_ci"
+question: "What are the proper CIs for the optimal config? Is the winning model statistically better?"
+sweep_type: eval_only
+
+base_recipe: null
+base_cell: null
+
+metric: "auroc_ci_width"
+metric_direction: minimize
+baseline_value: null
+
+parameter_space:
+  n_boot:
+    type: choice
+    values: [500, 1000, 2000, 5000]
+  ci_method:
+    type: choice
+    values: ["bca", "percentile", "basic"]
+
+prerequisites:
+  - "results/compiled_results_per_seed.csv"
+
+eval_script: "experiments/optimal-setup/sweeps/scripts/bootstrap_ci.R"
+
+constraints:
+  max_iterations: 6
+  max_wall_hours: 4
+  seeds: [100, 101, 102, 103, 104]
+  optuna_trials: 50
+  improvement_threshold: 0.001
+  consecutive_no_improve: 2

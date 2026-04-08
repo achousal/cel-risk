@@ -1,0 +1,374 @@
+# Recipe Manifest — declarative panel derivation + factorial cell tuning
+# Panels are GENERATED ARTIFACTS of this manifest, not hand-picked inputs.
+#
+# Usage:
+#   ced derive-recipes --manifest configs/manifest.yaml --data-path <parquet>
+
+# ---------------------------------------------------------------------------
+# Trunks: source data streams
+# ---------------------------------------------------------------------------
+trunks:
+  - id: T1_consensus
+    description: "Consensus-operating trunk: BH-adjusted RRA q <= 0.05"
+    proteins_csv: "../../results/experiments/rra_universe_sensitivity/rra_significance_corrected.csv"
+    sweep_csv: "../../results/compiled_results_aggregated.csv"
+
+  - id: T2_incident
+    description: "Incident-sparse trunk: bootstrap-stable + sign-consistent features"
+    proteins_csv: "../../results/incident_validation/feature_consistency.csv"
+    feature_csv: "../../results/incident_validation/feature_consistency.csv"
+
+# ---------------------------------------------------------------------------
+# Recipes: trunk + ordering + size rule → derived panel
+#
+# Shared-panel recipes: R1/R2 each split into three tiers:
+#   *_sig:       significance-constrained (only q≤0.05, size = count of significant)
+#   *_criterion: criterion-derived (all proteins ranked, size from 3-criterion ≥2, pooled orderings)
+#   *_plateau:   unanimous plateau (smallest p where all 3 criteria pass, pooled orderings)
+#
+# Model-specific recipes: per-model ordering (OOF importance or RFE elimination),
+# per-model size (3-criterion unanimous filtered to pinned model), with nested
+# expansion from plateau down to core (4p) to map each model's performance floor.
+# ---------------------------------------------------------------------------
+recipes:
+  # --- R1: global consensus ordering ---
+  - id: R1_sig
+    trunk_id: T1_consensus
+    description: "Significance-constrained: only q≤0.05 proteins, panel = all significant"
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+    size_rule:
+      type: significance_count
+      params:
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+
+  - id: R1_criterion
+    trunk_id: T1_consensus
+    description: "Criterion-derived: all proteins ranked by RRA, 3-criterion optimal size (all orderings pooled)"
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: null  # no q-filter — rank all proteins
+    size_rule:
+      type: three_criterion
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: R1_plateau
+    trunk_id: T1_consensus
+    description: "Plateau: all proteins ranked by RRA, smallest size where all 3 criteria pass"
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: null
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  # --- R2: stream-balanced ordering ---
+  - id: R2_sig
+    trunk_id: T1_consensus
+    description: "Stream-balanced, significance-constrained: q≤0.05, stream interleave"
+    ordering:
+      type: stream_balanced
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+        corr_threshold: 0.50
+        corr_method: "spearman"
+    size_rule:
+      type: significance_count
+      params:
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+
+  - id: R2_criterion
+    trunk_id: T1_consensus
+    description: "Stream-balanced, criterion-derived: all proteins, 3-criterion size (all orderings pooled)"
+    ordering:
+      type: stream_balanced
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: null  # no q-filter
+        corr_threshold: 0.50
+        corr_method: "spearman"
+    size_rule:
+      type: three_criterion
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: R2_plateau
+    trunk_id: T1_consensus
+    description: "Stream-balanced plateau: all proteins, smallest size where all 3 criteria pass"
+    ordering:
+      type: stream_balanced
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: null
+        corr_threshold: 0.50
+        corr_method: "spearman"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  # --- Model-specific orderings at per-model plateau size ---
+  # Size derived per-model: 3-criterion unanimous filtered to pinned model.
+  # expand_to_core: 4 generates nested sub-recipes at every step down to 4p.
+  # Linear models (LR_EN, LinSVM_cal) plateau at 4p -- no expansion needed.
+  # Tree models (RF: 8p, XGBoost: 9p) get full step-down ladders.
+  #
+  # FRESH DATASET NOTE: importance_csv and rfe_csv paths below point to a
+  # specific scouting run (run_20260217_194153). On a new dataset, you must:
+  #   1. Run the discovery phase first (ced train + ced aggregate-splits)
+  #   2. Update these paths to the new run's OOF importance and RFE outputs
+  #   3. Re-derive recipes (ced derive-recipes)
+  # The shared-panel recipes (R1/R2/R3) do NOT depend on run-specific files.
+  #
+  # OOF importance: permutation importance from training CV
+  - id: MS_oof_LR_EN
+    trunk_id: T1_consensus
+    description: "Model-specific OOF importance ordering for LR_EN, unanimous plateau size"
+    pinned_model: LR_EN
+    expand_to_core: 4
+    ordering:
+      type: oof_importance
+      params:
+        importance_csv: "../../results/run_20260217_194153/LR_EN/aggregated/importance/oof_importance__LR_EN.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_oof_LinSVM_cal
+    trunk_id: T1_consensus
+    description: "Model-specific OOF importance ordering for LinSVM_cal, unanimous plateau size"
+    pinned_model: LinSVM_cal
+    expand_to_core: 4
+    ordering:
+      type: oof_importance
+      params:
+        importance_csv: "../../results/run_20260217_194153/LinSVM_cal/aggregated/importance/oof_importance__LinSVM_cal.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_oof_RF
+    trunk_id: T1_consensus
+    description: "Model-specific OOF importance ordering for RF, unanimous plateau size"
+    pinned_model: RF
+    expand_to_core: 4
+    ordering:
+      type: oof_importance
+      params:
+        importance_csv: "../../results/run_20260217_194153/RF/aggregated/importance/oof_importance__RF.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_oof_XGBoost
+    trunk_id: T1_consensus
+    description: "Model-specific OOF importance ordering for XGBoost, unanimous plateau size"
+    pinned_model: XGBoost
+    expand_to_core: 4
+    ordering:
+      type: oof_importance
+      params:
+        importance_csv: "../../results/run_20260217_194153/XGBoost/aggregated/importance/oof_importance__XGBoost.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  # RFE elimination: backward elimination ordering
+  - id: MS_rfe_LR_EN
+    trunk_id: T1_consensus
+    description: "Model-specific RFE ordering for LR_EN, unanimous plateau size"
+    pinned_model: LR_EN
+    expand_to_core: 4
+    ordering:
+      type: rfe_elimination
+      params:
+        rfe_csv: "../../results/run_20260217_194153/LR_EN/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_rfe_LinSVM_cal
+    trunk_id: T1_consensus
+    description: "Model-specific RFE ordering for LinSVM_cal, unanimous plateau size"
+    pinned_model: LinSVM_cal
+    expand_to_core: 4
+    ordering:
+      type: rfe_elimination
+      params:
+        rfe_csv: "../../results/run_20260217_194153/LinSVM_cal/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_rfe_RF
+    trunk_id: T1_consensus
+    description: "Model-specific RFE ordering for RF, unanimous plateau size"
+    pinned_model: RF
+    expand_to_core: 4
+    ordering:
+      type: rfe_elimination
+      params:
+        rfe_csv: "../../results/run_20260217_194153/RF/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  - id: MS_rfe_XGBoost
+    trunk_id: T1_consensus
+    description: "Model-specific RFE ordering for XGBoost, unanimous plateau size"
+    pinned_model: XGBoost
+    expand_to_core: 4
+    ordering:
+      type: rfe_elimination
+      params:
+        rfe_csv: "../../results/run_20260217_194153/XGBoost/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+  # --- R3: incident-sparse ---
+  - id: R3_incident_sparse
+    trunk_id: T2_incident
+    description: "Incident-sparse: bootstrap-stable + sign-consistent, |coefficient| descending"
+    ordering:
+      type: abs_coefficient_descending
+      params:
+        coef_column: "mean_coef"
+        stability_column: "stability_freq"
+        stability_threshold: 1.0
+        sign_column: "sign_consistent"
+    size_rule:
+      type: stability
+      params: {}
+
+  # Deconfound: T2 trunk was only tested with |coef| ordering (R3_incident_sparse).
+  # This recipe tests the same T2 proteins with stability-frequency ordering,
+  # so the factorial can separate trunk identity from ordering effect.
+  - id: R3_consensus
+    trunk_id: T2_incident
+    description: "T2 trunk deconfound: incident proteins ranked by stability frequency"
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: "stability_freq"
+        q_threshold: null  # no filter — T2 proteins lack RRA q-values
+    size_rule:
+      type: stability
+      params: {}
+
+# ---------------------------------------------------------------------------
+# V0 Gate: training strategy comparison (pre-factorial)
+# Tests whether the training strategy winner is consistent across models.
+# If consistent -> lock strategy. If not -> promote to full factorial factor.
+# ---------------------------------------------------------------------------
+v0_gate:
+  strategies:
+    - name: IncidentOnly
+      scenarios: [IncidentOnly]
+      prevalent_train_only: true
+
+    - name: PrevalentOnly
+      scenarios: [PrevalentOnly]
+      prevalent_train_only: false
+
+    - name: IncidentPlusPrevalent_0.25
+      scenarios: [IncidentPlusPrevalent]
+      prevalent_train_only: true
+      prevalent_train_frac: 0.25
+
+    - name: IncidentPlusPrevalent_0.50
+      scenarios: [IncidentPlusPrevalent]
+      prevalent_train_only: true
+      prevalent_train_frac: 0.50
+
+    - name: IncidentPlusPrevalent_1.00
+      scenarios: [IncidentPlusPrevalent]
+      prevalent_train_only: true
+      prevalent_train_frac: 1.00
+
+  control_ratios:    # train_control_per_case levels (crosses with strategies)
+    - 1              # 1:1 control:case
+    - 5              # 5:1 (current default)
+    - 10             # 10:1
+
+  representative_recipes:
+    - R1_sig       # 4p (smallest shared panel)
+    - R1_plateau   # 8p (largest shared panel)
+
+  optuna_n_trials: 100  # Sweep-level budget (main factorial uses 200)
+
+# Base splits config for V0 overlay
+base_splits_config: "splits_config.yaml"
+
+# ---------------------------------------------------------------------------
+# Factorial design: 4 factors crossed under each frozen recipe
+# ---------------------------------------------------------------------------
+factorial:
+  models:
+    - LinSVM_cal
+    - XGBoost
+    - LR_EN
+    - RF
+  calibration:
+    - logistic_intercept
+    - beta
+    - isotonic
+  weighting:
+    - log
+    - sqrt
+    - none
+  downsampling:
+    - 1.0   # no downsampling
+    - 2.0   # 2:1 majority:minority
+    - 5.0   # 5:1 majority:minority
+
+# Optuna settings applied to every factorial cell
+optuna:
+  n_trials: 200
+
+# Shared splits across all cells
+splits:
+  seed_start: 100
+  seed_end: 129
+
+# Base configs for YAML inheritance (_base key)
+base_training_config: "training_config.yaml"
+base_pipeline_config: "pipeline_hpc.yaml"
