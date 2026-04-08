@@ -1,0 +1,27 @@
+id: "09_downsampling_ratio"
+question: "What downsampling ratio optimizes AUPRC without destroying calibration?"
+sweep_type: config_only
+
+# Dataset-agnostic: reference by name, orchestrator resolves paths
+base_recipe: "R1_plateau"
+base_cell: "LinSVM_cal_logistic_intercept_log_ds1"
+
+metric: "summary_auroc_mean"
+metric_direction: maximize
+baseline_value: null  # null = first iteration establishes baseline
+
+parameter_space:
+  data.downsample_majority_ratio:
+    type: choice
+    values: [1.0, 2.0, 3.0, 5.0, 10.0, 20.0]
+
+prerequisites:
+  - "results/factorial_compiled.csv"
+
+constraints:
+  max_iterations: 8
+  max_wall_hours: 24
+  seeds: [100, 101, 102, 103, 104]
+  optuna_trials: 50
+  improvement_threshold: 0.005
+  consecutive_no_improve: 3

@@ -152,6 +152,10 @@ class OptunaSearchCV(BaseEstimator):
         multi_objective: bool = False,
         objectives: list[str] | None = None,
         pareto_selection: str = "knee",
+        storage_backend: str = "none",
+        user_attrs: dict[str, Any] | None = None,
+        warm_start_params_file: str | None = None,
+        warm_start_top_k: int = 5,
     ):
         self.estimator = estimator
         self.param_distributions = param_distributions
@@ -177,6 +181,12 @@ class OptunaSearchCV(BaseEstimator):
         self.multi_objective = multi_objective
         self.objectives = objectives if objectives is not None else ["roc_auc", "neg_brier_score"]
         self.pareto_selection = pareto_selection
+
+        # Study persistence and metadata (Enhancements 1-3)
+        self.storage_backend = storage_backend
+        self.user_attrs = user_attrs
+        self.warm_start_params_file = warm_start_params_file
+        self.warm_start_top_k = warm_start_top_k
 
         # Attributes set during fit
         self.best_params_: dict[str, Any] = {}
@@ -206,6 +216,62 @@ class OptunaSearchCV(BaseEstimator):
             self.pruner_n_startup_trials,
             self.pruner_percentile,
         )
+
+    def _resolve_storage(self) -> Any:
+        """Build Optuna storage object from config.
+
+        Returns None for in-memory (no persistence), a JournalStorage for
+        append-only concurrent access, or a raw URL string for sqlite.
+        """
+        if not self.storage or self.storage_backend == "none":
+            return None
+        if self.storage_backend == "journal":
+            from pathlib import Path
+
+            from optuna.storages import JournalFileStorage, JournalStorage
+
+            # Ensure parent directory exists
+            Path(self.storage).parent.mkdir(parents=True, exist_ok=True)
+            lock_obj = optuna.storages.JournalFileOpenLock(self.storage)
+            return JournalStorage(JournalFileStorage(self.storage, lock_obj=lock_obj))
+        # sqlite or raw URL passthrough
+        return self.storage
+
+    def _enqueue_warm_start_trials(self) -> None:
+        """Enqueue pre-computed scout trials as starting points.
+
+        Reads a JSON file mapping model names to lists of param dicts.
+        Filters to params that exist in the current search space and
+        enqueues up to warm_start_top_k trials.
+        """
+        import json
+
+        if not self.warm_start_params_file or self.study_ is None:
+            return
+
+        try:
+            with open(self.warm_start_params_file) as f:
+                all_params = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning("[optuna] Failed to load warm-start params: %s", e)
+            return
+
+        # Match by model name in user_attrs
+        model = (self.user_attrs or {}).get("model")
+        if not model or model not in all_params:
+            logger.debug("[optuna] No warm-start params for model '%s'", model)
+            return
+
+        enqueued = 0
+        for params in all_params[model][: self.warm_start_top_k]:
+            # Filter to params that exist in current search space
+            valid = {k: v for k, v in params.items() if k in self.param_distributions}
+            if valid:
+                self.study_.enqueue_trial(valid)
+                enqueued += 1
+
+        if enqueued:
+            logger.info("[optuna] Enqueued %d warm-start trials for model '%s'", enqueued, model)
 
     def _suggest_params(self, trial: optuna.Trial) -> dict[str, Any]:
         """Suggest hyperparameters for a trial based on param_distributions."""
@@ -260,12 +326,15 @@ class OptunaSearchCV(BaseEstimator):
         else:
             optuna.logging.set_verbosity(optuna.logging.DEBUG)
 
+        # Resolve storage backend
+        resolved_storage = self._resolve_storage()
+
         # Create or load study (multi-objective or single-objective)
         if self.multi_objective:
             directions = get_optimization_directions(self.objectives)
             self.study_ = optuna.create_study(
                 study_name=self.study_name,
-                storage=self.storage,
+                storage=resolved_storage,
                 load_if_exists=self.load_if_exists,
                 directions=directions,  # List for multi-objective
                 sampler=sampler,
@@ -274,12 +343,20 @@ class OptunaSearchCV(BaseEstimator):
         else:
             self.study_ = optuna.create_study(
                 study_name=self.study_name,
-                storage=self.storage,
+                storage=resolved_storage,
                 load_if_exists=self.load_if_exists,
                 direction=self.direction,
                 sampler=sampler,
                 pruner=pruner,
             )
+
+        # Tag study with factorial metadata (Enhancement 2)
+        if self.user_attrs:
+            for key, value in self.user_attrs.items():
+                self.study_.set_user_attr(key, value)
+
+        # Enqueue warm-start trials from scout (Enhancement 1)
+        self._enqueue_warm_start_trials()
 
         # Validate existing study compatibility
         validate_study_compatibility(
@@ -310,8 +387,15 @@ class OptunaSearchCV(BaseEstimator):
                     return _WORST_MO
 
                 try:
-                    scores = self._multi_objective_cv_score(estimator, X_arr, y_arr, cv_splitter)
-                    return scores
+                    means, auroc_folds, brier_folds = self._multi_objective_cv_score(
+                        estimator, X_arr, y_arr, cv_splitter
+                    )
+                    # Store per-fold metrics as trial user attrs (Enhancement 4)
+                    trial.set_user_attr("fold_aurocs", [float(s) for s in auroc_folds])
+                    trial.set_user_attr("fold_briers", [float(s) for s in brier_folds])
+                    trial.set_user_attr("auroc_std", float(np.std(auroc_folds)))
+                    trial.set_user_attr("brier_std", float(np.std(brier_folds)))
+                    return means
                 except Exception as e:
                     logger.warning(f"[optuna] CV failed for params {params}: {e}")
                     return _WORST_MO
@@ -339,6 +423,9 @@ class OptunaSearchCV(BaseEstimator):
                         scoring=self.scoring,
                         n_jobs=self.n_jobs,
                     )
+                    # Store per-fold scores as trial user attrs (Enhancement 4)
+                    trial.set_user_attr("fold_scores", [float(s) for s in scores])
+                    trial.set_user_attr("score_std", float(np.std(scores)))
                     return float(np.mean(scores))
                 except Exception as e:
                     logger.warning(f"[optuna] CV failed for params {params}: {e}")
@@ -471,7 +558,9 @@ class OptunaSearchCV(BaseEstimator):
             raise ValueError("Study not created. Call fit() first.")
         return self.study_.trials_dataframe()
 
-    def _multi_objective_cv_score(self, estimator, X, y, cv_splitter) -> tuple[float, float]:
+    def _multi_objective_cv_score(
+        self, estimator, X, y, cv_splitter
+    ) -> tuple[tuple[float, float], list[float], list[float]]:
         """Compute AUROC and Brier score across CV folds.
 
         Performs manual CV loop to compute both metrics, required because
@@ -490,9 +579,10 @@ class OptunaSearchCV(BaseEstimator):
 
         Returns
         -------
-        tuple[float, float]
-            (auroc_mean, neg_brier_mean) for multi-objective optimization.
-            Note: Brier score is negated to align with Optuna's maximization.
+        tuple[tuple[float, float], list[float], list[float]]
+            ((auroc_mean, neg_brier_mean), auroc_per_fold, brier_per_fold).
+            Note: Brier score in the mean tuple is negated for Optuna maximization;
+            brier_per_fold contains raw (positive) Brier scores.
 
         Raises
         ------
@@ -532,8 +622,9 @@ class OptunaSearchCV(BaseEstimator):
         if not auroc_scores:
             raise ValueError("All CV folds had single class, cannot compute metrics")
 
-        # Return (AUROC, -Brier) - negated Brier for maximization
-        return (float(np.mean(auroc_scores)), -float(np.mean(brier_scores)))
+        # Return means + per-fold arrays
+        means = (float(np.mean(auroc_scores)), -float(np.mean(brier_scores)))
+        return means, auroc_scores, brier_scores
 
     def _select_from_pareto_frontier(self):
         """Select best model from Pareto frontier using configured strategy.

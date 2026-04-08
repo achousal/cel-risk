@@ -1,6 +1,6 @@
 """Cross-validation and Optuna configuration schemas for CeD-ML pipeline."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -39,6 +39,23 @@ class OptunaConfig(BaseModel):
     load_if_exists: bool = False
     save_study: bool = True
     save_trials_csv: bool = True
+    storage_backend: Literal["journal", "sqlite", "none"] = Field(
+        default="none",
+        description="Storage backend selector: 'journal' for JournalStorage, 'sqlite' for SQLite, 'none' for in-memory",
+    )
+    user_attrs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="User attributes to tag on the Optuna study (factorial metadata)",
+    )
+    warm_start_params_file: str | None = Field(
+        default=None,
+        description="Path to JSON file of scout top-K params per model for warm-starting",
+    )
+    warm_start_top_k: int = Field(
+        default=5,
+        ge=1,
+        description="Number of scout params to enqueue per model",
+    )
     direction: Literal["minimize", "maximize"] | None = None
 
     # Multi-objective optimization settings
