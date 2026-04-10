@@ -1,13 +1,13 @@
 # Master Plan: Optimal Setup Convergence
 
-**Updated:** 2026-04-08
+**Updated:** 2026-04-10
 **Status:** Infrastructure complete. V0 gate ready to submit.
 
 ---
 
 ## Purpose
 
-Single index for the factorial experiment and everything it depends on. Gen 1 experiments are archived in `_gen1_archive/` — they produced the inputs; the factorial produces the decisions.
+Single index for the factorial experiment and everything it depends on. Gen 1 experiments are archived in `gen1/` — they produced the inputs; the factorial produces the decisions.
 
 ---
 
@@ -32,6 +32,16 @@ experiments/optimal-setup/
 │       │   └── v2_01_pareto_front.R        # AUROC-Brier Pareto front
 │       ├── figures/                        # generated figures
 │       └── tables/                         # generated tables
+├── incident-validation/                    # all incident validation experiments
+│   ├── lr/                                 # LR_EN run: scripts + results notes
+│   │   └── RESULTS_LR_EN.md               # LR_EN incident validation findings
+│   ├── svm/                                # SVM L1/L2 runs: scripts
+│   │   ├── run_incident_validation_svm.py
+│   │   ├── submit_incident_validation_svm.sh
+│   │   └── submit_incident_validation_svm_parallel.sh
+│   └── analysis/                           # cross-model comparison analysis
+│       ├── incident_validation_comparison.R  # 5-figure comparison (LR_EN, SVM L1, SVM L2)
+│       └── out/                            # generated figures + report
 ├── sweeps/                                 # adaptive sweep runner infrastructure
 │   ├── sweep_schema.py                     # Pydantic: SweepSpec, ParameterDef, SweepConstraints
 │   ├── sweep_config_overlay.py             # config overlay via _deep_merge
@@ -44,7 +54,7 @@ experiments/optimal-setup/
 │   │   └── 02_bootstrap_ci.yaml            # eval-only sweep example
 │   ├── ledger/                             # sweep iteration logs
 │   └── staging/                            # staging area for sweep configs
-└── _gen1_archive/                          # frozen — do not run
+└── gen1/                                   # frozen — do not run
     ├── README.md                           # what's here + provenance
     ├── panel-selection/                    # decided: 4-protein BH core
     ├── panel-sweep/                        # decided: 8-10p, pathway, LinSVM_cal
@@ -148,19 +158,53 @@ V6: Ensemble Comparison (post-tree, informational)
 
 ---
 
+## Discovery Methodology
+
+### Vanillamax Principle
+
+The discovery phase identifies protein-disease associations. Its job is **sensitivity** — cast the widest net. Every restriction on data (prevalent handling, control ratio, class weighting) is a hypothesis the factorial tests, not a decision discovery bakes in.
+
+**Vanillamax discovery (ideal, for any new dataset):**
+1. Include ALL cases (incident + prevalent, frac=1.0) — maximum power
+2. Include ALL controls (no downsampling) — natural class distribution
+3. NO class weighting — no artificial loss rebalancing
+4. ALL assayed proteins — no pre-filtering
+5. ALL candidate model architectures — no model bias in consensus
+6. Full-universe BH correction — most conservative significance
+
+The factorial then tests which **restrictions** improve the model:
+- V0: training strategy + control ratio
+- V1: panel composition + ordering
+- V3: class weighting + downsampling
+
+### Separation of Concerns
+
+```
+Discovery (vanillamax) → WHICH proteins are associated? (biology)
+V0 gate               → WHICH data partitioning works best? (methodology)
+V1-V4 factorial        → WHICH model configuration is optimal? (engineering)
+V5 confirmation        → DOES the winner generalize? (validation)
+```
+
+Protein-disease associations are biological — they don't change when you vary training strategy. The strategy changes **model performance**, not **which proteins matter**. This is why panels derived under one strategy are valid inputs to V0: the biology is the same, only the partitioning differs.
+
+---
+
 ## Gen 1 Inputs (archived, read-only)
 
-Gen 1 experiments produced the data the factorial consumes. Their scientific rationale is in `_gen1_archive/{experiment}/DESIGN.md`. Their results live in `results/` (not archived).
+Gen 1 experiments produced the data the factorial consumes. Their scientific rationale is in `gen1/{experiment}/DESIGN.md`. Their results live in `results/` (not archived).
 
-| Gen 1 Decision | Result | Consumed by factorial as |
-|---|---|---|
-| 4-protein BH core | tgm2, cpa2, itgb7, gip | Significance count size rule (=4) |
-| 8-10p operating range | Sweep saturation data | 3-criterion size rules in manifest |
-| Pathway order preferred | 5% AUROC variance from order | Consensus vs stream-balanced comparison (R1 vs R2) |
-| LinSVM_cal Pareto-optimal | Dominates AUROC-Brier frontier | Tested across all recipes in V2 |
-| Incident-only + log weights | AUPRC 0.215, AUROC 0.867 | V0 gate prior; factorial locks or revises |
-| OOF/RFE importance rankings | Per-model feature orderings | MS_* model-specific recipe orderings |
-| Bootstrap stability features | T2 trunk feature list | R3_incident_sparse recipe |
+**Gen1 caveat:** Discovery ran under `prevalent_train_frac: 0.5`, `train_control_per_case: 5`, log class weights — not vanillamax. The BH core (4p) is robust to this. The 8p boundary and model-specific orderings may reflect restricted settings. V0 and V1 compensate. On a new dataset, run vanillamax discovery first.
+
+| Gen 1 Decision | Result | Consumed by factorial as | Vanillamax sensitive? |
+|---|---|---|---|
+| 4-protein BH core | tgm2, cpa2, itgb7, gip | Significance count size rule (=4) | No — survives full-universe BH under any partitioning |
+| 8-10p operating range | Sweep saturation data | 3-criterion size rules in manifest | Moderate — boundary could shift under vanillamax |
+| Pathway order preferred | 5% AUROC variance from order | Consensus vs stream-balanced comparison (R1 vs R2) | Low — ordering is a ranking question, not a selection question |
+| LinSVM_cal Pareto-optimal | Dominates AUROC-Brier frontier | Tested across all recipes in V2 | Low — V2 re-tests under locked strategy |
+| Incident-only + log weights | AUPRC 0.215, AUROC 0.867 | V0 gate prior; factorial locks or revises | N/A — this IS what V0 revisits |
+| OOF/RFE importance rankings | Per-model feature orderings | MS_* model-specific recipe orderings | Moderate — rankings from restricted training |
+| Bootstrap stability features | T2 trunk feature list | R3_incident_sparse recipe | Low — incident-only by design |
 
 ---
 
