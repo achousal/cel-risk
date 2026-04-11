@@ -133,13 +133,15 @@ p_heat <- strategy_all |>
   geom_text(aes(label = sprintf("%.3f", mean_auprc)), size = 3) +
   facet_wrap(~model) +
   scale_fill_viridis_c(option = "mako", direction = -1,
-                       limits = c(0.12, 0.23), oob = squish) +
+                       limits = c(0.12, 0.24), oob = squish,
+                       breaks = seq(0.12, 0.24, by = 0.03)) +
   labs(title = "Strategy x Weighting: Mean CV AUPRC",
        x = "Weight scheme", y = "Training strategy",
        fill = "AUPRC",
-       caption = "5-fold CV, Optuna-tuned hyperparameters") +
+       caption = "UK Biobank proteomics | N=44,174 (119 incident dev, 29 incident test) | 5-fold CV, Optuna-tuned | 2,920 Olink proteins") +
   theme_cel() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.key.width = unit(1.5, "cm"))
 
 save_fig(p_heat, "fig1_strategy_heatmap", width = 10, height = 4.5)
 
@@ -161,9 +163,10 @@ p_folds <- ggplot(cv_best, aes(x = model, y = auprc, color = model)) +
   scale_color_manual(values = MODEL_COLORS, guide = "none") +
   labs(title = "CV AUPRC by fold (best strategy per model)",
        subtitle = paste0(
-         "LR: incident_only+log | SVM L1: incident_only+sqrt | SVM L2: incident_only+none"
+         "LR: incident_only+log | SVM L1: incident_only+log | SVM L2: incident_only+none"
        ),
-       x = NULL, y = "AUPRC") +
+       x = NULL, y = "AUPRC",
+       caption = "5-fold outer CV | 3-fold inner Optuna (50 trials) | AUPRC objective | Crossbar = mean") +
   theme_cel()
 
 save_fig(p_folds, "fig2_fold_auprc", width = 5, height = 4.5)
@@ -231,7 +234,10 @@ p_roc <- ggplot(roc_data, aes(x = 1 - specificity, y = sensitivity, color = mode
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey60") +
   scale_color_manual(values = MODEL_COLORS_RAW, labels = MODEL_LABELS) +
   coord_equal() +
-  labs(title = "ROC (locked test set)", x = "FPR", y = "TPR", color = NULL) +
+  labs(title = "ROC (locked test set)", x = "FPR", y = "TPR", color = NULL,
+       caption = sprintf("Locked test: %d incident + %d controls",
+                         sum(test_all$y_true[test_all$model == "LR_EN"] == 1),
+                         sum(test_all$y_true[test_all$model == "LR_EN"] == 0))) +
   theme_cel()
 
 prevalence <- test_all |>
@@ -334,7 +340,11 @@ p_coef <- ranked |>
   scale_x_continuous(trans = "reverse") +
   labs(title = "Feature importance rank (top 30 by mean rank)",
        subtitle = "Rank within each model by |coefficient|",
-       x = "Rank (1 = most important)", y = NULL, color = NULL) +
+       x = "Rank (1 = most important)", y = NULL, color = NULL,
+       caption = sprintf("Active features: LR_EN=%d | SVM_L1=%d | SVM_L2=%d | Bootstrap stability selection, correlation-pruned",
+                         length(active_sets[["LR_EN"]]),
+                         length(active_sets[["SVM_L1"]]),
+                         length(active_sets[["SVM_L2"]]))) +
   theme_cel() +
   theme(panel.grid.major.x = element_line(color = "grey90"))
 
@@ -362,9 +372,11 @@ p_core <- ggplot(core_long, aes(x = coefficient, y = protein, color = model)) +
   geom_point(size = 2.5, alpha = 0.8) +
   scale_color_manual(values = MODEL_COLORS, labels = MODEL_LABELS) +
   labs(title = sprintf("Core features: non-zero in all 3 models (n=%d)", length(core_proteins)),
-       subtitle = "Coefficient direction and relative magnitude",
+       subtitle = sprintf("Coefficient direction and relative magnitude | %d/%d sign-consistent (%.0f%%)",
+                          sum(core_table$sign_consistent), nrow(core_table),
+                          mean(core_table$sign_consistent) * 100),
        x = "Coefficient", y = NULL, color = NULL,
-       caption = "Note: coefficient scales differ across model types") +
+       caption = "Coefficients from final refit on full dev set | Scales differ across model types | Age+sex residualized proteins") +
   theme_cel()
 
 save_fig(p_core, "fig5_core_features", width = 7, height = 8)

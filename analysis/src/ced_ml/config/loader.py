@@ -64,18 +64,22 @@ def load_yaml(file_path: str | Path) -> dict[str, Any]:
     if base_ref is not None:
         base_path = (file_path.parent / base_ref).resolve()
 
-        # Validate that base_path is within the project/config directory
-        config_root = file_path.parent.resolve()
+        # Validate that base_path stays within the project root
+        from ced_ml.utils.paths import get_project_root
+
         try:
-            # Check if base_path is relative to config_root
-            base_path.relative_to(config_root)
+            project_root = get_project_root()
+        except (RuntimeError, OSError):
+            project_root = file_path.parent.resolve()
+
+        try:
+            base_path.relative_to(project_root)
         except ValueError as e:
-            # Path is outside config directory
             raise ValueError(
-                f"_base reference escapes config directory: {base_ref}\n"
+                f"_base reference escapes project root: {base_ref}\n"
                 f"Config file: {file_path}\n"
                 f"Resolved base path: {base_path}\n"
-                f"Allowed directory: {config_root}"
+                f"Project root: {project_root}"
             ) from e
 
         base_dict = load_yaml(base_path)

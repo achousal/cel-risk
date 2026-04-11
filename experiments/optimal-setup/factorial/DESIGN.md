@@ -52,6 +52,25 @@ Model-specific recipes filter the sweep to the pinned model before running the u
 
 The 3-criterion rule uses old sweep data (50 Optuna trials) to pick sizes. The factorial re-runs everything under production conditions (200 trials). This is intentional — the rule is a pre-registration step, not the final arbiter. V1 in the validation tree adjudicates.
 
+### Vanillamax discovery principle
+
+Protein-disease associations are biological, not methodological. The discovery phase's job is **sensitivity** (don't miss real signals). Every restriction on data (prevalent handling, control ratio, class weighting, downsampling) is a hypothesis that the factorial should test, not a decision the discovery should bake in.
+
+**Vanillamax discovery settings (ideal for any dataset):**
+
+| Setting | Vanillamax | Rationale |
+|---------|-----------|-----------|
+| Cases | All available (incident + prevalent, frac=1.0) | Maximum power to detect associations |
+| Controls | All available (no downsampling) | Natural class distribution |
+| Class weighting | None | No artificial loss rebalancing |
+| Proteins | All assayed | No pre-filtering |
+| Models | All candidate architectures | No model bias in consensus |
+| Significance | Full-universe BH correction | Most conservative |
+
+The factorial then tests which **restrictions** improve the model: V0 (strategy, control ratio), V1 (panel composition), V3 (weighting, downsampling).
+
+**Gen1 caveat (this dataset):** The discovery phase used `prevalent_train_frac: 0.5`, `train_control_per_case: 5`, and log class weights — all deviations from vanillamax. The BH core (4p) is robust to this (survives full-universe correction even with restrictions), but the 8p boundary and model-specific orderings may reflect the restricted settings. V0 and V1 compensate by testing across strategies and recipes, but on a new dataset the discovery sweep should run vanillamax from the start.
+
 ---
 
 ## Ordering Strategies

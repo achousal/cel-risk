@@ -1,0 +1,31 @@
+{
+  "ordering_type": "abs_coefficient_descending",
+  "params": {
+    "coef_column": "mean_coef",
+    "stability_column": "stability_freq",
+    "stability_threshold": 1.0,
+    "sign_column": "sign_consistent"
+  },
+  "n_proteins_ordered": 19,
+  "protein_order": [
+    "tgm2_resid",
+    "cpa2_resid",
+    "muc2_resid",
+    "cxcl9_resid",
+    "ckmt1a_ckmt1b_resid",
+    "nos2_resid",
+    "tnfrsf8_resid",
+    "itgb7_resid",
+    "il2ra_resid",
+    "sult2a1_resid",
+    "spink4_resid",
+    "ocln_resid",
+    "dsc2_resid",
+    "areg_resid",
+    "klrb1_resid",
+    "il32_resid",
+    "dctpp1_resid",
+    "cd7_resid",
+    "tnfrsf17_resid"
+  ]
+}

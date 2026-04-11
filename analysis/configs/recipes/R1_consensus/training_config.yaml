@@ -1,0 +1,251 @@
+# Training Configuration (Production)
+# Model training for Celiac Disease risk prediction
+# This is the single source of truth -- HPC production values are the defaults.
+
+# Cross-validation
+cv:
+  folds: 5
+  repeats: 3
+  scoring: roc_auc  # Options: roc_auc, average_precision, neg_brier_score
+  # n_iter: 2  # Global override: if set, overrides ALL per-model n_iter values below
+  inner_folds: 3
+  random_state: 42
+  grid_randomize: true  # Randomize numeric grid values for more diverse search
+
+# Ensemble training: Use separate CLI command `ced train-ensemble`
+# See docs/reference/CLI_REFERENCE.md for usage
+ensemble:
+  meta_penalty: l2
+  meta_c: 100.0  # High C: 4 features, n~900 — no overfitting risk
+  calibrate_meta: true  # Isotonic post-hoc corrects structural probability compression from stacking
+  meta_calibration_method: isotonic
+  calibration_cv: 5
+
+# Optuna hyperparameter optimization (optional alternative to RandomizedSearchCV)
+optuna:
+  enabled: true  # Set to true to use Optuna instead of RandomizedSearchCV
+  n_trials: 300
+    # Multi-objective optimization (optional)
+  multi_objective: true  # Set to true to optimize multiple metrics
+  objectives: ["roc_auc", "neg_brier_score"]  # Metrics to optimize (requires multi_objective=true and 2+ objectives)
+  pareto_selection: "knee"  # How to pick from Pareto frontier: knee (closest to ideal), extreme_auroc (max AUROC), balanced (max sum of normalized metrics)
+  timeout: null  # Optional timeout in seconds (null = no limit)
+  sampler: tpe  # Options: tpe, random, cmaes, grid
+  sampler_seed: 42  # Seed for reproducibility
+  pruner: hyperband  # Options: median, percentile, hyperband, none
+  pruner_n_startup_trials: 20  # Trials before pruning starts
+  pruner_percentile: 25.0  # Percentile for percentile pruner (0-100)
+  n_jobs: 1  # Sequential trials required for (1) memory control with CalibratedClassifierCV
+            # and (2) effective Bayesian optimization - parallelization prevents TPE sampler from
+            # using recent trial results to inform next hyperparameter choices
+
+# Feature selection
+# Switch strategy by changing feature_selection_strategy value
+# All parameters for all strategies are defined below
+features:
+  # Strategy selection (change this to switch methods)
+  feature_selection_strategy: multi_stage  # Options: multi_stage, rfecv, fixed_panel, none
+  # - multi_stage: Fast (~30 min), screen -> k-best -> stability -> corr-prune
+  # - rfecv: Rigorous (~4-5h with k-best=100), screen -> RFE with CV
+  # - fixed_panel: Use pre-specified panel from CSV (see fixed_panel_csv below)
+  # - none: No feature selection (use all screened features)
+
+  # Common: Screening (used by all strategies)
+  screen_method: mannwhitney  # "mannwhitney" or "f_classif"
+  screen_top_n: 1000  # Stage 1: Mann-Whitney -> keep top 1000
+
+  # Strategy 1: Multi-stage parameters (used if strategy=multi_stage)
+  k_grid: [100, 150, 200, 300, 400]  # K-best tuning grid
+  stability_thresh: 0.95  # Stability selection threshold (was 0.70; raised to reduce panel size)
+
+  # Strategy 2: RFECV parameters (used if strategy=rfecv)
+  rfe_kbest_prefilter: false  # Enable k-best pre-filter (5x speedup)
+  rfe_kbest_k: 100  # Reduces ~300 -> ~100 proteins before RFECV
+  rfe_target_size: 50  # Minimum features (stops at 50//2 = 25)
+  rfe_step_strategy: adaptive  # Options: adaptive, linear, geometric, or int
+  rfe_cv_folds: 3  # Inner CV folds for RFE
+  rfe_consensus_thresh: 0.80  # Consensus threshold across CV repeats
+
+  # Model-Specific Selector (optional, multi_stage only)
+  # Adds a model-specific feature selection step between k-best and classifier
+  # Each model type uses its own inductive bias (L1 coefficients, tree importances)
+  # to produce genuinely model-specific feature subsets for meaningful consensus
+  model_selector: true  # Set to true to enable (opt-in, backward compatible)
+  model_selector_threshold: "mean"  # Threshold for SelectFromModel (median, mean, or numeric)
+  model_selector_max_features: null  # Max features to keep (null = no limit)
+  model_selector_min_features: 10  # Minimum features floor (prevents empty selection)
+
+  # Fixed Panel Configuration (used when feature_selection_strategy='fixed_panel')
+  # The pipeline expects a file named 'fixed_panel.csv' in the data/ folder
+  # CSV format: 'protein' column OR features in first column (one per row, protein names only)
+  # Note: age, BMI, sex, ethnicity are automatically added - do not include in CSV
+  fixed_panel_csv: "fixed_panel.csv"
+
+  # OOF Importance (computed during training CV loop)
+  compute_oof_importance: true  # Enable per-fold importance extraction
+  oof_importance_grouped: true  # Group correlated features before permutation (recommended)
+  grouped_threshold: 0.85  # |Spearman r| threshold for grouping correlated features
+  pfi_n_repeats: 100  # Permutation repeats per cluster for tree models (higher = lower variance)
+
+  # SHAP Explainability
+  shap:
+    enabled: true
+    compute_oof_shap: true
+    compute_final_shap: true
+    max_background_samples: 100
+    background_strategy: random_train
+    tree_feature_perturbation: tree_path_dependent
+    tree_model_output: auto   # RF->probability, XGBoost->raw
+    max_eval_samples: 0
+    save_raw_values: true
+    save_val_shap: true
+    raw_dtype: float32
+    positive_label: 1
+
+# Model-specific hyperparameter search spaces
+# These define the ranges for RandomizedSearchCV or Optuna optimization
+#
+# IMPORTANT: Parameters like max_iter and solver are FIXED (not tuned).
+# They are set as baseline model parameters used by BOTH RandomizedSearchCV and Optuna.
+# Only parameters with grids/ranges (C, l1_ratio, class_weight) are tuned.
+
+# Logistic Regression (LR_EN, LR_L1)
+lr:
+  # Tuned parameters (explored by RandomizedSearchCV/Optuna):
+  C_min: 0.001
+  C_max: 10.0
+  C_points: 20
+  l1_ratio: [0.0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0] # Expanded to include L1-heavy
+  class_weight_options: "balanced"  # Options: "None", "balanced", "{0:1,1:5}"
+
+  # Optuna-specific ranges (optional, override C_min/C_max):
+  optuna_C: [0.01, 100.0]
+  optuna_l1_ratio: [0.0, 1.0]
+
+  # Fixed parameters (used as baseline for all trials):
+  solver: saga              # Solver supporting L1/ElasticNet
+  max_iter: 10000           # Ensure convergence with 5-fold CV
+
+  # Search algorithm settings:
+  n_iter: 4                 # RandomizedSearchCV iterations (ignored if optuna.enabled=true)
+
+# Linear SVM (LinSVM_cal) - wrapped in CalibratedClassifierCV
+svm:
+  # Tuned parameters (explored by RandomizedSearchCV/Optuna):
+  C_min: 0.0001
+  C_max: 10.0
+  C_points: 15
+  class_weight_options: "balanced"
+
+  # Optuna-specific ranges (optional, override C_min/C_max):
+  optuna_C: [1.0e-4, 100.0]         # Expanded for exploration
+
+  # Fixed parameters (used as baseline for all trials):
+  max_iter: 10000           # Increased for convergence (was 5000)
+
+  # Search algorithm settings:
+  n_iter: 6                 # RandomizedSearchCV iterations (ignored if optuna.enabled=true)
+
+# Random Forest (RF)
+rf:
+  # Tuned parameters (explored by RandomizedSearchCV/Optuna):
+  n_estimators_grid: [100, 300, 500, 700]    # Expanded (was [100, 300, 500])
+  max_depth_grid: [null, 10, 20, 30, 50]     # Expanded (was [null, 10, 20, 30])
+  min_samples_split_grid: [2, 5, 10, 20]     # Expanded (was [2, 5, 10])
+  min_samples_leaf_grid: [1, 2, 4, 8]        # Expanded (was [1, 2, 4])
+  max_features_grid: ["sqrt", "log2", 0.3, 0.5, 0.7]  # Expanded (was ["sqrt", "log2", 0.5])
+  class_weight_options: "balanced"
+
+  # Optuna-specific ranges (optional, override grid-derived ranges)
+  optuna_n_estimators: [100, 800]            # Exploratory range
+  optuna_max_depth: [5, 30]                  # Capped at 30 (was 50) to reduce overfitting
+  optuna_min_samples_split: [2, 30]          # Exploratory range
+  optuna_min_samples_leaf: [2, 20]           # Raised floor to 2, cap to 20 (was 1-15)
+  optuna_max_features: [0.05, 0.8]           # Exploratory range
+
+  # Search algorithm settings:
+  n_iter: 2                 # RandomizedSearchCV iterations (ignored if optuna.enabled=true)
+
+# XGBoost
+xgboost:
+  # Tuned parameters (explored by RandomizedSearchCV/Optuna):
+  n_estimators_grid: [500, 800, 1200, 1600, 2000]
+  max_depth_grid: [3, 4, 5, 6, 7]                        # Constrained (was [3-8])
+  learning_rate_grid: [0.005, 0.01, 0.02, 0.03, 0.05]
+  subsample_grid: [0.5, 0.6, 0.7, 0.8]
+  colsample_bytree_grid: [0.4, 0.5, 0.6, 0.7]
+  scale_pos_weight_grid: [3.0, 5.0, 7.0, 10.0]
+  min_child_weight_grid: [5, 10, 15, 20, 30]             # Conservative (was [1-10])
+  gamma_grid: [0.5, 1.0, 2.0, 3.0, 5.0]                 # Higher split cost (was [0.0-2.0])
+  reg_alpha_grid: [0.01, 0.1, 1.0, 5.0, 10.0]           # Stronger L1 (was [0.0-1.0])
+  reg_lambda_grid: [1.0, 5.0, 10.0, 30.0, 50.0, 100.0]  # Much stronger L2
+
+  # Optuna-specific ranges - regularized for production
+  optuna_n_estimators: [500, 1000]         # Capped at 1000 (was 2500) to limit overfitting via boosting rounds
+  optuna_max_depth: [3, 7]                 # Shallow only (was 3-10)
+  optuna_learning_rate: [0.005, 0.05]      # Slow (was 0.005-0.3)
+  optuna_min_child_weight: [5.0, 30.0]     # Conservative (was 0.1-20.0)
+  optuna_gamma: [0.5, 5.0]                # Higher split cost (was 0.0-2.0)
+  optuna_subsample: [0.5, 0.8]            # Aggressive row sampling (was 0.5-1.0)
+  optuna_colsample_bytree: [0.4, 0.7]     # Aggressive col sampling (was 0.3-1.0)
+  optuna_reg_alpha: [0.01, 10.0]           # Force L1 (was 1e-8-10.0)
+  optuna_reg_lambda: [1.0, 100.0]          # Force L2 (was 0.01-50.0)
+
+  # Fixed parameters (used as baseline for all trials):
+  tree_method: hist                            # Algorithm: hist (fast), exact, approx
+
+  # Search algorithm settings:
+  n_iter: 2                 # RandomizedSearchCV iterations (ignored if optuna.enabled=true)
+
+# Probability calibration
+# Controls how model probabilities are calibrated for better reliability
+calibration:
+  enabled: true  # Whether to apply any calibration
+  strategy: oof_posthoc  # Options: per_fold (default), oof_posthoc, none
+  # - per_fold: Apply CalibratedClassifierCV inside each CV fold (current behavior, simple)
+  # - oof_posthoc: Fit calibrator on pooled OOF predictions after CV (eliminates ~0.5-1% bias)
+  # - none: No calibration applied
+  method: logistic_intercept  # Global default: 1-param, lowest variance (safe at n_pos=148)
+                              # Options: isotonic, logistic_full (two-param Platt),
+                              #   logistic_intercept (one-param), beta (Kull et al. 2017, three-param)
+  cv: 5  # CV folds for per_fold strategy
+  # Per-model overrides: tree models need shape correction, not just intercept shift
+  per_model:
+    RF:
+      method: beta             # 3-param, corrects asymmetric tree-probability distortion
+    XGBoost:
+      method: beta             # Same rationale as RF
+
+# Thresholding
+thresholds:
+  objective: fixed_spec  # "max_f1", "max_fbeta", "youden", "fixed_spec", "fixed_ppv"
+  fixed_spec: 0.95  # Target 95% specificity
+  fbeta: 1.0  # Beta parameter for max_fbeta objective
+  fixed_ppv: 0.10  # Target PPV for fixed_ppv objective
+  threshold_source: val  # Select threshold on VAL set
+  target_prevalence_source: test  # Use TEST prevalence for calibration
+  target_prevalence_fixed: null  # Override prevalence for calibration
+  risk_prob_source: test  # Options: test, val
+
+# Evaluation
+evaluation:
+  test_ci_bootstrap: true
+  n_boot: 1000  # Publication-ready CIs
+  boot_random_state: 0
+  learning_curve: true
+  lc_train_sizes: [0.1, 0.25, 0.5, 0.75, 1.0]
+  feature_reports: true
+  feature_report_max: 200
+  # Specificity targets for multi-target reporting
+  control_spec_targets: [0.90, 0.95, 0.99]
+  toprisk_fracs: [0.01, 0.05, 0.10]
+
+# Decision curve analysis
+dca:
+  compute_dca: true
+  dca_threshold_min: 0.0005
+  dca_threshold_max: 1.0
+  dca_threshold_step: 0.001
+  dca_report_points: [0.01, 0.05, 0.10, 0.20]
+
+# Outputs: See configs/output_config.yaml for all artifact and plot controls

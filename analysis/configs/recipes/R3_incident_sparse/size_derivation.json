@@ -1,0 +1,28 @@
+{
+  "stability_threshold": 1.0,
+  "total_features": 134,
+  "stable_count": 57,
+  "sign_consistent_count": 49,
+  "qualifying_count": 19,
+  "qualifying_features": [
+    "tgm2_resid",
+    "tnfrsf8_resid",
+    "itgb7_resid",
+    "ckmt1a_ckmt1b_resid",
+    "cxcl9_resid",
+    "cpa2_resid",
+    "nos2_resid",
+    "muc2_resid",
+    "cd7_resid",
+    "areg_resid",
+    "dctpp1_resid",
+    "il32_resid",
+    "klrb1_resid",
+    "il2ra_resid",
+    "dsc2_resid",
+    "ocln_resid",
+    "spink4_resid",
+    "sult2a1_resid",
+    "tnfrsf17_resid"
+  ]
+}

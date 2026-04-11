@@ -2,25 +2,37 @@
 """Compile results from factorial cells into a single results table.
 
 Supports two compilation modes:
-  1. Filesystem-based (default): reads per-cell aggregated_results.csv files
+  1. Filesystem-based (default): reads per-cell test_metrics_summary.csv
+     from the deterministic directory layout produced by submit_experiment.sh
   2. Optuna storage-based: reads directly from JournalStorage files
 
 Usage:
-    # Filesystem mode
+    # Filesystem mode — V0 gate
     python compile_factorial.py \
-        --manifest configs/recipes/cell_manifest.csv \
-        --results-dir results/ \
-        --output results/factorial_compiled.csv
+        --manifest analysis/configs/recipes/v0/v0_cell_manifest.csv \
+        --results-dir results/v0_gate \
+        --output results/v0_gate/v0_compiled.csv
 
-    # Optuna storage mode
+    # Filesystem mode — full factorial
+    python compile_factorial.py \
+        --manifest analysis/configs/recipes/cell_manifest.csv \
+        --results-dir results/factorial \
+        --output results/factorial/factorial_compiled.csv
+
+    # Optuna storage mode (unchanged)
     python compile_factorial.py \
         --optuna-storage-dir /path/to/optuna/ \
         --output results/factorial_compiled_optuna.csv
+
+Directory layout convention (produced by submit_experiment.sh):
+    {results_dir}/{recipe_id}/{cell_name}/run_{recipe_id}__{cell_name}/{model}/
+        aggregated/metrics/test_metrics_summary.csv
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -28,6 +40,50 @@ from pathlib import Path
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Columns that get the summary_ prefix for validate_tree.R compatibility.
+# Only columns ending with these suffixes are metric aggregates.
+_METRIC_SUFFIXES = ("_mean", "_std", "_ci95_lo", "_ci95_hi")
+
+# Columns from the pipeline that should NOT be prefixed even if they
+# happen to match a suffix (grouping/identity columns).
+_NO_PREFIX = {"cell_name", "cell_id", "recipe_id", "scenario", "model"}
+
+
+def _build_cell_path(
+    results_dir: Path,
+    recipe_id: str,
+    cell_name: str,
+    model: str,
+) -> Path:
+    """Deterministic path to per-cell aggregated test metrics.
+
+    Layout: {results_dir}/{recipe_id}/{cell_name}/
+                run_{recipe_id}__{cell_name}/{model}/
+                aggregated/metrics/test_metrics_summary.csv
+    """
+    run_id = f"{recipe_id}__{cell_name}"
+    return (
+        results_dir
+        / recipe_id
+        / cell_name
+        / f"run_{run_id}"
+        / model
+        / "aggregated"
+        / "metrics"
+        / "test_metrics_summary.csv"
+    )
+
+
+def _rename_metric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Prefix metric aggregate columns with summary_ for validate_tree.R."""
+    rename_map = {}
+    for col in df.columns:
+        if col in _NO_PREFIX:
+            continue
+        if any(col.endswith(suffix) for suffix in _METRIC_SUFFIXES):
+            rename_map[col] = f"summary_{col}"
+    return df.rename(columns=rename_map)
 
 
 def compile_factorial(
@@ -40,56 +96,72 @@ def compile_factorial(
     Parameters
     ----------
     manifest_csv : Path
-        Global cell_manifest.csv from config generation.
+        Cell manifest CSV (v0_cell_manifest.csv or cell_manifest.csv).
     results_dir : Path
-        Root results directory.
+        Root results directory (e.g., results/v0_gate or results/factorial).
     output_path : Path
         Where to write compiled CSV.
 
     Returns
     -------
     pd.DataFrame
-        Compiled results with factorial factor columns.
+        Compiled results with factorial factor columns and summary_ prefixed
+        metric columns ready for validate_tree.R.
     """
     manifest = pd.read_csv(manifest_csv)
     logger.info("Cell manifest: %d cells", len(manifest))
 
+    # Detect which factorial columns are available
+    has_strategy = "strategy" in manifest.columns
+    has_ctrl_ratio = "control_ratio" in manifest.columns
+    has_calibration = "calibration" in manifest.columns
+    has_weighting = "weighting" in manifest.columns
+    has_downsampling = "downsampling" in manifest.columns
+
     compiled_rows = []
-    missing = 0
+    missing = []
 
     for _, cell in manifest.iterrows():
-        cell_id = cell["cell_id"]
+        cell_id = int(cell["cell_id"])
         recipe_id = cell["recipe_id"]
         model = cell["model"]
-
-        # Locate per-cell aggregated results
-        # Convention: results/<run_id>/<model>/aggregated_results.csv
-        # The run_id encodes recipe + cell info
         cell_name = cell["cell_name"]
 
-        # Search for aggregated results
-        candidates = list(results_dir.glob(f"**/{model}/aggregated_results.csv"))
-        # Filter to those matching this cell
-        cell_results = [c for c in candidates if cell_name in str(c)]
+        metrics_path = _build_cell_path(results_dir, recipe_id, cell_name, model)
 
-        if not cell_results:
-            logger.warning("No results found for cell %d (%s/%s)", cell_id, recipe_id, cell_name)
-            missing += 1
+        if not metrics_path.exists():
+            missing.append((cell_id, recipe_id, cell_name, str(metrics_path)))
             continue
 
-        # Read the first matching result
-        result_df = pd.read_csv(cell_results[0])
+        result_df = pd.read_csv(metrics_path)
 
-        # Add factorial factor columns
+        # Rename metric columns: auroc_mean -> summary_auroc_mean
+        result_df = _rename_metric_columns(result_df)
+
+        # Add factorial identity columns
         result_df["cell_id"] = cell_id
         result_df["recipe_id"] = recipe_id
-        result_df["factorial_model"] = model
-        result_df["factorial_calibration"] = cell["calibration"]
-        result_df["factorial_weighting"] = cell["weighting"]
-        result_df["factorial_downsampling"] = cell["downsampling"]
         result_df["cell_name"] = cell_name
+        result_df["factorial_model"] = model
+
+        if has_calibration:
+            result_df["factorial_calibration"] = cell["calibration"]
+        if has_weighting:
+            result_df["factorial_weighting"] = cell["weighting"]
+        if has_downsampling:
+            result_df["factorial_downsampling"] = cell["downsampling"]
+        if has_strategy:
+            result_df["factorial_strategy"] = cell["strategy"]
+        if has_ctrl_ratio:
+            result_df["factorial_control_ratio"] = cell["control_ratio"]
 
         compiled_rows.append(result_df)
+
+    # Report missing cells
+    if missing:
+        logger.warning("%d of %d cells missing results:", len(missing), len(manifest))
+        for cell_id, recipe, name, path in missing:
+            logger.warning("  cell %d (%s/%s): %s", cell_id, recipe, name, path)
 
     if not compiled_rows:
         logger.error("No results found for any cell")
@@ -97,18 +169,26 @@ def compile_factorial(
 
     compiled = pd.concat(compiled_rows, ignore_index=True)
 
-    # Sort by recipe, model, calibration, weighting, downsampling
-    compiled = compiled.sort_values(
-        ["recipe_id", "factorial_model", "factorial_calibration",
-         "factorial_weighting", "factorial_downsampling"],
-        ignore_index=True,
-    )
+    # Sort by available factorial columns
+    sort_cols = [
+        c for c in [
+            "recipe_id", "factorial_model", "factorial_calibration",
+            "factorial_weighting", "factorial_downsampling",
+            "factorial_strategy", "factorial_control_ratio",
+        ]
+        if c in compiled.columns
+    ]
+    if sort_cols:
+        compiled = compiled.sort_values(sort_cols, ignore_index=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     compiled.to_csv(output_path, index=False)
     logger.info(
         "Compiled %d rows from %d cells (%d missing) -> %s",
-        len(compiled), len(manifest), missing, output_path,
+        len(compiled),
+        len(manifest) - len(missing),
+        len(missing),
+        output_path,
     )
     return compiled
 
@@ -200,7 +280,7 @@ def compile_from_storage(
 
                 row["best_params"] = str(selected.params)
 
-                # Fold-level variance (Enhancement 4)
+                # Fold-level variance
                 if "auroc_std" in selected.user_attrs:
                     row["auroc_std"] = selected.user_attrs["auroc_std"]
                 if "brier_std" in selected.user_attrs:
@@ -239,7 +319,7 @@ def main():
     )
     parser.add_argument(
         "--results-dir", type=Path,
-        help="Root results directory (filesystem mode)",
+        help="Root results directory, e.g. results/v0_gate (filesystem mode)",
     )
 
     # Optuna storage mode args
