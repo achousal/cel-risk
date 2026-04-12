@@ -14,6 +14,7 @@ Options are organized by category:
 from ced_ml.cli.options.common import (
     config_option,
     dry_run_option,
+    experiment_option,
     log_level_option,
     run_id_option,
     run_id_required_option,
@@ -40,6 +41,7 @@ __all__ = [
     # Common
     "run_id_option",
     "run_id_required_option",
+    "experiment_option",
     "config_option",
     "dry_run_option",
     "log_level_option",

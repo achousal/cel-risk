@@ -461,11 +461,28 @@ report_lines <- c(
   "",
   sprintf("All three models select **incident_only** as the best training strategy."),
   "",
-  "| Model       | Best strategy     | Best weight | CV AUPRC        | Test AUPRC       | Test AUROC       |",
-  "|-------------|-------------------|-------------|-----------------|------------------|------------------|",
-  sprintf("| LR_EN       | incident_only     | log         | 0.215 +/- 0.061 | 0.188 [.09,.36]  | 0.908 [.83,.98]  |"),
-  sprintf("| SVM L1      | incident_only     | sqrt        | 0.227 +/- 0.071 | 0.199 [.10,.38]  | 0.913 [.84,.97]  |"),
-  sprintf("| SVM L2      | incident_only     | none        | 0.226 +/- 0.056 | 0.210 [.10,.40]  | 0.918 [.83,.98]  |"),
+  "| Model       | Best strategy     | Best weight | CV AUPRC        | Test AUPRC  | Test AUROC  |",
+  "|-------------|-------------------|-------------|-----------------|-------------|-------------|",
+  {
+    # Build dynamic rows from best_per_model + test_metrics
+    model_order <- c("LR_EN", "SVM_L1", "SVM_L2")
+    model_display <- c("LR_EN       ", "SVM L1      ", "SVM L2      ")
+    rows <- character(length(model_order))
+    for (i in seq_along(model_order)) {
+      m <- model_order[i]
+      bp <- best_per_model[best_per_model$model == m, ]
+      tm <- test_metrics[test_metrics$model == m, ]
+      rows[i] <- sprintf(
+        "| %s| %-17s | %-11s | %.3f +/- %.3f | %.3f       | %.3f       |",
+        model_display[i],
+        bp$strategy,
+        bp$weight_scheme,
+        bp$mean_auprc, bp$std_auprc,
+        tm$auprc, tm$auroc
+      )
+    }
+    rows
+  },
   "",
   "**Key findings:**",
   "",
@@ -489,9 +506,22 @@ report_lines <- c(
   "",
   sprintf("| Model  | Panel | Non-zero | Sparsity |"),
   sprintf("|--------|-------|----------|----------|"),
-  sprintf("| LR_EN  | 134   | 28       | 79%%      |"),
-  sprintf("| SVM L1 | 130   | 67       | 48%%      |"),
-  sprintf("| SVM L2 | 130   | 130      | 0%%       |"),
+  {
+    model_order <- c("LR_EN", "SVM_L1", "SVM_L2")
+    model_display <- c("LR_EN ", "SVM L1", "SVM L2")
+    rows <- character(length(model_order))
+    for (i in seq_along(model_order)) {
+      m <- model_order[i]
+      panel_size <- sum(coefs_all$model == m)
+      nonzero <- length(active_sets[[m]])
+      sparsity <- (panel_size - nonzero) / panel_size * 100
+      rows[i] <- sprintf(
+        "| %s | %-5d | %-8d | %.0f%%      |",
+        model_display[i], panel_size, nonzero, sparsity
+      )
+    }
+    rows
+  },
   "",
   sprintf("### Cross-model core features"),
   "",
@@ -551,15 +581,145 @@ report_lines <- c(report_lines,
   "For the factorial (V0 gate), the incident validation confirms:",
   "",
   "1. **Lock incident_only** as the training strategy across all models.",
-  "2. **Weight scheme is a secondary factor** -- test log/sqrt/none but not balanced.",
-  "3. **LR_EN provides the most parsimonious model** (28 features) with only modest",
-  "   performance cost. For interpretability-first applications, LR_EN is preferred.",
-  "4. **SVM L2 has the best point estimate** (AUPRC 0.210) but uses all 130 features",
-  "   with no sparsity. Useful as an upper-bound benchmark.",
-  "5. **SVM L1 is a middle ground** (67 features, AUPRC 0.199) if moderate sparsity",
-  "   is desired.",
+  "2. **Weight scheme is a secondary factor** -- test log/none but not balanced.",
+  sprintf("3. **LR_EN is most parsimonious** (%d features, test AUPRC %.3f) but see",
+          length(active_sets[["LR_EN"]]),
+          test_metrics$auprc[test_metrics$model == "LR_EN"]),
+  "   calibration section -- LR_EN is miscalibrated without post-hoc adjustment.",
+  sprintf("4. **SVM L2 has the best point estimate** (test AUPRC %.3f) and best",
+          test_metrics$auprc[test_metrics$model == "SVM_L2"]),
+  "   calibration -- recommended as primary model.",
+  sprintf("5. **SVM L1 is a middle ground** (%d features, test AUPRC %.3f) if moderate",
+          length(active_sets[["SVM_L1"]]),
+          test_metrics$auprc[test_metrics$model == "SVM_L1"]),
+  "   sparsity is desired.",
+  "",
+  "See companion analyses for calibration metrics (calibration_metrics.csv),",
+  "decision curve analysis (fig7_dca), SHAP-based feature importance (fig9-11),",
+  "and saturation curve (fig8_saturation).",
   ""
 )
+
+# ============================================================================
+# Extended sections -- appended if companion CSVs exist
+# ============================================================================
+
+# --- Calibration Assessment ---
+calib_path <- file.path(OUT_DIR, "calibration_metrics.csv")
+if (file.exists(calib_path)) {
+  calib <- read_csv(calib_path, show_col_types = FALSE)
+  calib_lines <- c(
+    "## Calibration Assessment",
+    "",
+    "| Metric                  | LR_EN   | SVM L1  | SVM L2  | Ideal |",
+    "|-------------------------|---------|---------|---------|-------|"
+  )
+  fmt_row <- function(label, col, fmt = "%.4f", ideal = "") {
+    vals <- sapply(c("LR_EN", "SVM_L1", "SVM_L2"), function(m) {
+      v <- calib[[col]][calib$model_key == m]
+      if (length(v) == 0) return(NA_real_)
+      v
+    })
+    sprintf("| %-23s | %-7s | %-7s | %-7s | %-5s |",
+            label,
+            sprintf(fmt, vals["LR_EN"]),
+            sprintf(fmt, vals["SVM_L1"]),
+            sprintf(fmt, vals["SVM_L2"]),
+            ideal)
+  }
+  calib_lines <- c(calib_lines,
+    fmt_row("ECE", "ece", "%.4f", "0"),
+    fmt_row("ICI (LOESS)", "ici", "%.4f", "0"),
+    fmt_row("Brier score", "brier_score", "%.4f", "0"),
+    fmt_row("Brier reliability", "brier_reliability", "%.4f", "0"),
+    fmt_row("Brier resolution", "brier_resolution", "%.4f", "high"),
+    fmt_row("Calibration intercept", "calibration_intercept", "%.3f", "0"),
+    fmt_row("Calibration slope", "calibration_slope", "%.3f", "1"),
+    fmt_row("Spiegelhalter z", "spiegelhalter_z", "%.3f", "~0"),
+    fmt_row("Spiegelhalter p", "spiegelhalter_p", "%.3g", ">.05"),
+    "",
+    "**Interpretation:** LR_EN shows systematic overestimation (large negative",
+    "intercept, Spiegelhalter p < 0.001). Both SVMs are well-calibrated",
+    "(Spiegelhalter p > 0.9, near-zero ICI). The CalibratedClassifierCV sigmoid",
+    "wrapper on the SVMs is doing meaningful work.",
+    ""
+  )
+  report_lines <- c(report_lines, calib_lines)
+}
+
+# --- Feature overlap (UpSet decomposition) ---
+lr_set <- active_sets[["LR_EN"]]
+svm1_set <- active_sets[["SVM_L1"]]
+svm2_set <- active_sets[["SVM_L2"]]
+overlap_lines <- c(
+  "## Feature Overlap (UpSet decomposition)",
+  "",
+  "| Intersection          | Count |",
+  "|-----------------------|-------|",
+  sprintf("| All 3 models (core)   | %-5d |", length(Reduce(intersect, active_sets))),
+  sprintf("| SVM L1 + SVM L2 only  | %-5d |",
+          length(setdiff(intersect(svm1_set, svm2_set), lr_set))),
+  sprintf("| SVM L2 only           | %-5d |",
+          length(setdiff(svm2_set, union(lr_set, svm1_set)))),
+  "",
+  "The regularization hierarchy is clean: LR_EN active features are a strict",
+  "subset of SVM L1's, which are a strict subset of SVM L2's. Elastic net",
+  "selects the most stable core.",
+  ""
+)
+report_lines <- c(report_lines, overlap_lines)
+
+# --- Saturation curve ---
+sat_path <- file.path(OUT_DIR, "saturation_results.csv")
+if (file.exists(sat_path)) {
+  sat <- read_csv(sat_path, show_col_types = FALSE)
+  sat_lines <- c(
+    "## Saturation Curve (LR_EN, incident_only + log)",
+    "",
+    "| Panel size | CV AUPRC        | Test AUPRC            |",
+    "|-----------:|-----------------|-----------------------|"
+  )
+  for (i in seq_len(nrow(sat))) {
+    r <- sat[i, ]
+    sat_lines <- c(sat_lines, sprintf(
+      "| %10d | %.3f +/- %.3f | %.3f [%.3f, %.3f] |",
+      r$panel_size, r$mean_cv_auprc, r$std_cv_auprc,
+      r$test_auprc, r$test_auprc_lo, r$test_auprc_hi
+    ))
+  }
+  sat_lines <- c(sat_lines,
+    "",
+    "**Knee at N~25-28.** CV AUPRC plateaus near the LR_EN non-zero count.",
+    "Test AUPRC is flat from N=25 onwards -- the 134-feature panel offers no",
+    "test-set advantage over ~25 features. Elastic net regularization arrived",
+    "at a near-optimal panel size without needing this curve as a guide.",
+    ""
+  )
+  report_lines <- c(report_lines, sat_lines)
+}
+
+# --- Figure inventory ---
+fig_lines <- c(
+  "## Figure Inventory",
+  "",
+  "| Figure                        | Description                                           |",
+  "|-------------------------------|-------------------------------------------------------|",
+  "| fig1_strategy_heatmap         | 3x4 AUPRC heatmap: strategy x weight, faceted         |",
+  "| fig2_fold_auprc               | CV AUPRC per fold, best config per model              |",
+  "| fig3_test_roc_pr              | ROC and PR curves on locked test set                  |",
+  "| fig4_feature_rank_comparison  | Top 30 features by cross-model importance rank       |",
+  "| fig5_core_features            | Core proteins: coefficient direction and magnitude   |",
+  "| fig6_calibration              | Reliability diagrams with LOESS smooth                |",
+  "| fig6_bootstrap_forest         | Bootstrap 95% CI forest plot (AUPRC + AUROC)         |",
+  "| fig7_dca                      | Decision curve analysis (net benefit vs threshold)   |",
+  "| fig7_feature_upset            | UpSet plot of feature overlap across models           |",
+  "| fig8_saturation               | Performance vs panel size (saturation curve)          |",
+  "| fig9_shap_beeswarm            | SHAP beeswarm plots (top 20 features, 3 models)      |",
+  "| fig10_shap_bar                | Mean |SHAP| bar chart (top 15 features, 3 models)    |",
+  "| fig11_shap_dependence         | SHAP dependence for top 5 core features (LR_EN)      |",
+  ""
+)
+report_lines <- c(report_lines, fig_lines)
 
 writeLines(report_lines, file.path(OUT_DIR, "incident_validation_report.md"))
 cat("\n  -> ", file.path(OUT_DIR, "incident_validation_report.md"), "\n")

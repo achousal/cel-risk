@@ -1,21 +1,25 @@
 #!/bin/bash
-# Submit incident validation (LinSVM_cal) as parallel jobs on Minerva HPC
+# Submit unified incident validation as parallel jobs on Minerva HPC
 #
-# Submits one 14-job chain per penalty (l1, l2) by default.
-# Feature selection is shared — l2 chain reuses l1 feature artifacts.
+# Runs one 14-job chain per model. Feature selection runs once, then
+# 12 CV combos (3 strategies x 4 weights) run in parallel, then aggregate.
 #
-# Job dependency chain (per penalty):
-#   feat  →  12 CV combos (parallel)  →  aggregate
+# Job dependency chain (per model):
+#   feat  ->  12 CV combos (parallel)  ->  aggregate
 #
 # Usage:
-#   bash scripts/submit_incident_validation_svm_parallel.sh [--penalty l1|l2] [--smoke]
+#   bash scripts/submit_incident_validation_parallel.sh --model LR_EN
+#   bash scripts/submit_incident_validation_parallel.sh --model SVM_L1
+#   bash scripts/submit_incident_validation_parallel.sh --model SVM_L2
+#   bash scripts/submit_incident_validation_parallel.sh --model all        # all 3 models
+#   bash scripts/submit_incident_validation_parallel.sh --model SVM_L1 --smoke
 
 set -euo pipefail
 
 PROJECT="acc_vascbrain"
 QUEUE="premium"
 BASEDIR="/sc/arion/projects/vascbrain/andres/cel-risk"
-SCRIPT="${BASEDIR}/experiments/optimal-setup/incident-validation-svm/scripts/run_incident_validation_svm.py"
+SCRIPT="${BASEDIR}/experiments/incident-validation/scripts/run_lr.py"
 DATAFILE="${BASEDIR}/data/Celiac_dataset_proteomics_w_demo.parquet"
 LOGDIR="${BASEDIR}/logs"
 
@@ -32,7 +36,7 @@ FEAT_CORES=4
 CV_CORES=2
 AGG_CORES=2
 
-PENALTIES=("l1" "l2")
+MODELS=()
 for arg in "$@"; do
     case "${arg}" in
         --smoke)
@@ -40,24 +44,29 @@ for arg in "$@"; do
             FEAT_WALL="00:30"; CV_WALL="00:30"; AGG_WALL="00:15"
             CV_CORES=4; FEAT_CORES=4
             ;;
-        l1|l2) PENALTIES=("${arg}") ;;
+        --model) ;; # consumed with next arg below
+        LR_EN|SVM_L1|SVM_L2) MODELS+=("${arg}") ;;
+        all) MODELS=("LR_EN" "SVM_L1" "SVM_L2") ;;
     esac
 done
+
+if [[ ${#MODELS[@]} -eq 0 ]]; then
+    echo "Usage: $0 --model {LR_EN|SVM_L1|SVM_L2|all} [--smoke]"
+    exit 1
+fi
 
 STRATEGIES=("incident_only" "incident_prevalent" "prevalent_only")
 WEIGHTS=("none" "balanced" "sqrt" "log")
 ACTIVATE="cd ${BASEDIR} && module load anaconda3/2024.06 && source analysis/venv/bin/activate"
 
-for PENALTY in "${PENALTIES[@]}"; do
-    OUTDIR="${BASEDIR}/results/incident_validation_svm_${PENALTY}"
-    PREFIX="CeD_iv_svm_${PENALTY}"
-    [[ -n "${SMOKE_FLAG}" ]] && OUTDIR="${OUTDIR}_smoke" && PREFIX="${PREFIX}_smoke"
+for MODEL in "${MODELS[@]}"; do
+    PREFIX="CeD_iv_${MODEL}"
+    [[ -n "${SMOKE_FLAG}" ]] && PREFIX="${PREFIX}_smoke"
 
-    COMMON_ARGS="--penalty ${PENALTY} --data-path ${DATAFILE} --output-dir ${OUTDIR} ${SMOKE_FLAG}"
+    COMMON_ARGS="--model ${MODEL} --data-path ${DATAFILE} ${SMOKE_FLAG}"
 
-    echo "=== Submitting parallel LinSVM_cal penalty=${PENALTY} ==="
-    echo "  Output: ${OUTDIR}"
-    echo "  Combos: ${#STRATEGIES[@]} × ${#WEIGHTS[@]} = $(( ${#STRATEGIES[@]} * ${#WEIGHTS[@]} )) jobs"
+    echo "=== Submitting ${MODEL} ==="
+    echo "  Combos: ${#STRATEGIES[@]} x ${#WEIGHTS[@]} = $(( ${#STRATEGIES[@]} * ${#WEIGHTS[@]} )) jobs"
     echo ""
 
     # --- Job 0: Feature selection ---
@@ -102,8 +111,8 @@ for PENALTY in "${PENALTIES[@]}"; do
         | grep -oP '\d+')
     echo "  Aggregation: job ${AGG_JOB}"
     echo ""
-    echo "  Kill all penalty=${PENALTY}: bkill ${FEAT_JOB} ${CV_JOBS[*]} ${AGG_JOB}"
+    echo "  Kill all ${MODEL}: bkill ${FEAT_JOB} ${CV_JOBS[*]} ${AGG_JOB}"
     echo ""
 done
 
-echo "Monitor all: bjobs -w | grep CeD_iv_svm"
+echo "Monitor all: bjobs -w | grep CeD_iv_"

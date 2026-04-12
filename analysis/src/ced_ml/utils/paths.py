@@ -7,11 +7,21 @@ Project structure:
     cel-risk/                    <- Project root (run ced here)
     ├── data/                       <- Input data
     ├── splits/                     <- Split indices
-    ├── results/                    <- Model outputs
-    ├── analysis/                   <- Analysis package
-    │   ├── configs/               <- Configuration files
-    │   ├── src/ced_ml/            <- Package source
-    │   └── tests/                  <- Test suite
+    ├── results/                    <- Model outputs (namespaced by experiment)
+    │   ├── pipeline/               <- Ad-hoc pipeline runs
+    │   ├── cellml/                 <- CellML factorial experiment
+    │   └── incident-validation/    <- Incident validation experiment
+    ├── logs/                       <- Runtime logs (mirrors results/ namespace)
+    │   ├── pipeline/
+    │   ├── cellml/
+    │   └── incident-validation/
+    ├── experiments/                <- Experiment orchestration & analysis
+    │   ├── cellml/
+    │   └── incident-validation/
+    └── analysis/                   <- Analysis package
+        ├── configs/               <- Base configuration files (hand-authored)
+        ├── src/ced_ml/            <- Package source
+        └── tests/                  <- Test suite
 
 Path resolution:
     - Run from cel-risk/: paths like "data/" resolve correctly
@@ -19,6 +29,7 @@ Path resolution:
     - Paths in configs are relative to analysis/ directory
 """
 
+from datetime import datetime
 from pathlib import Path
 
 # Maximum number of parent directories to search when locating the project root.
@@ -95,3 +106,51 @@ def get_default_paths() -> dict:
         "configs": root / "analysis" / "configs",
         "logs": root / "logs",
     }
+
+
+def make_run_id(experiment_tag: str | None = None) -> str:
+    """Generate a timestamped run identifier.
+
+    Args:
+        experiment_tag: Optional prefix that names the experiment context
+            (e.g. ``"cellml_v0"``, ``"incval_lr"``). When provided, the run ID
+            becomes ``"{tag}_{timestamp}"`` so that ``ls results/cellml/v0_gate/``
+            is immediately readable without consulting a registry.
+
+    Returns:
+        Run ID string, e.g. ``"cellml_v0_20260412_123456"`` or ``"20260412_123456"``.
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if experiment_tag:
+        return f"{experiment_tag}_{ts}"
+    return ts
+
+
+def derive_logs_dir(outdir: Path, project_root: Path) -> Path:
+    """Derive the logs namespace that mirrors the results namespace.
+
+    When ``outdir`` is under ``{project_root}/results/``, the relative path
+    segment (e.g. ``cellml/v0_gate``) is transplanted into ``logs/`` so that
+    log files co-locate with their result artifacts structurally:
+
+        results/cellml/v0_gate/run_{id}/  →  logs/cellml/v0_gate/run_{id}/
+
+    If ``outdir`` is not under ``results/`` (e.g. tests or ad-hoc paths), the
+    flat ``logs/`` root is returned unchanged.
+
+    Args:
+        outdir: Resolved results output directory.
+        project_root: Resolved project root directory.
+
+    Returns:
+        Resolved logs directory (namespace stem only — caller appends ``run_{id}``).
+    """
+    results_root = (project_root / "results").resolve()
+    outdir_resolved = outdir.resolve()
+    try:
+        namespace = outdir_resolved.relative_to(results_root)
+        if str(namespace) != ".":
+            return (project_root / "logs" / namespace).resolve()
+    except ValueError:
+        pass
+    return (project_root / "logs").resolve()

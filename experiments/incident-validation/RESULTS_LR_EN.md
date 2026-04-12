@@ -1,9 +1,21 @@
 # Incident Validation Brief — LR_EN (Elastic Net Logistic Regression)
 
+> **Status (2026-04-12):** This document is the LR_EN-only brief from the initial
+> Apr 1 run. It has been **superseded by the cross-model analysis** at
+> `../analysis/out/incident_validation_report.md`, which covers all three models
+> (LR_EN, SVM L1, SVM L2), adds calibration/DCA/SHAP/saturation analyses, and
+> re-runs LR_EN with the latest pipeline (Apr 10 HPC results).
+>
+> **Important finding from the cross-model analysis:** LR_EN is **miscalibrated**
+> (Spiegelhalter p < 0.001, intercept -1.89), with systematic risk overestimation.
+> SVM L2 is now the recommended primary model. Keep this LR_EN brief for the
+> detailed feature-tier breakdown (Tier 1/2/3) which is not yet replicated in
+> the cross-model report.
+
 **Model:** LogisticRegression (ElasticNet, SAGA solver)
 **Design:** 3 training strategies × 4 class-weight schemes, 5-fold outer CV, 50-trial Optuna inner CV
 **Primary metric:** AUPRC (area under precision-recall curve)
-**Date:** 2026-04-01
+**Date:** 2026-04-01 (original); see cross-model report for Apr 10 re-run
 
 ---
 

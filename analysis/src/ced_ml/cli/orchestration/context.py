@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -194,7 +193,9 @@ class TrainingContext:
         seed = getattr(config, "split_seed", getattr(config, "seed", 0))
         run_id = getattr(config, "run_id", None)
         if run_id is None:
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            from ced_ml.utils.paths import make_run_id
+
+            run_id = make_run_id()
 
         # Create grid RNG if grid randomization is enabled
         grid_rng = np.random.default_rng(seed) if config.cv.grid_randomize else None

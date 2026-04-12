@@ -155,7 +155,7 @@ def auto_log_path(
 
     # Find project root by traversing up, using the same marker-directory
     # heuristic as paths.py (data/ + analysis/ present).
-    from ced_ml.utils.paths import _is_project_root
+    from ced_ml.utils.paths import _is_project_root, derive_logs_dir
 
     current = outdir
     project_root = None
@@ -169,7 +169,9 @@ def auto_log_path(
         # Fallback: place logs as sibling to outdir (works in test environments)
         logs_root = outdir.parent / "logs"
     else:
-        logs_root = project_root / "logs"
+        # Mirror experiment namespace from results/ into logs/
+        # e.g. results/cellml/v0_gate → logs/cellml/v0_gate
+        logs_root = derive_logs_dir(outdir, project_root)
     rid = run_id or "unknown"
     run_root = logs_root / f"run_{rid}"
 

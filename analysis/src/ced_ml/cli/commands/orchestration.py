@@ -7,7 +7,7 @@ Commands:
 
 import click
 
-from ced_ml.cli.options import dry_run_option, hpc_option
+from ced_ml.cli.options import dry_run_option, experiment_option, hpc_option
 
 
 @click.command("run-pipeline")
@@ -111,6 +111,7 @@ from ced_ml.cli.options import dry_run_option, hpc_option
     help="HPC pipeline config (default: configs/pipeline_hpc.yaml)",
 )
 @dry_run_option
+@experiment_option
 @click.pass_context
 def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     """
@@ -309,6 +310,7 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
     # Collect remaining CLI args
     cli_args = {}
     overrides = list(kwargs.get("override", []))
+    experiment_tag = kwargs.get("experiment")
 
     try:
         run_pipeline_impl(
@@ -333,6 +335,7 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
             hpc=hpc_flag,
             hpc_config_file=hpc_config_path,
             dry_run=dry_run_flag,
+            experiment_tag=experiment_tag,
         )
     except (SystemExit, KeyboardInterrupt):
         raise

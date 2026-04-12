@@ -55,3 +55,15 @@ log_level_option = click.option(
     default="info",
     help="Logging level (default: info). Use 'debug' for detailed algorithm insights.",
 )
+
+
+experiment_option = click.option(
+    "--experiment",
+    type=str,
+    default=None,
+    help=(
+        "Experiment namespace tag (e.g. 'cellml_v0', 'incval'). "
+        "Prefixes the auto-generated run_id and namespaces results/logs directories. "
+        "Example: --experiment cellml_v0 → run_id=cellml_v0_20260412_123456."
+    ),
+)

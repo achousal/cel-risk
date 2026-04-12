@@ -148,7 +148,6 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
 
     # HPC mode: submit jobs and exit
     if hpc_flag:
-        from datetime import datetime
 
         from ced_ml.cli.hpc import submit_train_jobs
 
@@ -165,7 +164,9 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
         # Generate run_id if not provided
         run_id = kwargs.get("run_id")
         if not run_id:
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            from ced_ml.utils.paths import make_run_id
+
+            run_id = make_run_id(kwargs.get("experiment_tag"))
 
         # Submit jobs
         submit_train_jobs(

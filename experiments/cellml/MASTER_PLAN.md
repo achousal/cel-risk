@@ -1,73 +1,40 @@
-# Master Plan: Optimal Setup Convergence
+# Master Plan: CellML Experiment
 
-**Updated:** 2026-04-10
-**Status:** Infrastructure complete. V0 gate ready to submit.
+**Updated:** 2026-04-12
+**Status:** V0 gate submitted (job IDs 237012328–237012447). Vanillamax discovery (10 seeds) running.
 
 ---
 
 ## Purpose
 
-Single index for the factorial experiment and everything it depends on. Gen 1 experiments are archived in `gen1/` — they produced the inputs; the factorial produces the decisions.
+Single index for the CellML experiment (formerly: optimal-setup/factorial). Gen 1 experiments are archived in `experiments/_archive/gen1/` — they produced the inputs; CellML produces the decisions.
 
 ---
 
 ## Physical Layout
 
 ```
-experiments/optimal-setup/
+experiments/cellml/                         # this experiment (formerly optimal-setup/factorial)
 ├── MASTER_PLAN.md                          # this file — the single index
-├── factorial/                              # Gen 2: the only active experiment
-│   ├── DESIGN.md                           # scientific design + recipe definitions
-│   ├── submit_factorial.sh                 # SLURM array (two-phase: scout/main)
-│   ├── compile_factorial.py                # cells -> results table (filesystem + Optuna storage modes)
-│   ├── validate_tree.R                     # V1-V5 statistical tests
-│   ├── extract_scout_params.py             # extract top-K params from scout for warm-start
-│   ├── monitor_factorial.py                # live progress monitoring via JournalStorage
-│   └── analysis/                           # agent-driven factorial analysis infrastructure
-│       ├── factorial_analysis_program.md   # V1-V5 analysis instructions (dataset-agnostic)
-│       ├── _theme_factorial.R              # R theme: dynamic RECIPE_COLORS, factorial palettes
-│       ├── runner.py                       # R execution harness + analysis_log.json
-│       ├── scripts/                        # analysis scripts (v1_*, v2_*, ...)
-│       │   ├── v1_01_recipe_heatmap.R      # recipe × model AUROC heatmap
-│       │   └── v2_01_pareto_front.R        # AUROC-Brier Pareto front
-│       ├── figures/                        # generated figures
-│       └── tables/                         # generated tables
-├── incident-validation/                    # all incident validation experiments
-│   ├── lr/                                 # LR_EN run: scripts + results notes
-│   │   └── RESULTS_LR_EN.md               # LR_EN incident validation findings
-│   ├── svm/                                # SVM L1/L2 runs: scripts
-│   │   ├── run_incident_validation_svm.py
-│   │   ├── submit_incident_validation_svm.sh
-│   │   └── submit_incident_validation_svm_parallel.sh
-│   └── analysis/                           # cross-model comparison analysis
-│       ├── incident_validation_comparison.R  # 5-figure comparison (LR_EN, SVM L1, SVM L2)
-│       └── out/                            # generated figures + report
-├── sweeps/                                 # adaptive sweep runner infrastructure
-│   ├── sweep_schema.py                     # Pydantic: SweepSpec, ParameterDef, SweepConstraints
-│   ├── sweep_config_overlay.py             # config overlay via _deep_merge
-│   ├── sweep_evaluator.py                  # extract scalar metric from results
-│   ├── sweep_ledger.py                     # append-only CSV iteration ledger
-│   ├── sweep_orchestrator.py               # state machine: PROPOSE→SUBMIT→POLL→EVALUATE→DECIDE
-│   ├── minerva_poller.py                   # SLURM submit + poll wrapper
-│   ├── specs/                              # sweep specifications
-│   │   ├── 09_downsampling_ratio.yaml      # config-only sweep example
-│   │   └── 02_bootstrap_ci.yaml            # eval-only sweep example
-│   ├── ledger/                             # sweep iteration logs
-│   └── staging/                            # staging area for sweep configs
-└── gen1/                                   # frozen — do not run
-    ├── README.md                           # what's here + provenance
-    ├── panel-selection/                    # decided: 4-protein BH core
-    ├── panel-sweep/                        # decided: 8-10p, pathway, LinSVM_cal
-    ├── training-strategy/                  # decided: incident-only + log weights
-    ├── holdout-confirmation/               # Gen 1 holdout (will re-run post-factorial)
-    ├── model-gate/                         # superseded by V2
-    ├── svm-validation/                     # superseded by MS_* recipes
-    ├── supporting/                         # 2x2x2, consensus, permutation, audit
-    ├── narrative/                           # Gen 1 figures (3 scripts)
-    ├── claude_viz/                          # visualization scripts
-    ├── codex_viz/                           # publication figure specs
-    ├── analysis-narrative.md               # Gen 1 decision chain narrative
-    └── results.md                          # Gen 1 artifact map
+├── DESIGN.md                               # scientific design + recipe definitions
+├── submit_factorial.sh                     # SLURM array (two-phase: scout/main)
+├── compile_factorial.py                    # cells -> results table
+├── validate_tree.R                         # V1-V5 statistical tests
+├── extract_scout_params.py                 # extract top-K params from scout for warm-start
+├── monitor_factorial.py                    # live progress monitoring via JournalStorage
+├── analysis/                               # post-hoc analysis scripts
+│   ├── factorial_analysis_program.md       # V1-V5 analysis instructions
+│   ├── _theme_factorial.R                  # R theme: RECIPE_COLORS, factorial palettes
+│   ├── runner.py                           # R execution harness + analysis_log.json
+│   └── scripts/                            # analysis scripts (v1_*, v2_*, ...)
+└── sweeps/                                 # sweep orchestration engine
+    ├── sweep_schema.py                     # Pydantic: SweepSpec, ParameterDef, SweepConstraints
+    ├── sweep_config_overlay.py             # config overlay via _deep_merge
+    ├── sweep_evaluator.py                  # extract scalar metric from results
+    ├── sweep_ledger.py                     # append-only CSV iteration ledger
+    ├── sweep_orchestrator.py               # state machine: PROPOSE→SUBMIT→POLL→EVALUATE→DECIDE
+    ├── minerva_poller.py                   # SLURM submit + poll wrapper
+    └── specs/                              # sweep specifications
 
 analysis/
 ├── configs/

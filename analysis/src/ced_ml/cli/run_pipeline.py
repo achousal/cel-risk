@@ -7,7 +7,6 @@ training through panel optimization and consensus generation.
 
 import logging
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +23,41 @@ from ced_ml.cli.train_ensemble import run_train_ensemble
 from ced_ml.config.loader import load_permutation_config, load_training_config, load_yaml
 from ced_ml.data.schema import ModelName
 from ced_ml.utils.logging import setup_command_logger, setup_logger
-from ced_ml.utils.paths import get_analysis_dir, get_project_root
+from ced_ml.utils.paths import get_analysis_dir, get_project_root, make_run_id
 from ced_ml.utils.run_manifest import build_model_manifest_entry, ensure_run_manifest
+
+
+def _register_run_safe(
+    run_id: str,
+    outdir: "Path",
+    config_path: "Path | None" = None,
+    notes: str = "",
+) -> None:
+    """Write a registry entry, deriving experiment/phase from the outdir path."""
+    try:
+        from ced_ml.utils.paths import get_project_root
+        from ced_ml.utils.registry import register_run
+
+        results_root = get_project_root() / "results"
+        try:
+            rel = outdir.relative_to(results_root)
+            parts = rel.parts
+            experiment = parts[0] if parts else "pipeline"
+            phase = str(Path(*parts[1:])) if len(parts) > 1 else ""
+        except ValueError:
+            experiment = "pipeline"
+            phase = ""
+
+        register_run(
+            run_id=run_id,
+            experiment=experiment,
+            phase=phase,
+            outdir=outdir,
+            config_path=config_path,
+            notes=notes,
+        )
+    except Exception:
+        pass  # registry write is best-effort — never block a run
 
 
 def _ensure_splits_exist(
@@ -338,6 +370,7 @@ def _run_hpc_mode(
     hpc_config_file: Path | None,
     dry_run: bool,
     log_level: int,
+    experiment_tag: str | None = None,
 ) -> None:
     """Submit pipeline to HPC via LSF job dependency chains.
 
@@ -351,8 +384,6 @@ def _run_hpc_mode(
         Permutation testing submits separate jobs per model/seed combination,
         each depending on the corresponding training job completing first.
     """
-    from datetime import datetime
-
     from ced_ml.hpc import (
         load_hpc_config,
         submit_hpc_pipeline,
@@ -410,11 +441,16 @@ def _run_hpc_mode(
 
     logs_dir = pipeline_config.get("logs_dir")
     if logs_dir is None:
-        logs_dir = (get_project_root() / "logs").resolve()
+        from ced_ml.utils.paths import derive_logs_dir
+
+        logs_dir = derive_logs_dir(outdir, get_project_root())
 
     # Generate run_id
     if run_id is None:
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = make_run_id(experiment_tag)
+
+    # Register run in experiment registry
+    _register_run_safe(run_id=run_id, outdir=outdir, config_path=config_file)
 
     # Create directories
     outdir.mkdir(parents=True, exist_ok=True)
@@ -685,6 +721,7 @@ def run_pipeline(
     hpc: bool = False,
     hpc_config_file: Path | None = None,
     dry_run: bool = False,
+    experiment_tag: str | None = None,
 ):
     """
     Run the complete ML pipeline end-to-end.
@@ -749,7 +786,7 @@ def run_pipeline(
 
     # Eager run_id: generate before logger so log file is named correctly
     if run_id is None:
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = make_run_id(experiment_tag)
 
     # Auto-file-logging: use explicit log_file if provided, otherwise auto-generate
     if log_file is None:

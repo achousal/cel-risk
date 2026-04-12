@@ -23,10 +23,10 @@ Workflow:
 
 Usage:
   cd cel-risk
-  python experiments/optimal-setup/incident-validation/scripts/run_incident_validation.py --model LR_EN
-  python experiments/optimal-setup/incident-validation/scripts/run_incident_validation.py --model SVM_L1
-  python experiments/optimal-setup/incident-validation/scripts/run_incident_validation.py --model SVM_L2
-  python experiments/optimal-setup/incident-validation/scripts/run_incident_validation.py --model LR_EN --smoke
+  python experiments/incident-validation/scripts/run_lr.py --model LR_EN
+  python experiments/incident-validation/scripts/run_lr.py --model SVM_L1
+  python experiments/incident-validation/scripts/run_lr.py --model SVM_L2
+  python experiments/incident-validation/scripts/run_lr.py --model LR_EN --smoke
 
 Parallel mode (HPC):
   # Phase 1: feature selection (shared across combos)
