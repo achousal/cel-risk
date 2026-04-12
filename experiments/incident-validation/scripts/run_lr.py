@@ -98,11 +98,11 @@ logger = logging.getLogger(__name__)
 # Valid model identifiers
 VALID_MODELS = ("LR_EN", "SVM_L1", "SVM_L2")
 
-# Output dir suffix per model
+# Output dir per model — namespaced under results/incident-validation/lr/
 MODEL_OUTPUT_DIRS = {
-    "LR_EN": "results/incident_validation",
-    "SVM_L1": "results/incident_validation_svm_l1",
-    "SVM_L2": "results/incident_validation_svm_l2",
+    "LR_EN": "results/incident-validation/lr/LR_EN",
+    "SVM_L1": "results/incident-validation/lr/SVM_L1",
+    "SVM_L2": "results/incident-validation/lr/SVM_L2",
 }
 
 
@@ -116,7 +116,7 @@ class Config:
     """Pipeline configuration -- shared across all models."""
 
     data_path: Path = Path("data/Celiac_dataset_proteomics_w_demo.parquet")
-    output_dir: Path = Path("results/incident_validation")
+    output_dir: Path = Path("results/incident-validation/lr/LR_EN")
     model: str = "LR_EN"
 
     # Splitting

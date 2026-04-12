@@ -38,7 +38,7 @@ from sklearn.preprocessing import StandardScaler
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CEL_ROOT = Path(__file__).resolve().parents[4]
+CEL_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CEL_ROOT / "analysis" / "src"))
 
 from ced_ml.data.io import read_proteomics_file
@@ -55,7 +55,7 @@ from ced_ml.data.schema import (
 # Config
 # ---------------------------------------------------------------------------
 DATA_PATH = CEL_ROOT / "data" / "Celiac_dataset_proteomics_w_demo.parquet"
-FEATURE_PANEL_PATH = CEL_ROOT / "results" / "incident_validation" / "feature_panel.csv"
+FEATURE_PANEL_PATH = CEL_ROOT / "results" / "incident-validation" / "lr" / "LR_EN" / "feature_panel.csv"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 PANEL_SIZES = [5, 8, 10, 15, 20, 25, 28, 40, 60, 80, 100, 134]

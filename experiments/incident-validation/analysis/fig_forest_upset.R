@@ -22,15 +22,16 @@ if (!requireNamespace("UpSetR", quietly = TRUE)) {
 suppressPackageStartupMessages(library(UpSetR))
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-CEL_ROOT <- normalizePath("../../../..", mustWork = TRUE)
-RESULTS  <- file.path(CEL_ROOT, "results")
+# Run from experiments/incident-validation/analysis/. CEL_ROOT goes up 3 levels.
+CEL_ROOT <- normalizePath("../../..", mustWork = TRUE)
+RESULTS  <- file.path(CEL_ROOT, "results", "incident-validation", "lr")
 OUT_DIR  <- file.path(dirname(normalizePath(".", mustWork = TRUE)), "analysis", "out")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 RUN_DIRS <- c(
-  LR_EN  = file.path(RESULTS, "incident_validation"),
-  SVM_L1 = file.path(RESULTS, "incident_validation_svm_l1"),
-  SVM_L2 = file.path(RESULTS, "incident_validation_svm_l2")
+  LR_EN  = file.path(RESULTS, "LR_EN"),
+  SVM_L1 = file.path(RESULTS, "SVM_L1"),
+  SVM_L2 = file.path(RESULTS, "SVM_L2")
 )
 
 stopifnot(all(dir.exists(RUN_DIRS)))

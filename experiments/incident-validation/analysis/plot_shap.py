@@ -32,7 +32,7 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CEL_ROOT = Path(__file__).resolve().parents[4]
+CEL_ROOT = Path(__file__).resolve().parents[3]
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 # ---------------------------------------------------------------------------
@@ -49,12 +49,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-RESULTS_ROOT = CEL_ROOT / "results"
+RESULTS_ROOT = CEL_ROOT / "results" / "incident-validation" / "lr"
 
 MODEL_DIRS: dict[str, Path] = {
-    "LR_EN": RESULTS_ROOT / "incident_validation",
-    "SVM_L1": RESULTS_ROOT / "incident_validation_svm_l1",
-    "SVM_L2": RESULTS_ROOT / "incident_validation_svm_l2",
+    "LR_EN": RESULTS_ROOT / "LR_EN",
+    "SVM_L1": RESULTS_ROOT / "SVM_L1",
+    "SVM_L2": RESULTS_ROOT / "SVM_L2",
 }
 
 MODEL_LABELS: dict[str, str] = {

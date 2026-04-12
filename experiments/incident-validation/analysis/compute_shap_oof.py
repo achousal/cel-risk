@@ -38,7 +38,7 @@ from sklearn.svm import LinearSVC
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CEL_ROOT = Path(__file__).resolve().parents[4]
+CEL_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CEL_ROOT / "analysis" / "src"))
 
 from ced_ml.data.io import read_proteomics_file
@@ -66,9 +66,9 @@ logger = logging.getLogger(__name__)
 # Model registry
 # ---------------------------------------------------------------------------
 MODEL_OUTPUT_DIRS = {
-    "LR_EN": "results/incident_validation",
-    "SVM_L1": "results/incident_validation_svm_l1",
-    "SVM_L2": "results/incident_validation_svm_l2",
+    "LR_EN": "results/incident-validation/lr/LR_EN",
+    "SVM_L1": "results/incident-validation/lr/SVM_L1",
+    "SVM_L2": "results/incident-validation/lr/SVM_L2",
 }
 
 VALID_MODELS = tuple(MODEL_OUTPUT_DIRS.keys())

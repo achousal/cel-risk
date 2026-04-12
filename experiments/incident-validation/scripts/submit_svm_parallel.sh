@@ -49,7 +49,7 @@ WEIGHTS=("none" "balanced" "sqrt" "log")
 ACTIVATE="cd ${BASEDIR} && module load anaconda3/2024.06 && source analysis/venv/bin/activate"
 
 for PENALTY in "${PENALTIES[@]}"; do
-    OUTDIR="${BASEDIR}/results/incident_validation_svm_${PENALTY}"
+    OUTDIR="${BASEDIR}/results/incident-validation/linsvm_cal/${PENALTY}"
     PREFIX="CeD_iv_svm_${PENALTY}"
     [[ -n "${SMOKE_FLAG}" ]] && OUTDIR="${OUTDIR}_smoke" && PREFIX="${PREFIX}_smoke"
 

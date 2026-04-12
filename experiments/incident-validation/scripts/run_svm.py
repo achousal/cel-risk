@@ -85,7 +85,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     data_path: Path = Path("data/Celiac_dataset_proteomics_w_demo.parquet")
-    output_dir: Path = Path("results/incident_validation_svm")
+    output_dir: Path = Path("results/incident-validation/linsvm_cal/l2")
 
     # Splits
     test_frac: float = 0.20
@@ -958,7 +958,7 @@ def main():
     if args.output_dir:
         cfg.output_dir = Path(args.output_dir)
     else:
-        cfg.output_dir = Path(f"results/incident_validation_svm_{args.penalty}")
+        cfg.output_dir = Path(f"results/incident-validation/linsvm_cal/{args.penalty}")
 
     if args.data_path:
         cfg.data_path = Path(args.data_path)

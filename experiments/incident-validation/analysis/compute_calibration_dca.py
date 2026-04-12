@@ -32,7 +32,7 @@ from scipy.interpolate import UnivariateSpline
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CEL_ROOT = Path(__file__).resolve().parents[4]
+CEL_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CEL_ROOT / "analysis" / "src"))
 
 from ced_ml.metrics.dca import decision_curve_analysis
@@ -62,13 +62,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-RESULTS_ROOT = CEL_ROOT / "results"
+RESULTS_ROOT = CEL_ROOT / "results" / "incident-validation" / "lr"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 MODEL_DIRS = {
-    "LR_EN": RESULTS_ROOT / "incident_validation",
-    "SVM_L1": RESULTS_ROOT / "incident_validation_svm_l1",
-    "SVM_L2": RESULTS_ROOT / "incident_validation_svm_l2",
+    "LR_EN": RESULTS_ROOT / "LR_EN",
+    "SVM_L1": RESULTS_ROOT / "SVM_L1",
+    "SVM_L2": RESULTS_ROOT / "SVM_L2",
 }
 MODEL_LABELS = {
     "LR_EN": "Logistic (EN)",

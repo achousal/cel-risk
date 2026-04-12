@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 
 for PENALTY in "${PENALTIES[@]}"; do
-    OUTDIR="${BASEDIR}/results/incident_validation_svm_${PENALTY}"
+    OUTDIR="${BASEDIR}/results/incident-validation/linsvm_cal/${PENALTY}"
     JOB_NAME="CeD_iv_svm_${PENALTY}"
     [[ -n "${SMOKE_FLAG}" ]] && OUTDIR="${OUTDIR}_smoke" && JOB_NAME="${JOB_NAME}_smoke"
 
