@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from .calibration_schema import CalibrationConfig, ProposedSweepParams
+
 
 class SweepType(str, enum.Enum):
     """How the sweep executes."""
@@ -124,6 +126,30 @@ class SweepSpec(BaseModel):
     eval_script: str | None = Field(
         default=None,
         description="Path to R/Python script (for eval_only sweep_type)",
+    )
+
+    # Dataset reference for calibration fingerprinting. Orchestrator
+    # resolves relative paths against project_root.
+    data_path: str | None = Field(
+        default="data/Celiac_dataset_proteomics_w_demo.parquet",
+        description="Path to dataset file (parquet/pickle/csv) for fingerprint",
+    )
+    label_col: str = Field(
+        default="CeD_comparison",
+        description="Label column name used for prevalence fingerprinting",
+    )
+
+    # Pre-sweep calibration (see calibration_schema.CalibrationConfig)
+    calibration: CalibrationConfig = Field(
+        default_factory=CalibrationConfig,
+        description="Calibration rules for this sweep (Rules 1-20)",
+    )
+
+    # Write-back block for calibration output (Rule 16). Never used as
+    # active parameters -- read by humans / /next to promote.
+    proposed: ProposedSweepParams | None = Field(
+        default=None,
+        description="Proposed n_trials_cap / patience from calibration",
     )
 
     @model_validator(mode="after")

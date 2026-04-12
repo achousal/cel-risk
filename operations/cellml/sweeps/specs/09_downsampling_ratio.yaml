@@ -25,3 +25,29 @@ constraints:
   optuna_trials: 50
   improvement_threshold: 0.005
   consecutive_no_improve: 3
+
+# Dataset reference for calibration fingerprinting
+data_path: "data/Celiac_dataset_proteomics_w_demo.parquet"
+label_col: "CeD_comparison"
+
+# Pre-sweep calibration (Rules 1-20 in calibration_schema.py).
+# Space is 6 discrete values -- calibration required=false is defensible
+# here (exhaustible), but left true to exercise the mechanism end-to-end.
+calibration:
+  required: true
+  budget_fraction: 0.10
+  hard_cap_wall_hours: 1.0
+  min_trials: 12
+  max_trials: 30
+  trials_per_dim: 15
+  sampler: tpe
+  calib_seed: 0
+  subsample_rows: 3000
+  cache_days: 30
+  min_viable_objective: 0.60    # AUROC floor; below this, block sweep
+  absolute_min_cap: 10
+  absolute_max_cap: 50          # small discrete space; cap low
+  cap_safety_multiplier: 1.5
+  min_patience: 3
+  max_patience: 10
+  patience_fraction_of_plateau: 0.3
