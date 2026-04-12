@@ -61,6 +61,8 @@ cat logs/run_<RUN_ID>/orchestrator.log
 | `--outdir` | PATH | `results/` | Output directory |
 | `--models` | TEXT | Config | Comma-separated model names |
 | `--split-seeds` | TEXT | Config | Comma-separated split seeds |
+| `--run-id` | TEXT | Auto | Shared run ID for all models (default: auto-generated timestamp) |
+| `--experiment` | TEXT | - | Experiment namespace tag (e.g. `cellml_v0`, `incval`). Prefixes the auto-generated run_id and namespaces the results/logs directories. Example: `--experiment cellml_v0` → `run_id=cellml_v0_20260412_123456`. |
 | `--dry-run` | FLAG | False | Show what would run without executing |
 | `--no-aggregate` | FLAG | False | Skip aggregation step |
 | `--no-optimize` | FLAG | False | Skip panel optimization |
@@ -72,6 +74,9 @@ ced run-pipeline
 
 # Specify models and splits
 ced run-pipeline --models LR_EN,RF,XGBoost --split-seeds 0,1,2
+
+# Tag the run under an experiment namespace (writes to results/cellml/.../run_cellml_v0_<ts>/)
+ced run-pipeline --experiment cellml_v0 --models LR_EN,RF --split-seeds 0,1,2
 
 # Dry run to see planned execution
 ced run-pipeline --dry-run
@@ -139,9 +144,11 @@ ced train [OPTIONS]
 | `--infile` | PATH | **Required** | Input proteomics file |
 | `--split-dir` | PATH | **Required** | Splits directory |
 | `--outdir` | PATH | `results/` | Output directory |
-| `--model` | CHOICE | **Required** | Model: `LR_EN`, `RF`, `XGBoost`, `SVM` |
-| `--split-seed` | INT | **Required** | Split seed to train on |
-| `--run-id` | TEXT | Auto | Run ID (timestamp if not specified) |
+| `--model` | CHOICE | **Required** | Model: `LR_EN`, `RF`, `XGBoost`, `LinSVM_cal`, etc. |
+| `--split-seed` | INT | Required (or `--split-seeds`) | Split seed to train on. Mutually exclusive with `--split-seeds`. |
+| `--split-seeds` | TEXT | - | Comma-separated list of split seeds (e.g., `0,1,2`). Mutually exclusive with `--split-seed`. |
+| `--run-id` | TEXT | Auto | Shared run ID (default: auto-generated timestamp) |
+| `--experiment` | TEXT | - | Experiment namespace tag (e.g. `cellml_v0`). Prefixes the auto-generated run_id the same way as on `ced run-pipeline`. |
 
 **Examples:**
 ```bash
@@ -427,8 +434,10 @@ ced config diff configs/v1.yaml configs/v2.yaml --output diff.txt
 
 ## Output Directory Structure
 
+Runs land under `results/<experiment>/<phase>/run_{run_id}/` when launched with `--experiment <tag>`, or under `results/pipeline/run_{run_id}/` for ad-hoc runs. The `run_id` is `{tag}_{timestamp}` when tagged, otherwise the timestamp alone. `logs/` mirrors the same namespace via `derive_logs_dir()` in `ced_ml/utils/paths.py`. Inside a single run, the per-model layout is unchanged:
+
 ```
-results/run_{YYYYMMDD_HHMMSS}/
+results/<experiment>/<phase>/run_{YYYYMMDD_HHMMSS}/
     run_metadata.json              # Run configuration and metadata
     {MODEL}/
         splits/

@@ -1,7 +1,7 @@
 # cel-risk Output Artifacts
 
-**Version:** 3.0
-**Date:** 2026-01-29
+**Version:** 3.1
+**Date:** 2026-04-12
 
 **Key structural features:**
 1. **Run-first grouping** - Everything from one experiment lives under a single `run_{id}/` directory
@@ -14,12 +14,27 @@
 
 ## 1. Directory Structure
 
-### 1.1 Overview
+### 1.0 Experiment Namespacing
 
-All outputs follow a **run-first hierarchical structure**:
+`results/` is gitignored and namespaced by experiment. Top-level layout:
 
 ```
 results/
+  experiment_registry.csv            # append-only run log (ced_ml/utils/registry.py)
+  pipeline/                          # ad-hoc runs (no --experiment tag)
+  cellml/{discovery,v0_gate,main,holdout,compiled,figures}/
+  incident-validation/{lr,linsvm_cal,compiled,figures}/
+  _archive/                          # legacy (gen1, pre-restructure)
+```
+
+Each individual run still follows the **run-first structure** described below; the only change is that runs land under `results/<experiment>/<phase>/run_{run_id}/` when launched with `ced run-pipeline --experiment <tag>` (or `ced train --experiment <tag>`), and ad-hoc runs without a tag land under `results/pipeline/run_{run_id}/`. The `<tag>` prefixes the run_id (e.g. `cellml_v0_20260412_123456`), and `logs/` mirrors the same namespace via `derive_logs_dir()` in `utils/paths.py`.
+
+### 1.1 Run-first layout (per run)
+
+All outputs within a single run follow a **run-first hierarchical structure**:
+
+```
+results/<experiment>/<phase>/        # or results/pipeline/ for ad-hoc runs
   run_{run_id}/                   # Level 1: Run ID (timestamped, e.g., 20260127_115115)
     run_metadata.json             # Shared auto-detection metadata (all models)
     {model}/                      # Level 2: Model name (LR_EN, RF, XGBoost)
@@ -402,13 +417,13 @@ results/ENSEMBLE/run_{run_id}/splits/split_seed{N}/
 
 ## 7. Log Artifacts
 
-All CLI commands produce structured log files under `logs/` at the project root. Logs follow a **run-first structure** matching the results layout: everything from one experiment lives under `logs/run_{ID}/`.
+All CLI commands produce structured log files under `logs/` at the project root. Logs follow a **run-first structure** matching the results layout: everything from one run lives under `logs/<experiment>/<phase>/run_{ID}/` (or `logs/pipeline/run_{ID}/` for ad-hoc runs). The namespace is derived automatically from `outdir` by `derive_logs_dir()` in `ced_ml/utils/paths.py`.
 
 ### 7.1 Directory Structure
 
 ```
-logs/
-  run_{ID}/                         # Level 1: Run ID (matches results/run_{ID}/)
+logs/<experiment>/<phase>/          # mirrors results/<experiment>/<phase>/
+  run_{ID}/                         # Level 1: Run ID (matches results/.../run_{ID}/)
     training/                       # Model training logs
       {model}_seed{N}.log           # Per-model per-seed training log
     ensemble/                       # Ensemble meta-learner training logs

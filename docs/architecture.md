@@ -1,8 +1,8 @@
 # cel-risk Architecture
 
-**Version:** 2.2
-**Date:** 2026-02-03
-**Status:** Streamlined algorithmic documentation with consensus panel integration and permutation significance testing
+**Version:** 2.3
+**Date:** 2026-04-12
+**Status:** Streamlined algorithmic documentation; adds operations/results split, experiment-namespaced run IDs, and canon/variants config policy
 
 ---
 
@@ -32,6 +32,27 @@ ML pipeline for predicting **incident Celiac Disease (CeD)** risk from proteomic
 - Ensemble: Stacking meta-learner (L2 logistic regression)
 
 **Architecture Decision Records:** See [docs/adr/](adr/) for detailed design rationale.
+
+### 1.1 Repository Layout: Library, Operations, Results
+
+`ced_ml` (under `analysis/`) is the **library** — pure, experiment-agnostic code and its base (canon) configs. **Operations** (under `operations/`) are the orchestration code, declarative configs, submit scripts, and post-hoc analysis that drive the library toward a scientific decision. **Experiments** are the concrete runtime *outputs* of those operations — they materialize under `results/` (gitignored) and are logged to `results/experiment_registry.csv`.
+
+```
+analysis/        ced_ml library + canon configs (versioned)
+operations/      how to run things (versioned; cellml/, incident-validation/, _archive/gen1/)
+results/         the experiments themselves (gitignored, runtime; namespaced per experiment)
+logs/            runtime logs (gitignored; mirrors results/ namespace)
+```
+
+**Experiment namespacing.** `ced run-pipeline --experiment <tag>` and `ced train --experiment <tag>` prefix the auto-generated run_id (e.g. `cellml_v0_20260412_123456`) and record the run to `results/experiment_registry.csv` via `utils/registry.py` (`_register_run_safe()` — best-effort; failures do not block). When `outdir` is under `results/<exp>/<phase>/`, `utils/paths.derive_logs_dir()` mirrors that namespace into `logs/<exp>/<phase>/run_<id>/` so logs co-locate with their result artifacts. The canonical result namespaces are `cellml/`, `incident-validation/`, and `pipeline/` (ad-hoc). Legacy artifacts live under `results/_archive/`.
+
+### 1.2 Configuration Canon and Variants
+
+`analysis/configs/` holds **10 canon files** at the root (`training_config.yaml`, `splits_config.yaml`, `pipeline_local.yaml`, `pipeline_hpc.yaml`, `output_config.yaml`, `aggregate_config.yaml`, `consensus_panel.yaml`, `optimize_panel.yaml`, `permutation_test.yaml`, `holdout_config.yaml`). These filenames are referenced by name from inside `ced_ml/cli/` (see `analysis/configs/README.md`) and must not be renamed or moved without updating the corresponding CLI defaults.
+
+Scenario-specific overrides live under `analysis/configs/variants/<scenario>/` where `<scenario>` is one of `val_consensus/`, `holdout/`, `4protein/`, `local/`. Variants declare `_base:` to inherit from a canon file (or a sibling variant) and deep-merge their own values on top. `_base:` paths are resolved relative to the file containing the declaration (`config/loader.py`), so variants reference canon via `../../<canon>.yaml`.
+
+Deprecated configs are kept under `analysis/configs/_archive/` for provenance only.
 
 ---
 

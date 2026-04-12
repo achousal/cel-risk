@@ -67,11 +67,11 @@ ced consensus-panel --run-id 20260127_115115
 ced permutation-test --run-id 20260127_115115 --model LR_EN --n-perms 200
 ```
 
-**Customize via configs**:
-- `configs/training_config.yaml` - Models, CV, feature selection
-- `configs/output_config.yaml` - Artifact and plot generation controls
-- `configs/pipeline_local.yaml` - Execution settings
-- `configs/pipeline_hpc_val_consensus.yaml` - Phase 2 validation (inherits HPC settings via `_base`, points to splits and training configs)
+**Customize via configs** (paths relative to `analysis/`):
+- `configs/training_config.yaml` - Models, CV, feature selection (canon)
+- `configs/output_config.yaml` - Artifact and plot generation controls (canon)
+- `configs/pipeline_local.yaml` / `configs/pipeline_hpc.yaml` - Execution settings (canon)
+- `configs/variants/val_consensus/pipeline_hpc_val_consensus.yaml` - Phase 2 validation override (inherits canon via `_base: ../../pipeline_hpc.yaml`)
 
 ### 3. Feature Selection
 
@@ -131,7 +131,24 @@ In short:
 cel-risk/
 ├── analysis/                          # ced_ml library — pure, experiment-agnostic
 │   ├── src/ced_ml/
-│   └── configs/                       # base configs (training, splits, pipeline, holdout, phase2/3)
+│   └── configs/                       # canon base configs + scenario variants
+│       ├── README.md                  # canon/variants policy
+│       ├── training_config.yaml       # CANON (10 files, file names frozen)
+│       ├── splits_config.yaml
+│       ├── pipeline_local.yaml
+│       ├── pipeline_hpc.yaml
+│       ├── output_config.yaml
+│       ├── aggregate_config.yaml
+│       ├── consensus_panel.yaml
+│       ├── optimize_panel.yaml
+│       ├── permutation_test.yaml
+│       ├── holdout_config.yaml
+│       ├── variants/                  # scenario overrides via `_base:` inheritance
+│       │   ├── val_consensus/         #   phase 2 cross-model validation
+│       │   ├── holdout/               #   holdout evaluation
+│       │   ├── 4protein/              #   fixed 4-protein panel validation
+│       │   └── local/                 #   local-mode training overrides
+│       └── _archive/                  # deprecated (e.g. pipeline_hpc_phase2.yaml)
 ├── operations/
 │   ├── README.md
 │   ├── cellml/                        # CellML — factorial recipe sweep (was: optimal-setup/factorial)
@@ -152,12 +169,14 @@ cel-risk/
 │   ├── cellml/{discovery,v0_gate,main,holdout,compiled,figures}/
 │   ├── incident-validation/{lr,linsvm_cal,compiled,figures}/
 │   ├── pipeline/                      # ad-hoc pipeline runs (no experiment tag)
-│   └── _archive/                      # legacy artifacts
+│   └── _archive/                      # legacy artifacts (gen1, pre-restructure)
 └── logs/                              # gitignored — mirrors results/ namespace
     ├── cellml/, incident-validation/, pipeline/
 ```
 
-**Tagging runs**: `ced run-pipeline --experiment cellml_v0` prefixes the auto-generated run_id (e.g. `cellml_v0_20260412_123456`) and records the run in `results/experiment_registry.csv`. The same `--experiment` option exists on `ced train`. When `outdir` lands under `results/<exp>/<phase>/`, `auto_log_path()` mirrors that namespace into `logs/<exp>/<phase>/run_<id>/`.
+**Tagging runs**: `ced run-pipeline --experiment cellml_v0` (same option on `ced train`) prefixes the auto-generated run_id (e.g. `cellml_v0_20260412_123456`) and records the run in `results/experiment_registry.csv` via `_register_run_safe()` (best-effort; failures do not block). When `outdir` lands under `results/<exp>/<phase>/`, `derive_logs_dir()` in `utils/paths.py` mirrors that namespace into `logs/<exp>/<phase>/run_<id>/` so logs co-locate with their result artifacts.
+
+**Config canon**: the 10 files at the root of `analysis/configs/` are the single source of truth and their filenames are referenced by name from inside `ced_ml/cli/` — do not rename or move them. Scenario-specific overrides live under `analysis/configs/variants/<scenario>/` and inherit via `_base:` (paths relative to the file containing the declaration). See `analysis/configs/README.md` for the full policy.
 
 ## CLI Reference
 

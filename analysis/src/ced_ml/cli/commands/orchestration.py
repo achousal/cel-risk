@@ -180,21 +180,22 @@ def run_pipeline(ctx, config, models, split_seeds, **kwargs):
 
     Output structure:
         results/
-          run_<RUN_ID>/
-            LR_EN/
-              splits/split_seed0/, split_seed1/, ...\n              aggregated/
-                optimize_panel/  (if enabled)
-            RF/
-              splits/split_seed0/, split_seed1/, ...\n              aggregated/
-                optimize_panel/  (if enabled)
-            XGBoost/
-              splits/...
-            ENSEMBLE/  (if enabled)
-              splits/...
-              aggregated/
-            consensus/  (if enabled)
-              final_panel.txt
-              consensus_ranking.csv
+          <experiment>/<phase>/                    # if --experiment <tag> is set;
+                                                   # otherwise outputs land under results/pipeline/
+            run_<RUN_ID>/                          # RUN_ID is prefixed with the experiment tag
+              LR_EN/
+                splits/split_seed0/, split_seed1/, ...
+                aggregated/
+                  optimize_panel/                  (if enabled)
+              RF/, XGBoost/                        (same per-model layout)
+              ENSEMBLE/                            (if enabled)
+                splits/..., aggregated/
+              consensus/                           (if enabled)
+                final_panel.txt, consensus_ranking.csv
+
+        Logs mirror the same namespace under logs/<experiment>/<phase>/run_<RUN_ID>/
+        (see ced_ml/utils/paths.py:derive_logs_dir). Each run is recorded in
+        results/experiment_registry.csv via _register_run_safe (best-effort).
     """
     from pathlib import Path
 

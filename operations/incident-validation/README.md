@@ -43,11 +43,20 @@ incident-validation/
 
 ```
 results/incident-validation/
-├── lr/          # LR_EN + SVM_L1/L2 per-model subdirs
-├── svm/         # LinSVM_cal per-penalty subdirs
-├── compiled/    # cross-model summary tables
-└── figures/     # publication figures
+├── lr/                  # run_lr.py outputs: LR_EN + SVM_L1/L2 per-model subdirs
+│   ├── LR_EN/
+│   ├── SVM_L1/
+│   └── SVM_L2/
+├── linsvm_cal/          # run_svm.py outputs: per-penalty subdirs (avoids name collision with lr/SVM_L*)
+│   ├── l1/
+│   └── l2/
+├── compiled/            # cross-model summary tables
+└── figures/             # publication figures
 ```
+
+## Launch flow
+
+The submit scripts (`submit_lr_parallel.sh`, `submit_svm.sh`, `submit_svm_parallel.sh`) pre-create the per-penalty output directories under `results/incident-validation/` and namespace all LSF stdout/stderr under `logs/incident-validation/`, so logs co-locate with results without relying on `derive_logs_dir()`.
 
 ## Usage
 
