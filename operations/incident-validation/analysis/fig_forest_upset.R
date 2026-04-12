@@ -4,7 +4,7 @@
 # for incident validation: LR_EN, SVM L1, SVM L2.
 #
 # Usage:
-#   cd cel-risk/experiments/optimal-setup/incident-validation/analysis
+#   cd cel-risk/operations/incident-validation/analysis
 #   Rscript fig_forest_upset.R
 
 suppressPackageStartupMessages({
@@ -22,7 +22,7 @@ if (!requireNamespace("UpSetR", quietly = TRUE)) {
 suppressPackageStartupMessages(library(UpSetR))
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-# Run from experiments/incident-validation/analysis/. CEL_ROOT goes up 3 levels.
+# Run from operations/incident-validation/analysis/. CEL_ROOT goes up 3 levels.
 CEL_ROOT <- normalizePath("../../..", mustWork = TRUE)
 RESULTS  <- file.path(CEL_ROOT, "results", "incident-validation", "lr")
 OUT_DIR  <- file.path(dirname(normalizePath(".", mustWork = TRUE)), "analysis", "out")

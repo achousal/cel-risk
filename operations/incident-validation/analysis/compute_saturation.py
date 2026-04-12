@@ -13,7 +13,7 @@ Outputs:
 
 Usage:
   cd /path/to/cel-risk
-  python experiments/optimal-setup/incident-validation/analysis/compute_saturation.py
+  python operations/incident-validation/analysis/compute_saturation.py
 """
 
 from __future__ import annotations

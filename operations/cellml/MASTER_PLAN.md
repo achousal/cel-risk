@@ -7,14 +7,14 @@
 
 ## Purpose
 
-Single index for the CellML experiment (formerly: optimal-setup/factorial). Gen 1 experiments are archived in `experiments/_archive/gen1/` — they produced the inputs; CellML produces the decisions.
+Single index for the CellML experiment (formerly: optimal-setup/factorial). Gen 1 experiments are archived in `operations/_archive/gen1/` — they produced the inputs; CellML produces the decisions.
 
 ---
 
 ## Physical Layout
 
 ```
-experiments/cellml/                         # this experiment (formerly optimal-setup/factorial)
+operations/cellml/                         # this experiment (formerly optimal-setup/factorial)
 ├── MASTER_PLAN.md                          # this file — the single index
 ├── DESIGN.md                               # scientific design + recipe definitions
 ├── submit_factorial.sh                     # SLURM array (two-phase: scout/main)
@@ -269,7 +269,7 @@ manifest.yaml
 
 | Artifact | Path | Referenced by |
 |---|---|---|
-| RRA significance (universe-corrected) | `results/experiments/rra_universe_sensitivity/rra_significance_corrected.csv` | manifest trunk T1 |
+| RRA significance (universe-corrected) | `results/_archive/gen1/rra_universe_sensitivity/rra_significance_corrected.csv` | manifest trunk T1 |
 | Compiled sweep (30-seed avg) | `results/compiled_results_aggregated.csv` | manifest size rules |
 | Compiled sweep (per-seed) | `results/compiled_results_per_seed.csv` | bootstrap CIs |
 | Feature consistency (T2 trunk) | `results/incident_validation/feature_consistency.csv` | manifest trunk T2 |

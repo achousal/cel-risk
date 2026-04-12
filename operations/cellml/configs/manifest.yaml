@@ -2,7 +2,7 @@
 # Panels are GENERATED ARTIFACTS of this manifest, not hand-picked inputs.
 #
 # Usage:
-#   ced derive-recipes --manifest experiments/cellml/configs/manifest.yaml --data-path <parquet>
+#   ced derive-recipes --manifest operations/cellml/configs/manifest.yaml --data-path <parquet>
 
 # ---------------------------------------------------------------------------
 # Trunks: source data streams

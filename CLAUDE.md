@@ -119,16 +119,20 @@ ced train-ensemble --run-id 20260127_115115
 
 **Pipeline config resolution:** `--pipeline-config` > `--hpc-config` (when `--pipeline-config` is omitted, `--hpc-config` doubles as the pipeline config) > auto-detect. Config files support `_base` key for YAML inheritance (base loaded first, current file deep-merged on top).
 
-## Experiments
+## Operations & Experiments
 
-`ced_ml` (under `analysis/`) is the **library**. Concrete research experiments live under `experiments/` and consume the library via the CLI or Python API.
+`ced_ml` (under `analysis/`) is the **library**. **Operations** (orchestration code, configs, scripts, post-hoc analysis) live under `operations/` and consume the library via the CLI or Python API. **Experiments** are the concrete *outputs* of those operations — runs that materialize under `results/` with their own metadata, registered in `results/experiment_registry.csv`.
+
+In short:
+- `operations/` = how to run things (versioned, code).
+- `results/` = the experiments themselves (gitignored, runtime).
 
 ```
 cel-risk/
 ├── analysis/                          # ced_ml library — pure, experiment-agnostic
 │   ├── src/ced_ml/
 │   └── configs/                       # base configs (training, splits, pipeline, holdout, phase2/3)
-├── experiments/
+├── operations/
 │   ├── README.md
 │   ├── cellml/                        # CellML — factorial recipe sweep (was: optimal-setup/factorial)
 │   │   ├── MASTER_PLAN.md

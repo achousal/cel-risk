@@ -257,16 +257,16 @@ V6: Ensemble Comparison (post-tree, informational)
 | Derivation | `analysis/src/ced_ml/recipes/derive.py` | Manifest → panels + audit logs + nested expansion |
 | Config gen | `analysis/src/ced_ml/recipes/config_gen.py` | Recipe × factorial → merged YAML pairs + storage/user_attrs |
 | CLI | `analysis/src/ced_ml/cli/commands/recipes.py` | `ced derive-recipes` command |
-| Submission | `experiments/optimal-setup/factorial/submit_factorial.sh` | SLURM array (two-phase scout/main) |
-| Compilation | `experiments/optimal-setup/factorial/compile_factorial.py` | Cells → results (filesystem + Optuna storage modes) |
-| Validation | `experiments/optimal-setup/factorial/validate_tree.R` | V1–V5 statistical tests |
-| Scout extraction | `experiments/optimal-setup/factorial/extract_scout_params.py` | Top-K params per model for warm-start |
-| Live monitoring | `experiments/optimal-setup/factorial/monitor_factorial.py` | Query JournalStorage for progress |
-| Analysis program | `experiments/optimal-setup/factorial/analysis/factorial_analysis_program.md` | V1–V5 analysis instructions (dataset-agnostic) |
-| Analysis runner | `experiments/optimal-setup/factorial/analysis/runner.py` | R script execution + artifact logging |
-| Analysis theme | `experiments/optimal-setup/factorial/analysis/_theme_factorial.R` | Dynamic RECIPE_COLORS, factorial palettes |
+| Submission | `operations/cellml/submit_factorial.sh` | SLURM array (two-phase scout/main) |
+| Compilation | `operations/cellml/compile_factorial.py` | Cells → results (filesystem + Optuna storage modes) |
+| Validation | `operations/cellml/validate_tree.R` | V1–V5 statistical tests |
+| Scout extraction | `operations/cellml/extract_scout_params.py` | Top-K params per model for warm-start |
+| Live monitoring | `operations/cellml/monitor_factorial.py` | Query JournalStorage for progress |
+| Analysis program | `operations/cellml/analysis/factorial_analysis_program.md` | V1–V5 analysis instructions (dataset-agnostic) |
+| Analysis runner | `operations/cellml/analysis/runner.py` | R script execution + artifact logging |
+| Analysis theme | `operations/cellml/analysis/_theme_factorial.R` | Dynamic RECIPE_COLORS, factorial palettes |
 | Sweep CLI | `analysis/src/ced_ml/cli/commands/sweep.py` | `ced sweep --spec <yaml> [--dry-run]` |
-| Sweep orchestrator | `experiments/optimal-setup/sweeps/sweep_orchestrator.py` | PROPOSE→SUBMIT→POLL→EVALUATE→DECIDE state machine |
+| Sweep orchestrator | `operations/cellml/sweeps/sweep_orchestrator.py` | PROPOSE→SUBMIT→POLL→EVALUATE→DECIDE state machine |
 
 ## Provenance
 

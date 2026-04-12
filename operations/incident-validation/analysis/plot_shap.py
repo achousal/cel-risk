@@ -13,7 +13,7 @@ generates three figures:
 
 Usage:
   cd cel-risk
-  python experiments/optimal-setup/incident-validation/analysis/plot_shap.py
+  python operations/incident-validation/analysis/plot_shap.py
 """
 
 from __future__ import annotations

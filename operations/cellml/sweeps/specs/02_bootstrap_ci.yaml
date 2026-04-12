@@ -20,7 +20,7 @@ parameter_space:
 prerequisites:
   - "results/compiled_results_per_seed.csv"
 
-eval_script: "experiments/optimal-setup/sweeps/scripts/bootstrap_ci.R"
+eval_script: "operations/cellml/sweeps/scripts/bootstrap_ci.R"
 
 constraints:
   max_iterations: 6

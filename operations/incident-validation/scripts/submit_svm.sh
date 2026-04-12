@@ -9,7 +9,7 @@ set -euo pipefail
 PROJECT="acc_vascbrain"
 QUEUE="premium"
 BASEDIR="/sc/arion/projects/vascbrain/andres/cel-risk"
-SCRIPT="${BASEDIR}/experiments/incident-validation/scripts/run_svm.py"
+SCRIPT="${BASEDIR}/operations/incident-validation/scripts/run_svm.py"
 DATAFILE="${BASEDIR}/data/Celiac_dataset_proteomics_w_demo.parquet"
 LOGDIR="${BASEDIR}/logs"
 

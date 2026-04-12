@@ -15,9 +15,9 @@ Project structure:
     │   ├── pipeline/
     │   ├── cellml/
     │   └── incident-validation/
-    ├── experiments/                <- Experiment orchestration & analysis
-    │   ├── cellml/
-    │   └── incident-validation/
+    ├── operations/                 <- Orchestration code, configs, scripts, post-hoc analysis
+    │   ├── cellml/                  (concrete experiments materialize under results/cellml/)
+    │   └── incident-validation/     (concrete experiments materialize under results/incident-validation/)
     └── analysis/                   <- Analysis package
         ├── configs/               <- Base configuration files (hand-authored)
         ├── src/ced_ml/            <- Package source

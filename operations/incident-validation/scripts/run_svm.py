@@ -21,8 +21,8 @@ Workflow:
 
 Usage:
   cd cel-risk
-  python experiments/incident-validation/scripts/run_svm.py
-  python experiments/incident-validation/scripts/run_svm.py --smoke
+  python operations/incident-validation/scripts/run_svm.py
+  python operations/incident-validation/scripts/run_svm.py --smoke
 """
 
 from __future__ import annotations

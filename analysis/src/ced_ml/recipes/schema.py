@@ -143,7 +143,7 @@ class OptunaOverrides(BaseModel):
     )
     warm_start_params: Path | None = Field(
         default=None,
-        description="JSON file of scout top-K params per model (output of extract_scout_params.py)",
+        description="JSON file of scout top-K params per model (output of ced_ml.utils.optuna_warmstart.extract_top_params)",
     )
     warm_start_top_k: int = Field(
         default=5,

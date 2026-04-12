@@ -15,8 +15,8 @@ Output written to results/{model_dir}/ alongside existing training artifacts.
 
 Usage:
     cd /Users/andreschousal/Projects/Chowell_Lab/cel-risk
-    python experiments/optimal-setup/incident-validation/analysis/compute_shap_oof.py
-    python experiments/optimal-setup/incident-validation/analysis/compute_shap_oof.py --models LR_EN SVM_L1
+    python operations/incident-validation/analysis/compute_shap_oof.py
+    python operations/incident-validation/analysis/compute_shap_oof.py --models LR_EN SVM_L1
 """
 
 from __future__ import annotations

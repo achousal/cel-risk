@@ -6,7 +6,7 @@
 #   LinSVM_cal L2 (dense SVM)
 #
 # Usage:
-#   cd cel-risk/experiments/optimal-setup/incident-validation/analysis
+#   cd cel-risk/operations/incident-validation/analysis
 #   Rscript incident_validation_comparison.R
 
 suppressPackageStartupMessages({
@@ -20,7 +20,7 @@ suppressPackageStartupMessages({
 })
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-# Run from experiments/incident-validation/analysis/. CEL_ROOT goes up 3 levels.
+# Run from operations/incident-validation/analysis/. CEL_ROOT goes up 3 levels.
 CEL_ROOT <- normalizePath("../../..", mustWork = TRUE)
 RESULTS  <- file.path(CEL_ROOT, "results", "incident-validation", "lr")
 OUT_DIR  <- file.path(dirname(normalizePath(".", mustWork = TRUE)), "analysis", "out")

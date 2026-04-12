@@ -55,13 +55,13 @@ results/incident-validation/
 # From cel-risk/ project root:
 
 # Local smoke test
-python experiments/incident-validation/scripts/run_lr.py --model LR_EN --smoke
+python operations/incident-validation/scripts/run_lr.py --model LR_EN --smoke
 
 # HPC: submit all 3 models (14-job chains each)
-bash experiments/incident-validation/scripts/submit_lr_parallel.sh --model all
+bash operations/incident-validation/scripts/submit_lr_parallel.sh --model all
 
 # HPC: SVM parallel
-bash experiments/incident-validation/scripts/submit_svm_parallel.sh
+bash operations/incident-validation/scripts/submit_svm_parallel.sh
 ```
 
 ## Analysis scripts (artifact-first)

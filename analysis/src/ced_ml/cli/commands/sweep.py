@@ -69,7 +69,7 @@ def sweep(ctx, spec, max_iter, dry_run, poll_interval, params, status):
       ced sweep --spec specs/09_downsampling.yaml --status
     """
     # Import here to avoid circular deps and keep CLI fast
-    sys.path.insert(0, str(get_project_root() / "experiments" / "optimal-setup" / "sweeps"))
+    sys.path.insert(0, str(get_project_root() / "operations" / "cellml" / "sweeps"))
     from sweep_orchestrator import SweepOrchestrator, load_sweep_spec
 
     spec_path = Path(spec)

@@ -14,7 +14,7 @@ Outputs (all written to analysis/out/):
 
 Usage:
   cd cel-risk
-  python experiments/optimal-setup/incident-validation/analysis/compute_calibration_dca.py
+  python operations/incident-validation/analysis/compute_calibration_dca.py
 """
 
 from __future__ import annotations
