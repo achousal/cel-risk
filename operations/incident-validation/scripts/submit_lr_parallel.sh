@@ -21,9 +21,14 @@ QUEUE="premium"
 BASEDIR="/sc/arion/projects/vascbrain/andres/cel-risk"
 SCRIPT="${BASEDIR}/operations/incident-validation/scripts/run_lr.py"
 DATAFILE="${BASEDIR}/data/Celiac_dataset_proteomics_w_demo.parquet"
-LOGDIR="${BASEDIR}/logs"
+LOGDIR="${BASEDIR}/logs/incident-validation"
+RESULTS_ROOT="${BASEDIR}/results/incident-validation/lr"
 
-mkdir -p "${LOGDIR}"
+# Pre-create log + per-model output dirs (Python also does this; fail early at submit time)
+mkdir -p "${LOGDIR}" \
+         "${RESULTS_ROOT}/LR_EN" \
+         "${RESULTS_ROOT}/SVM_L1" \
+         "${RESULTS_ROOT}/SVM_L2"
 
 SMOKE_FLAG=""
 FEAT_WALL="48:00"
