@@ -1,8 +1,0 @@
-# Splits Configuration - Consensus Panel Validation
-# Non-overlapping seeds for independent validation of discovery consensus panel.
-# All other settings inherited from splits_config.yaml.
-_base: splits_config.yaml
-
-# 10 validation splits, seeds 200-209 (non-overlapping with discovery seeds 100-129)
-n_splits: 10
-seed_start: 200

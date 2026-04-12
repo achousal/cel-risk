@@ -1,0 +1,10 @@
+# Splits Configuration - Holdout Mode
+# Carves out 30% holdout with fixed seed 42, trains on remaining 70%.
+_base: ../../splits_config.yaml
+
+mode: holdout
+holdout_size: 0.30
+
+# Use Phase 2 validation seeds for the dev splits within holdout
+n_splits: 10
+seed_start: 200

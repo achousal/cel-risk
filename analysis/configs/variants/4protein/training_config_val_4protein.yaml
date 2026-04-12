@@ -1,0 +1,13 @@
+# Training config for 4-protein panel validation (universe-corrected RRA survivors)
+# Validates tgm2, cpa2, itgb7, gip on fresh non-overlapping seeds (200-209).
+# Sensitivity analysis: compare 4-protein (BH-corrected at N=2920) vs 7-protein panel.
+# Source: experiments/rra_universe_sensitivity (1M permutations, BH FDR<0.05)
+_base: ../../training_config.yaml
+
+features:
+  feature_selection_strategy: fixed_panel
+  fixed_panel_csv: "fixed_panel_4protein.csv"
+
+# Reduced Optuna trials for fixed panel (4 features)
+optuna:
+  n_trials: 50
