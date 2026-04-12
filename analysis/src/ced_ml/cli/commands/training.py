@@ -11,6 +11,7 @@ import click
 from ced_ml.cli.options import (
     config_option,
     dry_run_option,
+    experiment_option,
     hpc_option,
     infile_option,
     run_id_option,
@@ -69,6 +70,7 @@ from ced_ml.data.schema import ModelName
     help="Path to CSV with fixed feature panel (bypasses feature selection)",
 )
 @run_id_option()
+@experiment_option
 @hpc_option
 @click.option(
     "--hpc-config",
@@ -166,7 +168,7 @@ def train(ctx, config, split_seed, split_seeds, **kwargs):
         if not run_id:
             from ced_ml.utils.paths import make_run_id
 
-            run_id = make_run_id(kwargs.get("experiment_tag"))
+            run_id = make_run_id(kwargs.get("experiment"))
 
         # Submit jobs
         submit_train_jobs(

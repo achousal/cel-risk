@@ -195,7 +195,8 @@ class TrainingContext:
         if run_id is None:
             from ced_ml.utils.paths import make_run_id
 
-            run_id = make_run_id()
+            experiment_tag = (cli_args or {}).get("experiment")
+            run_id = make_run_id(experiment_tag)
 
         # Create grid RNG if grid randomization is enabled
         grid_rng = np.random.default_rng(seed) if config.cv.grid_randomize else None

@@ -2,7 +2,7 @@
 
 **Project**: Machine Learning Pipeline for Incident Celiac Disease Risk Prediction
 **Version**: 1.0.0
-**Updated**: 2026-02-03
+**Updated**: 2026-04-12
 **Primary Package**: ced-ml
 **Python**: 3.10+
 **Project Owner**: Andres Chousal (Chowell Lab)
@@ -118,6 +118,42 @@ ced train-ensemble --run-id 20260127_115115
 6. CLI flags (e.g., `--model`, `--split-seed`)
 
 **Pipeline config resolution:** `--pipeline-config` > `--hpc-config` (when `--pipeline-config` is omitted, `--hpc-config` doubles as the pipeline config) > auto-detect. Config files support `_base` key for YAML inheritance (base loaded first, current file deep-merged on top).
+
+## Experiments
+
+`ced_ml` (under `analysis/`) is the **library**. Concrete research experiments live under `experiments/` and consume the library via the CLI or Python API.
+
+```
+cel-risk/
+├── analysis/                          # ced_ml library — pure, experiment-agnostic
+│   ├── src/ced_ml/
+│   └── configs/                       # base configs (training, splits, pipeline, holdout, phase2/3)
+├── experiments/
+│   ├── README.md
+│   ├── cellml/                        # CellML — factorial recipe sweep (was: optimal-setup/factorial)
+│   │   ├── MASTER_PLAN.md
+│   │   ├── DESIGN.md
+│   │   ├── configs/manifest.yaml      # declarative recipe + factorial source of truth
+│   │   ├── analysis/                  # post-hoc R/Python analysis
+│   │   ├── sweeps/                    # sweep orchestration engine
+│   │   └── submit_factorial.sh
+│   ├── incident-validation/           # Incident Validation — pre-diagnostic case validation
+│   │   ├── README.md
+│   │   ├── RESULTS_LR_EN.md
+│   │   ├── scripts/                   # run_lr.py, run_svm.py, submit_*.sh
+│   │   └── analysis/                  # calibration, DCA, SHAP, saturation
+│   └── _archive/gen1/                 # frozen first-generation experiments
+├── results/                           # gitignored — namespaced by experiment
+│   ├── experiment_registry.csv        # append-only run log (see ced_ml/utils/registry.py)
+│   ├── cellml/{discovery,v0_gate,main,holdout,compiled,figures}/
+│   ├── incident-validation/{lr,linsvm_cal,compiled,figures}/
+│   ├── pipeline/                      # ad-hoc pipeline runs (no experiment tag)
+│   └── _archive/                      # legacy artifacts
+└── logs/                              # gitignored — mirrors results/ namespace
+    ├── cellml/, incident-validation/, pipeline/
+```
+
+**Tagging runs**: `ced run-pipeline --experiment cellml_v0` prefixes the auto-generated run_id (e.g. `cellml_v0_20260412_123456`) and records the run in `results/experiment_registry.csv`. The same `--experiment` option exists on `ced train`. When `outdir` lands under `results/<exp>/<phase>/`, `auto_log_path()` mirrors that namespace into `logs/<exp>/<phase>/run_<id>/`.
 
 ## CLI Reference
 

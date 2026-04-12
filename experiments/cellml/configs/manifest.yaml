@@ -2,7 +2,7 @@
 # Panels are GENERATED ARTIFACTS of this manifest, not hand-picked inputs.
 #
 # Usage:
-#   ced derive-recipes --manifest configs/manifest.yaml --data-path <parquet>
+#   ced derive-recipes --manifest experiments/cellml/configs/manifest.yaml --data-path <parquet>
 
 # ---------------------------------------------------------------------------
 # Trunks: source data streams
@@ -10,13 +10,13 @@
 trunks:
   - id: T1_consensus
     description: "Consensus-operating trunk: BH-adjusted RRA q <= 0.05"
-    proteins_csv: "../../results/experiments/rra_universe_sensitivity/rra_significance_corrected.csv"
-    sweep_csv: "../../results/compiled_results_aggregated.csv"
+    proteins_csv: "../../../results/experiments/rra_universe_sensitivity/rra_significance_corrected.csv"
+    sweep_csv: "../../../results/compiled_results_aggregated.csv"
 
   - id: T2_incident
     description: "Incident-sparse trunk: bootstrap-stable + sign-consistent features"
-    proteins_csv: "../../results/incident_validation/feature_consistency.csv"
-    feature_csv: "../../results/incident_validation/feature_consistency.csv"
+    proteins_csv: "../../../results/incident_validation/feature_consistency.csv"
+    feature_csv: "../../../results/incident_validation/feature_consistency.csv"
 
 # ---------------------------------------------------------------------------
 # Recipes: trunk + ordering + size rule → derived panel
@@ -151,7 +151,7 @@ recipes:
     ordering:
       type: oof_importance
       params:
-        importance_csv: "../../results/run_20260217_194153/LR_EN/aggregated/importance/oof_importance__LR_EN.csv"
+        importance_csv: "../../../results/run_20260217_194153/LR_EN/aggregated/importance/oof_importance__LR_EN.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -166,7 +166,7 @@ recipes:
     ordering:
       type: oof_importance
       params:
-        importance_csv: "../../results/run_20260217_194153/LinSVM_cal/aggregated/importance/oof_importance__LinSVM_cal.csv"
+        importance_csv: "../../../results/run_20260217_194153/LinSVM_cal/aggregated/importance/oof_importance__LinSVM_cal.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -181,7 +181,7 @@ recipes:
     ordering:
       type: oof_importance
       params:
-        importance_csv: "../../results/run_20260217_194153/RF/aggregated/importance/oof_importance__RF.csv"
+        importance_csv: "../../../results/run_20260217_194153/RF/aggregated/importance/oof_importance__RF.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -196,7 +196,7 @@ recipes:
     ordering:
       type: oof_importance
       params:
-        importance_csv: "../../results/run_20260217_194153/XGBoost/aggregated/importance/oof_importance__XGBoost.csv"
+        importance_csv: "../../../results/run_20260217_194153/XGBoost/aggregated/importance/oof_importance__XGBoost.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -212,7 +212,7 @@ recipes:
     ordering:
       type: rfe_elimination
       params:
-        rfe_csv: "../../results/run_20260217_194153/LR_EN/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+        rfe_csv: "../../../results/run_20260217_194153/LR_EN/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -227,7 +227,7 @@ recipes:
     ordering:
       type: rfe_elimination
       params:
-        rfe_csv: "../../results/run_20260217_194153/LinSVM_cal/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+        rfe_csv: "../../../results/run_20260217_194153/LinSVM_cal/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -242,7 +242,7 @@ recipes:
     ordering:
       type: rfe_elimination
       params:
-        rfe_csv: "../../results/run_20260217_194153/RF/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+        rfe_csv: "../../../results/run_20260217_194153/RF/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -257,7 +257,7 @@ recipes:
     ordering:
       type: rfe_elimination
       params:
-        rfe_csv: "../../results/run_20260217_194153/XGBoost/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+        rfe_csv: "../../../results/run_20260217_194153/XGBoost/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
     size_rule:
       type: three_criterion_unanimous
       params:
@@ -336,7 +336,7 @@ v0_gate:
   optuna_n_trials: 100  # Sweep-level budget (main factorial uses 200)
 
 # Base splits config for V0 overlay
-base_splits_config: "splits_config.yaml"
+base_splits_config: "../../../analysis/configs/splits_config.yaml"
 
 # ---------------------------------------------------------------------------
 # Factorial design: 4 factors crossed under each frozen recipe
@@ -370,5 +370,5 @@ splits:
   seed_end: 129
 
 # Base configs for YAML inheritance (_base key)
-base_training_config: "training_config.yaml"
-base_pipeline_config: "pipeline_hpc.yaml"
+base_training_config: "../../../analysis/configs/training_config.yaml"
+base_pipeline_config: "../../../analysis/configs/pipeline_hpc.yaml"
