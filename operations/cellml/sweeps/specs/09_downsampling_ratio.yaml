@@ -29,6 +29,7 @@ constraints:
 # Dataset reference for calibration fingerprinting
 data_path: "data/Celiac_dataset_proteomics_w_demo.parquet"
 label_col: "CeD_comparison"
+scenario: "IncidentOnly"    # Controls + Incident (prospective prediction)
 
 # Pre-sweep calibration (Rules 1-20 in calibration_schema.py).
 # Space is 6 discrete values -- calibration required=false is defensible

@@ -161,6 +161,7 @@ class SweepOrchestrator:
             label_col=self.spec.label_col,
             seeds=self.spec.constraints.seeds,
             extra={"base_recipe": self.spec.base_recipe, "base_cell": self.spec.base_cell},
+            scenario=self.spec.scenario,
         )
         sh = space_hash(self.spec.parameter_space)
 

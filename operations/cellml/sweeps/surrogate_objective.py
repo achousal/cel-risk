@@ -45,7 +45,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from ced_ml.data.fingerprint import SUPPORTED_SUFFIXES
+from ced_ml.data.fingerprint import SUPPORTED_SUFFIXES, resolve_binary_labels
 
 from .calibration_schema import CalibrationConfig
 from .sweep_schema import SweepSpec
@@ -202,20 +202,30 @@ def build_surrogate_objective(
     if label_col not in df.columns:
         raise ValueError(f"label_col '{label_col}' not in dataset {data_path.name}")
 
-    df = df.dropna(subset=[label_col])
-    df[label_col] = df[label_col].astype(int)
+    # Resolve string labels to 0/1 using the configured scenario. Rows
+    # whose label is outside the scenario (e.g. Prevalent under
+    # IncidentOnly) are dropped before subsampling.
+    mask, y = resolve_binary_labels(df[label_col], spec.scenario)
+    df = df.loc[mask].copy()
+    df["_y_int"] = y
+    logger.info(
+        "Surrogate: scenario=%s kept %d/%d rows, %d positive",
+        spec.scenario, len(df), mask.size, int(y.sum()),
+    )
 
     df_sub = _stratified_subsample(
-        df, label_col, max_rows=config.subsample_rows, seed=config.calib_seed,
+        df, "_y_int", max_rows=config.subsample_rows, seed=config.calib_seed,
     )
     feature_cols = _pick_feature_columns(df_sub, label_col)
+    # _pick_feature_columns may pick up _y_int as numeric; remove it.
+    feature_cols = [c for c in feature_cols if c != "_y_int"]
     logger.info(
         "Surrogate: subsampled to %d rows, %d features",
         len(df_sub), len(feature_cols),
     )
 
     X_all = df_sub[feature_cols].to_numpy(dtype=float)
-    y_all = df_sub[label_col].to_numpy(dtype=int)
+    y_all = df_sub["_y_int"].to_numpy(dtype=int)
     seed = config.calib_seed
 
     def objective(params: dict) -> float:

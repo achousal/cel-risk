@@ -138,6 +138,13 @@ class SweepSpec(BaseModel):
         default="CeD_comparison",
         description="Label column name used for prevalence fingerprinting",
     )
+    scenario: str = Field(
+        default="IncidentOnly",
+        description=(
+            "Binary-label scenario from ced_ml.data.schema.SCENARIO_DEFINITIONS. "
+            "Controls how string labels map to 0/1 for calibration."
+        ),
+    )
 
     # Pre-sweep calibration (see calibration_schema.CalibrationConfig)
     calibration: CalibrationConfig = Field(
