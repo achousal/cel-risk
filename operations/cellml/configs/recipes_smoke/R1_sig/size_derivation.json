@@ -1,0 +1,12 @@
+{
+  "q_column": "bh_adjusted_p",
+  "q_threshold": 0.05,
+  "total_proteins": 126,
+  "significant_count": 4,
+  "significant_proteins": [
+    "tgm2_resid",
+    "cpa2_resid",
+    "itgb7_resid",
+    "gip_resid"
+  ]
+}

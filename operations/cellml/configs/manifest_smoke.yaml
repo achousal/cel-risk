@@ -1,0 +1,95 @@
+# Smoke manifest — SVM-only CelML smoke run
+# Exercises 2 recipes × 2 SVM variants × full factorial = 108 cells.
+# Purpose: validate the CelML pipeline end-to-end with a cheap but
+# non-degenerate configuration before launching the representative run.
+#
+# Usage:
+#   ced derive-recipes --manifest operations/cellml/configs/manifest_smoke.yaml --data-path <parquet>
+
+# ---------------------------------------------------------------------------
+# Trunks
+# ---------------------------------------------------------------------------
+trunks:
+  - id: T1_consensus
+    description: "Consensus-operating trunk: BH-adjusted RRA q <= 0.05"
+    proteins_csv: "../../../results/_archive/gen1/rra_universe_sensitivity/rra_significance_corrected.csv"
+    sweep_csv: "../../../results/_archive/gen1/compiled/compiled_results_aggregated.csv"
+
+# ---------------------------------------------------------------------------
+# Recipes: smoke subset
+#   R1_sig              — 4-protein significance baseline (stable, no ordering variance)
+#   MS_rfe_LinSVM_cal   — model-specific RFE ordering, exercises pinned_model path
+# ---------------------------------------------------------------------------
+recipes:
+  - id: R1_sig
+    trunk_id: T1_consensus
+    description: "Significance-constrained: only q≤0.05 proteins, panel = all significant"
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: "observed_rra"
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+    size_rule:
+      type: significance_count
+      params:
+        q_column: "bh_adjusted_p"
+        q_threshold: 0.05
+
+  - id: MS_rfe_LinSVM_cal
+    trunk_id: T1_consensus
+    description: "Model-specific RFE ordering for LinSVM_cal, unanimous plateau size"
+    pinned_model: LinSVM_cal
+    expand_to_core: 4
+    ordering:
+      type: rfe_elimination
+      params:
+        rfe_csv: "../../../results/_archive/gen1/pipeline_runs/run_20260217_194153/LinSVM_cal/aggregated/optimize_panel/rfe_feature_report_aggregated.csv"
+    size_rule:
+      type: three_criterion_unanimous
+      params:
+        delta: 0.02
+        n_seeds: 30
+
+# ---------------------------------------------------------------------------
+# V0 Gate: not used for smoke (strategy locked from prior incident_only sweep)
+# ---------------------------------------------------------------------------
+v0_gate:
+  strategies: []
+  control_ratios: []
+  representative_recipes: []
+  optuna_n_trials: 100
+
+base_splits_config: "../../../analysis/configs/splits_config.yaml"
+
+# ---------------------------------------------------------------------------
+# Factorial: SVM-only (L2 + L1), full calibration × weighting × downsampling
+# 2 recipes × 2 models × 3 × 3 × 3 = 108 cells
+# ---------------------------------------------------------------------------
+factorial:
+  models:
+    - LinSVM_cal
+    - LinSVM_L1_cal
+  calibration:
+    - logistic_intercept
+    - beta
+    - isotonic
+  weighting:
+    - log
+    - sqrt
+    - none
+  downsampling:
+    - 1.0
+    - 2.0
+    - 5.0
+
+optuna:
+  n_trials: 200
+
+# Smoke uses 20 seeds (100-119), matches submit_experiment.sh default
+splits:
+  seed_start: 100
+  seed_end: 119
+
+base_training_config: "../../../analysis/configs/training_config.yaml"
+base_pipeline_config: "../../../analysis/configs/pipeline_hpc.yaml"
