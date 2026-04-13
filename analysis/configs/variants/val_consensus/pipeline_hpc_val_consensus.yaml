@@ -5,8 +5,8 @@
 _base: ../../pipeline_hpc.yaml
 
 configs:
-  training: configs/training_config_val_consensus.yaml
-  splits: configs/splits_config_val_consensus.yaml
+  training: configs/variants/val_consensus/training_config_val_consensus.yaml
+  splits: configs/variants/val_consensus/splits_config_val_consensus.yaml
 
 pipeline:
   optimize_panel: false

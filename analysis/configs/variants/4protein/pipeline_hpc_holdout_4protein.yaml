@@ -4,8 +4,8 @@
 _base: ../../pipeline_hpc.yaml
 
 configs:
-  training: configs/training_config_holdout_4protein.yaml
-  splits: configs/splits_config_holdout.yaml
+  training: configs/variants/4protein/training_config_holdout_4protein.yaml
+  splits: configs/variants/holdout/splits_config_holdout.yaml
 
 pipeline:
   optimize_panel: false

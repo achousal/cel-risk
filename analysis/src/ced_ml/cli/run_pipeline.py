@@ -157,23 +157,25 @@ def load_pipeline_config(config_path: Path) -> dict[str, Any]:
     config_path = Path(config_path).resolve()
     raw = load_yaml(config_path)
 
-    # Determine base directory for path resolution
-    # If config is in analysis/configs/, base is analysis/ (config.parent.parent)
-    # Otherwise use project root
+    # Determine base directory for path resolution.
+    # Semantics: paths inside pipeline configs (paths.*, configs.training,
+    # configs.splits) are relative to the analysis/ directory. This holds for
+    # canonical configs at analysis/configs/pipeline_*.yaml AND for nested
+    # variants at analysis/configs/variants/<variant>/pipeline_*.yaml.
+    # The previous `parent.parent` heuristic broke for nested variants because
+    # it resolved to variants/ instead of analysis/.
     try:
-        project_root = get_project_root()
-        if "analysis" in config_path.parts and "configs" in config_path.parts:
-            # Config is in analysis/configs/, resolve relative to analysis/
-            base_dir = config_path.parent.parent
-        else:
-            # Fallback: use project root
-            base_dir = project_root
+        base_dir = get_project_root() / "analysis"
     except Exception as e:
-        # Ultimate fallback: assume config is in configs/ and go up two levels
+        # Fallback: walk up from the config until we find an `analysis` dir
         logging.getLogger(__name__).debug(
-            "Could not determine project root, using config parent: %s", e
+            "Could not determine project root, falling back to ancestor walk: %s", e
         )
-        base_dir = config_path.parent.parent
+        base_dir = config_path.parent
+        for ancestor in config_path.parents:
+            if ancestor.name == "analysis":
+                base_dir = ancestor
+                break
 
     result: dict[str, Any] = {}
 
