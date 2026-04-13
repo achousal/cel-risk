@@ -122,6 +122,19 @@ def detect_environment(base_dir: Path) -> EnvironmentInfo:
             project_root = base_dir
 
     analysis_dir = project_root / "analysis"
+
+    # Prefer the cluster-aware bootstrap script if it exists. It's sourced
+    # in place of ``venv/bin/activate`` and handles module loads,
+    # PYTHONPATH hygiene, and venv activation uniformly across wrappers.
+    # Edit analysis/scripts/hpc_activate.sh to re-target a new cluster;
+    # the library stays cluster-agnostic.
+    hpc_activate = analysis_dir / "scripts" / "hpc_activate.sh"
+    if hpc_activate.exists():
+        return EnvironmentInfo(
+            env_type="venv",
+            activation_cmd=f'source "{hpc_activate.resolve()}"',
+        )
+
     candidates = [
         analysis_dir / "venv" / "bin" / "activate",
         analysis_dir / ".venv" / "bin" / "activate",
@@ -890,6 +903,9 @@ def _build_orchestrator_script(
         f'WRAPPER_SCRIPT="{wrapper_script_path.resolve()}"',
         f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
         f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
+        # Per-job stdout/stderr land here. Absolutely critical for
+        # post-mortem debugging of silent downstream failures.
+        f'LSF_OUTPUT_DIR="{(sentinel_dir.parent / "lsf_output").resolve()}"',
         'STATE_FILE="$SENTINEL_DIR/orchestrator_state.jsonl"',
         f"POLL_INTERVAL={orchestrator_cfg.poll_interval}",
         f"MAX_CHUNK={orchestrator_cfg.max_concurrent_submissions}",
@@ -899,7 +915,7 @@ def _build_orchestrator_script(
         _bash_array_literal("TRAINING_JOBS", training_job_names),
         "",
         "UPSTREAM_IDS=()",
-        'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR"',
+        'mkdir -p "$SENTINEL_DIR" "$SCRIPTS_DIR" "$LSF_OUTPUT_DIR"',
         'touch "$STATE_FILE"',
         'touch "$SENTINEL_DIR/completed.log"',
         f"echo \"[$(date '+%F %T')] Orchestrator started for run {run_id}\"",

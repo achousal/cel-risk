@@ -450,22 +450,32 @@ def test_barrier_bash_no_grep_p():
     assert "grep -P" not in bash
 
 
-def test_check_upstream_sentinel_aware():
-    """check_upstream_failures should use sentinel helpers and retry on failure."""
+def test_check_upstream_scheduler_authoritative():
+    """check_upstream_failures treats bjobs/bhist EXIT/TERM as fatal.
+
+    The sentinel trap in the wrapper fires on every exit (success or
+    failure), so a sentinel file proves only that the wrapper reached
+    its EXIT handler -- NOT that the payload command succeeded. When
+    the scheduler reports EXIT/TERM, that is authoritative; falling
+    back to the sentinel masks real failures.
+    """
     bash = _build_orchestrator_bash_functions(_LSF)
 
-    # Must use sentinel_exists helper for all check paths
-    assert 'sentinel_exists "$jname"' in bash
-    assert 'sentinel_exists "$hjname"' in bash
-    assert 'sentinel_exists "$tjname"' in bash
-    # Must use sentinel_wait_retry for NFS backoff
-    assert 'sentinel_wait_retry "$jname"' in bash
-    assert 'sentinel_wait_retry "$hjname"' in bash
-    assert 'sentinel_wait_retry "$tjname"' in bash
-    # WARNING message for sentinel-present case
-    assert "but sentinel present -- continuing" in bash
-    # FATAL message for no-sentinel case
-    assert "and no sentinel after retries" in bash
+    # bjobs EXIT/TERM must be fatal, regardless of sentinel state
+    assert 'if [ "$stat" = "EXIT" ] || [ "$stat" = "TERM" ]; then' in bash
+    # The fatal case must not depend on sentinel presence
+    assert "FATAL: upstream job $jid ($jname) $stat (bjobs)" in bash
+    # bhist fallbacks must also be fatal when they report failure
+    assert "FATAL: upstream job $jid ($hjname) EXIT (bhist)" in bash
+    assert "FATAL: upstream job $jid ($tjname) TERM (bhist)" in bash
+    # The OLD "but sentinel present -- continuing" path MUST be gone
+    # from the EXIT/TERM branch (it masked real failures).
+    assert "$stat (bjobs) but sentinel present" not in bash
+    assert "EXIT (bhist) but sentinel present" not in bash
+    # Sentinel fallback only applies when scheduler has no record at all
+    # (late LSF history eviction); that branch still uses sentinel_exists.
+    assert "no scheduler status" in bash
+    assert "sentinel_exists" in bash
 
 
 def test_barrier_wait_uses_sentinel_helpers():

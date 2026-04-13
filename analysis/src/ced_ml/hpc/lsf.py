@@ -91,6 +91,10 @@ class LSFScheduler(SchedulerBackend):
         return match.group(1) if match else None
 
     def build_orchestrator_submit_func(self) -> str:
+        # Per-job stdout/stderr are routed to ``$LSF_OUTPUT_DIR`` so post-mortem
+        # diagnostics survive the job. Routing to /dev/null made silent
+        # failures unreproducible after the fact. The orchestrator sets
+        # LSF_OUTPUT_DIR via build_orchestrator_header (parent=${LOG_DIR}/lsf_out).
         return """submit_and_track() {
     local job_key="$1"
     local label="$2"
@@ -107,6 +111,12 @@ class LSFScheduler(SchedulerBackend):
 
     local job_script
     local bsub_directive="#BSUB"
+    local out_path="${LSF_OUTPUT_DIR:-/dev/null}/${job_name}.%J.out"
+    local err_path="${LSF_OUTPUT_DIR:-/dev/null}/${job_name}.%J.err"
+    if [ "${LSF_OUTPUT_DIR:-}" = "" ]; then
+        out_path="/dev/null"
+        err_path="/dev/null"
+    fi
     job_script=$(cat <<EOF
 #!/bin/bash
 ${bsub_directive} -P $PROJECT
@@ -115,8 +125,8 @@ ${bsub_directive} -J $job_name
 ${bsub_directive} -n $cores
 ${bsub_directive} -W $walltime
 ${bsub_directive} -R "rusage[mem=$mem_per_core] span[hosts=1]"
-${bsub_directive} -oo /dev/null
-${bsub_directive} -eo /dev/null
+${bsub_directive} -oo $out_path
+${bsub_directive} -eo $err_path
 
 set -euo pipefail
 export CED_JOB_COMMAND_B64="$command_b64"
@@ -146,6 +156,13 @@ EOF
 }"""
 
     def build_orchestrator_status_func(self) -> str:
+        # Scheduler status is ALWAYS authoritative when available. The
+        # sentinel ("wrapper reached its EXIT trap") is only consulted as a
+        # fallback when bjobs/bhist can't report a state -- for example
+        # after the LSF short-term finished-job cache evicts an old job.
+        # A sentinel written by the trap proves only that the wrapper ran
+        # to its exit, NOT that the payload command succeeded; using it to
+        # override an EXIT/TERM status masks real failures.
         return """check_upstream_failures() {
     local -a job_ids=("$@")
     local jid
@@ -160,14 +177,8 @@ EOF
         if [ "$stat" = "EXIT" ] || [ "$stat" = "TERM" ]; then
             local jname
             jname=$(bjobs -noheader -o "job_name" "$jid" 2>/dev/null | awk 'NF {print $1; exit}')
-            if sentinel_exists "$jname"; then
-                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) but sentinel present -- continuing"
-            elif sentinel_wait_retry "$jname"; then
-                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (bjobs) sentinel found after retry -- continuing"
-            else
-                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs) and no sentinel after retries"
-                exit 1
-            fi
+            echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (bjobs)"
+            exit 1
         fi
 
         if [ -z "$stat" ] || echo "$raw" | grep -qi "not found"; then
@@ -176,28 +187,28 @@ EOF
             if [ -n "$hist_exit" ]; then
                 local hjname
                 hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
-                if sentinel_exists "$hjname"; then
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) but sentinel present -- continuing"
-                elif sentinel_wait_retry "$hjname"; then
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid EXIT (bhist) sentinel found after retry -- continuing"
-                else
-                    echo "[$(date '+%F %T')] FATAL: upstream job $jid EXIT (bhist) and no sentinel after retries: $hist_exit"
-                    exit 1
-                fi
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($hjname) EXIT (bhist): $hist_exit"
+                exit 1
             fi
             local hist_term
             hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}' || true)
             if [ -n "$hist_term" ]; then
                 local tjname
                 tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
-                if sentinel_exists "$tjname"; then
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) but sentinel present -- continuing"
-                elif sentinel_wait_retry "$tjname"; then
-                    echo "[$(date '+%F %T')] WARNING: upstream job $jid TERM (bhist) sentinel found after retry -- continuing"
-                else
-                    echo "[$(date '+%F %T')] FATAL: upstream job $jid TERM (bhist) and no sentinel after retries: $hist_term"
-                    exit 1
-                fi
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($tjname) TERM (bhist): $hist_term"
+                exit 1
+            fi
+            # bjobs returned nothing and bhist found no failure record.
+            # Scheduler state is unrecoverable; fall back to sentinel.
+            local fname
+            fname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
+            if [ -n "$fname" ] && sentinel_exists "$fname"; then
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($fname) no scheduler status; sentinel present -- assuming success"
+            elif [ -n "$fname" ] && sentinel_wait_retry "$fname"; then
+                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($fname) no scheduler status; sentinel found after retry -- assuming success"
+            elif [ -n "$fname" ]; then
+                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($fname) no scheduler status and no sentinel"
+                exit 1
             fi
         fi
     done

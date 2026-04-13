@@ -118,14 +118,20 @@ def test_slurm_orchestrator_status_func():
     assert "CANCELLED" in func
 
 
-def test_slurm_check_upstream_sentinel_aware():
-    """check_upstream_failures should use sentinel helpers and retry on failure."""
+def test_slurm_check_upstream_scheduler_authoritative():
+    """check_upstream_failures treats sacct FAILED/CANCELLED/TIMEOUT as fatal.
+
+    See test_lsf.test_check_upstream_scheduler_authoritative for the full
+    rationale. The sentinel trap fires on every exit; it proves only that
+    the wrapper ran to its EXIT handler, not that the payload succeeded.
+    """
     func = _SLURM.build_orchestrator_status_func()
 
-    assert 'sentinel_exists "$jname"' in func
-    assert 'sentinel_wait_retry "$jname"' in func
-    assert "but sentinel present -- continuing" in func
-    assert "and no sentinel after retries" in func
+    # Scheduler state must be fatal without sentinel fallback
+    assert 'if [ "$stat" = "FAILED" ]' in func
+    assert "FATAL: upstream job $jid ($jname) $stat (sacct)" in func
+    # The OLD sentinel-overrides-FAILED path must be gone
+    assert "$stat (sacct) but sentinel present" not in func
 
 
 def test_slurm_orchestrator_header():

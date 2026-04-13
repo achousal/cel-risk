@@ -112,6 +112,10 @@ EOF
 }"""
 
     def build_orchestrator_status_func(self) -> str:
+        # Scheduler status is ALWAYS authoritative when available. The
+        # sentinel is only consulted as a fallback when sacct/squeue
+        # can't report a state. See lsf.py:build_orchestrator_status_func
+        # for the full rationale.
         return """check_upstream_failures() {
     local -a job_ids=("$@")
     local jid
@@ -126,14 +130,8 @@ EOF
         if [ "$stat" = "FAILED" ] || [ "$stat" = "CANCELLED" ] || [ "$stat" = "TIMEOUT" ] || [ "$stat" = "NODE_FAIL" ]; then
             local jname
             jname=$(sacct -j "$jid" --noheader --parsable2 -o JobName 2>/dev/null | head -1)
-            if sentinel_exists "$jname"; then
-                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (sacct) but sentinel present -- continuing"
-            elif sentinel_wait_retry "$jname"; then
-                echo "[$(date '+%F %T')] WARNING: upstream job $jid ($jname) $stat (sacct) sentinel found after retry -- continuing"
-            else
-                echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (sacct) and no sentinel after retries"
-                exit 1
-            fi
+            echo "[$(date '+%F %T')] FATAL: upstream job $jid ($jname) $stat (sacct)"
+            exit 1
         fi
 
         if [ -z "$stat" ]; then
