@@ -74,14 +74,30 @@ def prepare_features(ctx: TrainingContext) -> TrainingContext:
         log_section(logger, "Fixed Panel Mode")
         logger.info(f"Loading fixed panel from: {fixed_panel_path}")
 
-        # Load fixed panel CSV
-        fixed_panel_df = pd.read_csv(fixed_panel_path)
+        # Load fixed panel CSV.
+        # Two accepted formats:
+        #   1. Header row with column "protein" or "proteins" (one per row under it).
+        #   2. Headerless: one protein name per line.
+        # A naive read_csv defaults to header=0 and would silently consume the first
+        # protein as the column label, dropping it from the panel. Peek at the first
+        # token: if it matches a known header label, treat as headered; otherwise
+        # read as headerless.
+        with open(fixed_panel_path) as _fh:
+            _first_line = _fh.readline().strip()
+        _first_token = _first_line.split(",", 1)[0].strip().strip('"').strip("'")
+        _header_labels = {"protein", "proteins"}
+        has_header = _first_token.lower() in _header_labels
 
-        # Expect a column named 'protein' or use first column
-        if "protein" in fixed_panel_df.columns:
-            fixed_panel_proteins = fixed_panel_df["protein"].tolist()
+        if has_header:
+            fixed_panel_df = pd.read_csv(fixed_panel_path)
+            header_col = next(
+                (c for c in fixed_panel_df.columns if c.lower() in _header_labels),
+                fixed_panel_df.columns[0],
+            )
+            fixed_panel_proteins = fixed_panel_df[header_col].tolist()
         else:
-            fixed_panel_proteins = fixed_panel_df.iloc[:, 0].tolist()
+            fixed_panel_df = pd.read_csv(fixed_panel_path, header=None, names=["protein"])
+            fixed_panel_proteins = fixed_panel_df["protein"].tolist()
 
         # Deduplicate while preserving order
         seen = set()
