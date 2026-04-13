@@ -1,0 +1,16 @@
+# Phase 2 (val mode): full pipeline with multi_stage feature selection +
+# importance-consensus panel ranking, under incident-only + log class weight.
+# Produces a refreshed consensus panel and per-seed validation metrics.
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_val_full
+
+configs:
+  training: configs/variants/incident_only_full/training_config_incident_only.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_val_full.yaml
+
+pipeline:
+  optimize_panel: true
+  consensus: true
+  permutation_test: false  # disabled — expensive and not needed for discovery

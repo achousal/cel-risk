@@ -1,0 +1,17 @@
+# Phase 3 (holdout mode): full pipeline with multi_stage feature selection +
+# importance-consensus panel ranking, under incident-only + log class weight.
+# Carves out 30% locked holdout, does feature selection + training on the 70%
+# dev portion, evaluates on the locked holdout.
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_holdout_full
+
+configs:
+  training: configs/variants/incident_only_full/training_config_incident_only.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_holdout_full.yaml
+
+pipeline:
+  optimize_panel: true
+  consensus: true
+  permutation_test: false
