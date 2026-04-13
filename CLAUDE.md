@@ -157,7 +157,7 @@ cel-risk/
 │   │   ├── configs/manifest.yaml      # declarative recipe + factorial source of truth
 │   │   ├── analysis/                  # post-hoc R/Python analysis
 │   │   ├── sweeps/                    # sweep orchestration engine
-│   │   └── submit_factorial.sh
+│   │   └── submit_experiment.sh
 │   ├── incident-validation/           # Incident Validation — pre-diagnostic case validation
 │   │   ├── README.md
 │   │   ├── RESULTS_LR_EN.md

@@ -21,7 +21,7 @@ then runs V0 gate + main training + holdout evaluation.
 - `configs/manifest.yaml` — declarative recipe + factorial source of truth
 - `analysis/` — post-hoc R/Python analysis (operates on artifacts)
 - `sweeps/` — sweep orchestration engine (CellML-coupled today)
-- `submit_factorial.sh`, `compile_factorial.py`, `monitor_factorial.py`, `validate_tree.R`
+- `submit_experiment.sh`, `compile_factorial.py`, `monitor_factorial.py`, `validate_tree.R`
 
 Outputs land in `results/cellml/{discovery,v0_gate,main,holdout,compiled,figures}/`.
 

@@ -17,7 +17,7 @@ Single index for the CellML experiment (formerly: optimal-setup/factorial). Gen 
 operations/cellml/                         # this experiment (formerly optimal-setup/factorial)
 ├── MASTER_PLAN.md                          # this file — the single index
 ├── DESIGN.md                               # scientific design + recipe definitions
-├── submit_factorial.sh                     # SLURM array (two-phase: scout/main)
+├── submit_experiment.sh                    # LSF array orchestrator (V0 gate + factorial)
 ├── compile_factorial.py                    # cells -> results table
 ├── validate_tree.R                         # V1-V5 statistical tests
 ├── extract_scout_params.py                 # extract top-K params from scout for warm-start
@@ -218,13 +218,13 @@ manifest.yaml
     │        each cell: training_config.yaml (with storage/study_name/user_attrs)
     │
     ├──> PHASE 1: SCOUT (warm-start)
-    │    ├──> PHASE=scout sbatch submit_factorial.sh scout_manifest.csv
+    │    ├──> bash submit_experiment.sh --experiment cellml_scout --manifest scout_manifest.csv --results-root results/cellml/scout --seeds 100-119
     │    ├──> monitor_factorial.py --storage-dir <dir>      (live progress)
     │    ├──> extract_scout_params.py ──> scout_top_params.json
     │    └──> Re-run config_gen.py with warm_start_params ──> full cell configs
     │
     ├──> PHASE 2: MAIN FACTORIAL
-    │    ├──> sbatch submit_factorial.sh cell_manifest.csv
+    │    ├──> bash submit_experiment.sh --experiment cellml_main --manifest cell_manifest.csv --results-root results/cellml/main --seeds 100-129
     │    │        each task: ced run-pipeline --pipeline-config <cell> --split-seeds 100-129
     │    │        Optuna studies persist to JournalStorage (per-recipe files)
     │    │        Studies tagged with factorial metadata via user_attrs
@@ -328,7 +328,7 @@ Post-factorial analyses. Independent of the main decision tree. P0 (time-stratif
 
 1. ~~Extend `config_gen.py` with splits overlay support~~ (still needed for V0 splits)
 2. Generate V0 configs: 120 cells (`ced generate-v0 --manifest configs/manifest.yaml`)
-3. Submit scout batch: `PHASE=scout sbatch submit_factorial.sh scout_manifest.csv`
+3. Submit V0 batch: `bash submit_experiment.sh --experiment v0_gate --manifest analysis/configs/recipes/v0/v0_cell_manifest.csv --results-root results/v0_gate --seeds 100-119`
 4. Monitor: `python monitor_factorial.py --storage-dir <dir>`
 5. Analyze: does strategy winner vary by model?
 6. Decision: lock strategy or promote to full factor
@@ -342,7 +342,7 @@ Post-factorial analyses. Independent of the main decision tree. P0 (time-stratif
 
 ### Phase 3: Main Factorial
 
-1. `sbatch submit_factorial.sh cell_manifest.csv`
+1. `bash submit_experiment.sh --experiment cellml_main --manifest operations/cellml/configs/recipes/cell_manifest.csv --results-root results/cellml/main --seeds 100-129`
 2. Monitor progress: `python monitor_factorial.py --storage-dir <dir> [--detail]`
 3. Compile: `python compile_factorial.py --optuna-storage-dir <dir> --output results/factorial_compiled.csv`
 
@@ -371,7 +371,7 @@ Five enhancements to the Optuna integration, implemented 2026-04-08. All backwar
 
 | # | Enhancement | Files Changed | Status |
 |---|---|---|---|
-| 1 | **Warm-start via `enqueue_trial`** — scout cells first, extract top-K params, seed sibling cells | `schema.py`, `config_gen.py`, `optuna_search.py`, `extract_scout_params.py`, `submit_factorial.sh` | Built |
+| 1 | **Warm-start via `enqueue_trial`** — scout cells first, extract top-K params, seed sibling cells | `schema.py`, `config_gen.py`, `optuna_search.py`, `extract_scout_params.py`, `submit_experiment.sh` | Built |
 | 2 | **`study.user_attrs` metadata** — tag each study with recipe_id, model, calibration, weighting, downsampling, cell_id | `cv_schema.py`, `config_gen.py`, `optuna_search.py`, `nested_cv.py` | Built |
 | 3 | **JournalStorage backend** — per-recipe `.optuna.journal` files, per-cell study names with `{seed}` template + `__r{repeat}_f{fold}` suffix | `schema.py`, `cv_schema.py`, `config_gen.py`, `optuna_search.py`, `nested_cv.py` | Built |
 | 4 | **Fold-level trial attrs** — `fold_aurocs`, `fold_briers`, `auroc_std`, `brier_std` stored per trial | `optuna_search.py` | Built |
@@ -381,10 +381,10 @@ Five enhancements to the Optuna integration, implemented 2026-04-08. All backwar
 
 ```
 config_gen.py (warm_start_params=null) → scout_manifest.csv (4 cells, 1 per model)
-    → PHASE=scout sbatch submit_factorial.sh
+    → PHASE=scout sbatch submit_experiment.sh
     → extract_scout_params.py --storage-dir <dir> → scout_top_params.json
     → config_gen.py (warm_start_params=scout_top_params.json) → full cell_manifest.csv
-    → sbatch submit_factorial.sh
+    → sbatch submit_experiment.sh
 ```
 
 ### Storage Partitioning

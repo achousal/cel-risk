@@ -251,14 +251,14 @@ cat > "\${OUTDIR}/run_\${RUN_ID}/cell_manifest_entry.json" << 'MANIFESTEOF'
 ${MANIFEST_JSON}
 MANIFESTEOF
 
-for SEED in \$(seq ${SEEDS_START} ${SEEDS_END}); do
-    echo "--- Cell ${CELL_ID} (\${CELL_NAME}) Seed \$SEED ---"
-    ced run-pipeline \\
-        --pipeline-config "\${PIPELINE_CONFIG}" \\
-        --split-seeds "\$SEED" \\
-        --run-id "\${RUN_ID}" \\
-        --outdir "\${OUTDIR}"
-done
+SEEDS_CSV="\$(seq -s, ${SEEDS_START} ${SEEDS_END})"
+echo "--- Cell ${CELL_ID} (\${CELL_NAME}) Seeds \${SEEDS_CSV} ---"
+ced run-pipeline \\
+    --experiment "${EXPERIMENT}" \\
+    --pipeline-config "\${PIPELINE_CONFIG}" \\
+    --split-seeds "\${SEEDS_CSV}" \\
+    --run-id "\${RUN_ID}" \\
+    --outdir "\${OUTDIR}"
 
 echo "Cell ${CELL_ID} complete."
 RUNNEREOF

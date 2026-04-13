@@ -3,7 +3,7 @@
 
 The implementation lives in ``ced_ml.utils.optuna_warmstart`` so it can be
 reused by other operations or notebooks. This file is just the CLI surface
-used by ``submit_factorial.sh``.
+used by ``submit_experiment.sh``.
 
 Usage:
     python operations/cellml/extract_scout_params.py \\

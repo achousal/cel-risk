@@ -257,7 +257,7 @@ V6: Ensemble Comparison (post-tree, informational)
 | Derivation | `analysis/src/ced_ml/recipes/derive.py` | Manifest → panels + audit logs + nested expansion |
 | Config gen | `analysis/src/ced_ml/recipes/config_gen.py` | Recipe × factorial → merged YAML pairs + storage/user_attrs |
 | CLI | `analysis/src/ced_ml/cli/commands/recipes.py` | `ced derive-recipes` command |
-| Submission | `operations/cellml/submit_factorial.sh` | SLURM array (two-phase scout/main) |
+| Submission | `operations/cellml/submit_experiment.sh` | LSF array orchestrator (V0 gate + factorial) |
 | Compilation | `operations/cellml/compile_factorial.py` | Cells → results (filesystem + Optuna storage modes) |
 | Validation | `operations/cellml/validate_tree.R` | V1–V5 statistical tests |
 | Scout extraction | `operations/cellml/extract_scout_params.py` | Top-K params per model for warm-start |

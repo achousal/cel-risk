@@ -254,4 +254,8 @@ def generate_v0(ctx, manifest, data_path, output_dir, dry_run):
     cells = generate_v0_configs(manifest_obj, recipe_panels, out)
     click.echo(f"\nGenerated {len(cells)} V0 cells → {out}")
     click.echo(f"V0 manifest: {out / 'v0_cell_manifest.csv'}")
-    click.echo(f"\nNext: sbatch submit_factorial.sh {out / 'v0_cell_manifest.csv'}")
+    click.echo(
+        f"\nNext: bash operations/cellml/submit_experiment.sh "
+        f"--experiment v0_gate --manifest {out / 'v0_cell_manifest.csv'} "
+        f"--results-root results/v0_gate --seeds 100-119"
+    )
