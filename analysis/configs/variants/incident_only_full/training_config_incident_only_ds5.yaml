@@ -1,0 +1,23 @@
+# Training config: full pipeline under incident-only + 1:5 control downsample
+#
+# Parallel arm to training_config_incident_only.yaml (log variant).
+# The 1:5 downsampling is baked into the splits (splits_inc_*_ds5), so the
+# training-time class weighting is disabled — downsample IS the imbalance
+# remedy here, not reweighting.
+_base: ../../training_config.yaml
+
+scenario: IncidentOnly
+
+lr:
+  class_weight_options: none
+
+svm:
+  class_weight_options: none
+
+rf:
+  class_weight_options: none
+
+# Reduced Optuna trials (canonical = 300) to match the log arm and keep
+# the run inside the 20 h training timeout.
+optuna:
+  n_trials: 50

@@ -1,0 +1,14 @@
+# Phase 2 (val mode) — full pipeline, incident-only + 1:5 downsample
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_val_ds5
+
+configs:
+  training: configs/variants/incident_only_full/training_config_incident_only_ds5.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_val_ds5.yaml
+
+pipeline:
+  optimize_panel: true
+  consensus: true
+  permutation_test: false
