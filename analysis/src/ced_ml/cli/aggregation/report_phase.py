@@ -530,7 +530,6 @@ def run_report_phase(
         pooled_train_oof_df=collected.pooled_train_oof_df,
     )
 
-    log_section(logger, "Generating Aggregated Plots")
     n_splits = len(split_dirs)
     split_seeds = [int(sd.name.replace("split_seed", "")) for sd in split_dirs]
     meta_lines = build_aggregated_metadata(
@@ -540,6 +539,25 @@ def run_report_phase(
         timestamp=True,
     )
 
+    # Write diagnostic CSVs (screening, DCA, calibration, learning curves)
+    # BEFORE plot generation so large-cohort runs that OOM-crash in the
+    # matplotlib/SHAP plotting path still have the core scientific artifacts
+    # on disk. Plots are regenerable from the saved CSVs; diagnostics are not.
+    log_section(logger, "Generating Additional Artifacts")
+    generate_additional_artifacts(
+        pooled_test_df=collected.pooled_test_df,
+        pooled_val_df=collected.pooled_val_df,
+        split_dirs=split_dirs,
+        out_dir=agg_dir,
+        save_plots=save_plots,
+        plot_learning_curve=plot_learning_curve,
+        plot_formats=plot_formats,
+        meta_lines=meta_lines,
+        logger=logger,
+        ensemble_dirs=ensemble_dirs,
+    )
+
+    log_section(logger, "Generating Aggregated Plots")
     if save_plots:
         generate_aggregated_plots(
             pooled_test_df=collected.pooled_test_df,
@@ -576,20 +594,6 @@ def run_report_phase(
                 plot_shap_heatmap=plot_shap_heatmap,
                 logger=logger,
             )
-
-    log_section(logger, "Generating Additional Artifacts")
-    generate_additional_artifacts(
-        pooled_test_df=collected.pooled_test_df,
-        pooled_val_df=collected.pooled_val_df,
-        split_dirs=split_dirs,
-        out_dir=agg_dir,
-        save_plots=save_plots,
-        plot_learning_curve=plot_learning_curve,
-        plot_formats=plot_formats,
-        meta_lines=meta_lines,
-        logger=logger,
-        ensemble_dirs=ensemble_dirs,
-    )
 
     ensemble_metadata = collect_ensemble_metadata(
         ensemble_dirs=ensemble_dirs,
