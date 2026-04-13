@@ -22,3 +22,10 @@ svm:
 
 rf:
   class_weight_options: log
+
+# Reduced Optuna trials (canonical = 300) — discovery-mode scan over
+# 2920 proteins × 4 models × 11 seeds × 15 CV folds needs headroom. 50
+# trials is sufficient for consensus-rank feature selection because the
+# panel emerges from cross-model agreement, not single-model peak tuning.
+optuna:
+  n_trials: 50

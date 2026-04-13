@@ -39,6 +39,8 @@ hpc:
     panel_timeout: 10.0  # hr
     consensus_timeout: 20.0  # hr
     max_concurrent_submissions: 20
-    cores: 1
-    mem_per_core: 2000
+    cores: 8
+    mem_per_core: 16000  # MB — aggregation of large-cohort runs (full-control incident-only)
+                         # pools per-seed predictions + SHAP values and peaks past 125 GB;
+                         # 8 × 16 GB = 128 GB headroom for aggregate-splits and consensus jobs.
     walltime: "72:00"
