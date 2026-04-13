@@ -108,25 +108,38 @@ def _select_warm_start_points(
     direction: str,
     top_k: int,
 ) -> list[WarmStartPoint]:
-    """Return the top-k trials by objective, best first.
+    """Return the top-k DISTINCT trials by objective, best first.
 
     Warm-start points seed the parent sweep's Optuna study via
     enqueue_trial() so calibration's best configs are evaluated by the
     real pipeline instead of being discarded. Points are hints -- the
     parent sweep still explores beyond them.
+
+    De-duplicates on params_json so TPE convergence to a single
+    best value does not waste warm-start slots on the same config.
+    When fewer than top_k unique params exist, returns what's
+    available rather than padding.
     """
     if top_k <= 0 or not trials:
         return []
     reverse = direction == "maximize"
     ordered = sorted(trials, key=lambda t: t.objective, reverse=reverse)
-    top = ordered[:top_k]
+    seen: set[str] = set()
+    unique: list[TrialRecord] = []
+    for t in ordered:
+        if t.params_json in seen:
+            continue
+        seen.add(t.params_json)
+        unique.append(t)
+        if len(unique) >= top_k:
+            break
     return [
         WarmStartPoint(
             params=json.loads(t.params_json),
             objective=t.objective,
             calibration_trial_idx=t.trial_idx,
         )
-        for t in top
+        for t in unique
     ]
 
 

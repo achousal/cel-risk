@@ -333,6 +333,36 @@ def test_warm_start_top_k_ordered_best_first(tmp_path: Path):
     assert wsp[0].params == {"alpha": 0.1, "beta": 0.2}
 
 
+def test_warm_start_deduplicates_identical_params(tmp_path: Path):
+    """TPE convergence to a single best value must not waste warm-start slots."""
+    spec = _toy_spec()
+    cfg = _fast_config(
+        min_trials=6, max_trials=6, trials_per_dim=6,
+        warm_start_top_k=3,
+    )
+
+    # All trials return the same high score; suggester emits only 2 distinct
+    # param dicts. Expect exactly 2 warm-start points, not 3 (padded).
+    def objective(params):  # noqa: ARG001
+        return 0.90
+
+    def suggester(idx: int):
+        # Two distinct configs, alternating
+        return {"alpha": 0.1, "beta": 0.2} if idx % 2 == 0 else {"alpha": 0.5, "beta": 0.5}
+
+    result = run_calibration(
+        spec=spec, config=cfg,
+        space_hash="sh", dataset_fingerprint="fp",
+        param_suggester=suggester, objective_fn=objective,
+        calibration_dir=tmp_path / "cal", subsample_rows_used=100,
+    )
+    assert result.proposed is not None
+    wsp = result.proposed.warm_start_points
+    assert len(wsp) == 2  # not 3 — deduped
+    distinct = {json.dumps(p.params, sort_keys=True) for p in wsp}
+    assert len(distinct) == 2
+
+
 def test_enqueue_warm_start_seeds_parent_study():
     """enqueue_warm_start pushes points onto a parent Optuna study."""
     import optuna
