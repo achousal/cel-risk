@@ -19,6 +19,7 @@ import click
 
 from ced_ml import __version__
 from ced_ml.cli.commands.aggregation import aggregate_splits
+from ced_ml.cli.commands.cellml import cellml_group
 from ced_ml.cli.commands.config_tools import config_group
 from ced_ml.cli.commands.data import convert_to_parquet, save_splits
 from ced_ml.cli.commands.evaluation import eval_holdout
@@ -79,6 +80,7 @@ cli.add_command(run_pipeline)
 cli.add_command(derive_recipes)
 cli.add_command(generate_v0)
 cli.add_command(sweep)
+cli.add_command(cellml_group)
 
 
 def main():
