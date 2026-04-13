@@ -1,0 +1,12 @@
+# Training config: 4-protein panel, incident-only scenario, 1:5 downsampled splits
+# No class weighting — the 1:5 downsample (baked into the splits) is the
+# imbalance remedy. Mirrors the alternative school from incident_validation.
+_base: ../4protein/training_config_val_4protein.yaml
+
+scenario: IncidentOnly
+
+svm:
+  class_weight_options: none
+
+lr:
+  class_weight_options: none

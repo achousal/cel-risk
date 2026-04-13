@@ -1,0 +1,14 @@
+# Pipeline: 4-protein, incident-only, log class weight, val mode
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_val_full
+
+configs:
+  training: configs/variants/incident_only_4protein/training_config_log.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_val_full.yaml
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false

@@ -1,0 +1,14 @@
+# Pipeline: 4-protein, incident-only, log class weight, holdout mode
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_holdout_full
+
+configs:
+  training: configs/variants/incident_only_4protein/training_config_log.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_holdout_full.yaml
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false

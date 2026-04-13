@@ -228,10 +228,23 @@ def _coerce_min_samples_leaf_list(
 def parse_class_weight_options(s: str) -> list:
     """Parse class_weight options.
 
+    Accepted tokens:
+        - ``none`` / ``null`` → unweighted (``None``)
+        - ``balanced`` → sklearn balanced reweighting
+        - ``log``  → {0: 1, 1: log(n_neg/n_pos)}, resolved per fold at fit time
+        - ``sqrt`` → {0: 1, 1: sqrt(n_neg/n_pos)}, resolved per fold at fit time
+
+    ``log``/``sqrt`` flow through as string tokens; they are replaced with a
+    concrete weight dict inside the Optuna loop by
+    :func:`ced_ml.models.hyperparams_common.resolve_class_weights_in_params`
+    using each training fold's labels.
+
     Examples:
         "none,balanced" -> [None, "balanced"]
         "balanced" -> ["balanced"]
-        "" -> [None, "balanced"] (default)
+        "log"      -> ["log"]
+        "none,log" -> [None, "log"]
+        ""         -> [None, "balanced"] (default)
     """
     if not s:
         return [None, "balanced"]
@@ -242,6 +255,8 @@ def parse_class_weight_options(s: str) -> list:
             out.append(None)
         elif t == "balanced":
             out.append("balanced")
+        elif t in ("log", "sqrt"):
+            out.append(t)
     # fallback if user passes invalid input
     if not out:
         return [None, "balanced"]

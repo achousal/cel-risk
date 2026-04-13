@@ -1,0 +1,14 @@
+# Pipeline: 4-protein, incident-only, 1:5 downsample, holdout mode
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_holdout_ds5
+
+configs:
+  training: configs/variants/incident_only_4protein/training_config_ds5.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_holdout_ds5.yaml
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false

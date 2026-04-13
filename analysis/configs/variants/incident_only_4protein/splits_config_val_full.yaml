@@ -1,0 +1,15 @@
+# Incident-only + 4-protein validation splits (no control downsampling)
+# Pairs with training_config_log.yaml (class_weight=log operates on full imbalance).
+_base: ../../splits_config.yaml
+
+mode: development
+scenarios:
+  - IncidentOnly
+
+# Dedicated seed range for incident-only reruns
+n_splits: 11
+seed_start: 20
+
+# No control downsampling — class_weight=log handles imbalance on full cohort
+train_control_per_case: null
+eval_control_per_case: null

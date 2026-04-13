@@ -1,0 +1,14 @@
+# Incident-only + 4-protein holdout splits (1:5 control downsampling)
+# Carves out 30% holdout, trains on remaining 70%. Pairs with training_config_ds5.yaml.
+_base: ../../splits_config.yaml
+
+mode: holdout
+scenarios:
+  - IncidentOnly
+holdout_size: 0.30
+
+n_splits: 11
+seed_start: 20
+
+train_control_per_case: 5
+eval_control_per_case: 5
