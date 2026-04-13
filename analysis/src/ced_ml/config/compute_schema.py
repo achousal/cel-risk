@@ -68,8 +68,12 @@ class OrchestratorConfig(BaseModel):
         default=1.0, ge=0.25, description="Hours to wait for consensus"
     )
     max_concurrent_submissions: int = Field(default=20, ge=1, le=100)
-    cores: int = Field(default=1, ge=1, le=4)
-    mem_per_core: int = Field(default=2000, ge=512, le=8000)
+    # Aggregation jobs pool per-seed predictions + SHAP values and peak past
+    # 100 GB on full-control incident-only runs. Raising the ceiling from
+    # 4×8 GB = 32 GB to 16×16 GB = 256 GB so the orchestrator can provision
+    # enough headroom for aggregate-splits and consensus jobs.
+    cores: int = Field(default=1, ge=1, le=16)
+    mem_per_core: int = Field(default=2000, ge=512, le=16000)
     walltime: str = Field(default="48:00")
 
     def timeout_seconds(self, stage: str) -> int:
