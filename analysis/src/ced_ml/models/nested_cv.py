@@ -95,6 +95,7 @@ def get_model_n_iter(model_name: str, config: TrainingConfig) -> int:
         ModelName.LR_EN: config.lr,
         ModelName.LR_L1: config.lr,
         ModelName.LinSVM_cal: config.svm,
+        ModelName.LinSVM_L1_cal: config.svm,
         ModelName.RF: config.rf,
         ModelName.XGBoost: config.xgboost,
     }
@@ -884,13 +885,13 @@ def _get_search_n_jobs(model_name: str, config: TrainingConfig) -> int:
         # Explicit override
         return max(1, min(cpus, tune_n_jobs))
 
-    # Auto strategy
-    if model_name in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal):
-        # Parallelize search for single-threaded models
+    # Auto strategy: parallelize search for linear models (single-threaded),
+    # keep tree/boosted models single-threaded since they parallelize internally.
+    from ced_ml.models.registry import is_linear_model
+
+    if is_linear_model(model_name):
         return max(1, cpus)
-    else:
-        # Keep search single-threaded for models with internal parallelism
-        return 1
+    return 1
 
 
 def _apply_per_fold_calibration(
@@ -912,7 +913,7 @@ def _apply_per_fold_calibration(
     - strategy="none": Return estimator unchanged
     - strategy="oof_posthoc": Return estimator unchanged (calibration happens post-CV)
     - strategy="per_fold": Apply CalibratedClassifierCV (current behavior)
-    - LinSVM_cal: Already calibrated (skip regardless of strategy)
+    - Already-calibrated models (see MODEL_REGISTRY): skip regardless of strategy
     - Already wrapped: Skip double-calibration
 
     Args:
@@ -934,8 +935,10 @@ def _apply_per_fold_calibration(
         return estimator
 
     # per_fold strategy: apply CalibratedClassifierCV
-    # SVM is already calibrated
-    if model_name == ModelName.LinSVM_cal:
+    # Skip models already wrapped in calibration (registry-driven)
+    from ced_ml.models.registry import is_already_calibrated
+
+    if is_already_calibrated(model_name):
         return estimator
 
     # Don't double-calibrate
@@ -1217,8 +1220,16 @@ def _extract_from_model_coefficients(
     # Extract coefficients
     clf = pipeline.named_steps["clf"]
 
-    # Handle CalibratedClassifierCV wrapper for LinSVM
-    if model_name == ModelName.LinSVM_cal and hasattr(clf, "calibrated_classifiers_"):
+    # Handle CalibratedClassifierCV wrapper for already-calibrated linear models
+    # (both LinSVM_cal / LinSVM_L1_cal; any future calibrated linear variant).
+    from ced_ml.models.registry import is_already_calibrated, is_linear_model
+
+    _is_wrapped_linear = (
+        is_linear_model(model_name)
+        and is_already_calibrated(model_name)
+        and hasattr(clf, "calibrated_classifiers_")
+    )
+    if _is_wrapped_linear:
         # Average coefficients across calibration folds
         coefs_list = []
         for cc in clf.calibrated_classifiers_:

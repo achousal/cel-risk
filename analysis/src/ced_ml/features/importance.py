@@ -27,14 +27,12 @@ Design notes:
 
 import json
 import logging
-from typing import Literal
 
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 
-from ..data.schema import ModelName
 from ..metrics.discrimination import auroc
 from .corr_prune import (
     build_correlation_graph,
@@ -489,7 +487,7 @@ def _compute_grouped_permutation_importance(
 
 def extract_importance_from_model(
     estimator,
-    model_name: Literal["LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"],
+    model_name: str,
     feature_names: np.ndarray | list[str] | None = None,
     X_val: pd.DataFrame | None = None,
     y_val: np.ndarray | None = None,
@@ -569,10 +567,18 @@ def extract_importance_from_model(
             logger.warning("feature_names is required for non-Pipeline estimators")
             return pd.DataFrame(columns=["feature", "importance", "importance_type"])
 
-    # Validate grouped mode requirements
+    # Validate grouped mode requirements (registry-driven model kind lookup)
+    from ced_ml.models.registry import get_model_spec
+
     model_name_clean = str(model_name).strip()
-    is_tree_model = model_name_clean in (ModelName.RF, ModelName.XGBoost)
-    is_linear_model = model_name_clean in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal)
+    try:
+        _spec = get_model_spec(model_name_clean)
+        is_tree_model = not _spec.is_linear
+        is_linear_model = _spec.is_linear
+    except ValueError:
+        # Unknown models fall back to feature-name heuristics used below.
+        is_tree_model = False
+        is_linear_model = False
 
     if grouped and is_tree_model and (X_val is None or y_val is None):
         raise ValueError(
@@ -664,9 +670,11 @@ def extract_importance_from_model(
     elif is_tree_model:
         return extract_tree_importance(estimator, feature_names)
     else:
+        from ced_ml.models.registry import get_registered_model_names
+
         raise ValueError(
             f"Unknown model_name: {model_name}. "
-            f"Expected one of: LR_EN, LR_L1, LinSVM_cal, RF, XGBoost"
+            f"Expected one of: {', '.join(get_registered_model_names())}"
         )
 
 

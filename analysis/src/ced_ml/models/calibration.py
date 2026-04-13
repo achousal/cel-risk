@@ -39,8 +39,6 @@ from sklearn.svm import LinearSVC
 
 from ced_ml.utils.math_utils import logit
 
-from ..data.schema import ModelName
-
 # Suppress convergence warnings to prevent heavy .err files
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
@@ -879,8 +877,10 @@ def maybe_calibrate_estimator(
     if not calibrate:
         return estimator
 
-    # Don't calibrate SVM (already calibrated)
-    if model_name == ModelName.LinSVM_cal:
+    # Don't calibrate already-calibrated models (registry-driven)
+    from ced_ml.models.registry import is_already_calibrated
+
+    if is_already_calibrated(model_name):
         return estimator
 
     # Don't double-calibrate

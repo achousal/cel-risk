@@ -82,6 +82,7 @@ _SELECTOR_ESTIMATORS = {
     ModelName.LR_EN: _make_lr_selector,
     ModelName.LR_L1: _make_lr_selector,
     ModelName.LinSVM_cal: _make_svm_selector,
+    ModelName.LinSVM_L1_cal: _make_svm_selector,
     ModelName.RF: _make_rf_selector,
     ModelName.XGBoost: _make_xgb_selector,
 }

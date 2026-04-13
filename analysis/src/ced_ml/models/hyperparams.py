@@ -23,8 +23,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..data.schema import ModelName
-
 # Re-export common utilities
 from .hyperparams_common import (
     DEFAULT_OPTUNA_RANGES,
@@ -83,17 +81,17 @@ def get_param_distributions(
         # Always use 'sel' step name
         param_dists["sel__selector__k"] = k_grid
 
-    # Model-specific parameters
-    if model_name in (ModelName.LR_EN, ModelName.LR_L1):
+    # Model-specific parameters — dispatch on hyperparam family in MODEL_REGISTRY
+    from ced_ml.models.registry import get_hyperparam_family
+
+    family = get_hyperparam_family(model_name)
+    if family == "lr":
         param_dists.update(_get_lr_params(config, randomize, grid_rng, model_name=model_name))
-
-    elif model_name == ModelName.LinSVM_cal:
+    elif family == "svm":
         param_dists.update(_get_svm_params(config, randomize, grid_rng))
-
-    elif model_name == ModelName.RF:
+    elif family == "rf":
         param_dists.update(_get_rf_params(config, randomize, grid_rng))
-
-    elif model_name == ModelName.XGBoost:
+    elif family == "xgb":
         param_dists.update(_get_xgb_params(config, xgb_spw, randomize, grid_rng))
 
     return param_dists
@@ -135,17 +133,17 @@ def get_param_distributions_optuna(
             # Use the k_grid as categorical for feature selection
             optuna_dists["sel__selector__k"] = {"type": "categorical", "choices": k_grid}
 
-    # Model-specific parameters with native Optuna ranges
-    if model_name in ("LR_EN", "LR_L1"):
+    # Model-specific parameters — dispatch on hyperparam family in MODEL_REGISTRY
+    from ced_ml.models.registry import get_hyperparam_family
+
+    family = get_hyperparam_family(model_name)
+    if family == "lr":
         optuna_dists.update(_get_lr_params_optuna(config, model_name=model_name))
-
-    elif model_name == "LinSVM_cal":
+    elif family == "svm":
         optuna_dists.update(_get_svm_params_optuna(config))
-
-    elif model_name == "RF":
+    elif family == "rf":
         optuna_dists.update(_get_rf_params_optuna(config))
-
-    elif model_name == "XGBoost":
+    elif family == "xgb":
         optuna_dists.update(_get_xgb_params_optuna(config, xgb_spw))
 
     return optuna_dists

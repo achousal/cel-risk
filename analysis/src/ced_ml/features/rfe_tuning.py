@@ -79,7 +79,9 @@ def make_fresh_estimator(model_name: str, random_state: int = 42) -> object:
     elif model_name == "LR_L1":
         return build_logistic_regression(l1_ratio=1.0, penalty="l1", random_state=random_state)
     elif model_name == "LinSVM_cal":
-        return build_linear_svm_calibrated(random_state=random_state)
+        return build_linear_svm_calibrated(penalty="l2", random_state=random_state)
+    elif model_name == "LinSVM_L1_cal":
+        return build_linear_svm_calibrated(penalty="l1", random_state=random_state)
     elif model_name == "RF":
         return build_random_forest(n_estimators=300, random_state=random_state)
     elif model_name == "XGBoost":

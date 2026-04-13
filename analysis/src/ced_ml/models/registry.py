@@ -11,6 +11,7 @@ References:
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import numpy as np
@@ -364,6 +365,7 @@ def build_logistic_regression(
 
 def build_linear_svm_calibrated(
     C: float = 1.0,
+    penalty: str = "l2",
     max_iter: int = 2000,
     calibration_method: str = "sigmoid",
     calibration_cv: int = 5,
@@ -375,6 +377,8 @@ def build_linear_svm_calibrated(
 
     Args:
         C: Inverse regularization strength
+        penalty: Regularization type. 'l2' (default) or 'l1'. L1 forces dual=False
+            and produces sparse coefficients, which is useful for feature selection.
         max_iter: Maximum iterations
         calibration_method: 'sigmoid' or 'isotonic'
         calibration_cv: CV folds for calibration
@@ -383,8 +387,17 @@ def build_linear_svm_calibrated(
     Returns:
         CalibratedClassifierCV wrapping LinearSVC
     """
+    if penalty not in ("l1", "l2"):
+        raise ValueError(f"penalty must be 'l1' or 'l2', got {penalty!r}")
+    # L1 requires dual=False; L2 supports dual=True (sklearn default, slightly faster)
+    dual = penalty == "l2"
     base_svm = LinearSVC(
-        C=C, class_weight=None, random_state=int(random_state), max_iter=int(max_iter)
+        C=C,
+        penalty=penalty,
+        dual=dual,
+        class_weight=None,
+        random_state=int(random_state),
+        max_iter=int(max_iter),
     )
     return CalibratedClassifierCV(base_svm, method=str(calibration_method), cv=int(calibration_cv))
 
@@ -500,108 +513,306 @@ def build_xgboost(
     )
 
 
+# ============================================================================
+# Central Model Registry
+# ============================================================================
+#
+# Adding a new model to the library:
+#   1. Add the enum value in ``ced_ml.data.schema.ModelName`` and a display
+#      string in ``MODEL_DISPLAY_NAMES``.
+#   2. Write a builder callable with signature ``(config, random_state, n_jobs)
+#      -> estimator``.
+#   3. Register a ``ModelSpec`` below with builder, color, hyperparam family,
+#      and capability flags.
+#   4. Add an entry in ``features/model_selector.py:_SELECTOR_ESTIMATORS`` if
+#      the model is eligible for feature selection, and in
+#      ``models/hyperparams_common.py:RFE_TUNE_SPACES`` if it supports RFE.
+#
+# Everything else (calibration skip logic, linear-model branches, plotting
+# color, weight-key lookup, parameter-distribution dispatch) is driven
+# automatically off ``MODEL_REGISTRY`` via the helper functions at the bottom
+# of this section.
+
+
+# sklearn CalibratedClassifierCV accepts only "isotonic" or "sigmoid".
+# Map internal calibration-method names onto those two values.
+_SKLEARN_CAL_MAP: dict[str, str] = {
+    "isotonic": "isotonic",
+    "logistic_full": "sigmoid",
+    "logistic_intercept": "sigmoid",
+    "beta": "sigmoid",
+}
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """Canonical metadata for a model registered in the library.
+
+    Every library branch that switches on model identity should consult
+    ``MODEL_REGISTRY`` through the helpers below rather than hardcoding a
+    tuple or list of names.
+
+    Attributes:
+        name: The enum value identifying this model.
+        display_name: Human-facing label (plot legends, reports).
+        color: Canonical plot color (hex).
+        builder: Factory with signature ``(config, random_state, n_jobs) -> estimator``.
+        is_linear: True for models whose predictions are a linear function of
+            transformed features (importance extracted from coefficients).
+        is_already_calibrated: True if the builder returns an estimator that
+            already exposes well-calibrated probabilities. Calibration-strategy
+            passes skip wrapping these models to avoid double-calibration.
+        weight_key: Key in ``TrainingConfig`` under which class_weight options
+            live (e.g. "lr", "svm", "rf", "xgboost"). Used by
+            ``ced_ml.recipes.config_gen`` to resolve per-model weighting.
+        hyperparam_family: Dispatch tag consumed by parameter-distribution
+            builders ("lr", "svm", "rf", "xgb").
+    """
+
+    name: ModelName
+    display_name: str
+    color: str
+    builder: Callable[[TrainingConfig, int, int], Any]
+    is_linear: bool = False
+    is_already_calibrated: bool = False
+    weight_key: str = ""
+    hyperparam_family: str = ""
+
+
+def _build_lr_en(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    return build_logistic_regression(
+        solver=config.lr.solver,
+        C=1.0,
+        max_iter=config.lr.max_iter,
+        tol=1e-4,
+        random_state=random_state,
+        l1_ratio=0.5,
+    )
+
+
+def _build_lr_l1(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    return build_logistic_regression(
+        solver=config.lr.solver,
+        C=1.0,
+        max_iter=config.lr.max_iter,
+        tol=1e-4,
+        random_state=random_state,
+        l1_ratio=1.0,
+    )
+
+
+def _build_linsvm_cal_with_penalty(
+    config: TrainingConfig, random_state: int, n_jobs: int, *, penalty: str
+) -> Any:
+    sklearn_cal_method = _SKLEARN_CAL_MAP.get(config.calibration.method, "sigmoid")
+    return build_linear_svm_calibrated(
+        C=1.0,
+        penalty=penalty,
+        max_iter=config.svm.max_iter,
+        calibration_method=sklearn_cal_method,
+        calibration_cv=config.calibration.cv,
+        random_state=random_state,
+    )
+
+
+def _build_linsvm_l2_cal(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    return _build_linsvm_cal_with_penalty(config, random_state, n_jobs, penalty="l2")
+
+
+def _build_linsvm_l1_cal(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    return _build_linsvm_cal_with_penalty(config, random_state, n_jobs, penalty="l1")
+
+
+def _build_rf(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    n_est = config.rf.n_estimators_grid[0] if config.rf.n_estimators_grid else 100
+    return build_random_forest(
+        n_estimators=n_est,
+        random_state=random_state,
+        n_jobs=int(max(1, n_jobs)),
+    )
+
+
+def _build_xgboost(config: TrainingConfig, random_state: int, n_jobs: int) -> Any:
+    n_est = config.xgboost.n_estimators_grid[0] if config.xgboost.n_estimators_grid else 100
+    max_d = config.xgboost.max_depth_grid[0] if config.xgboost.max_depth_grid else 5
+    lr = config.xgboost.learning_rate_grid[0] if config.xgboost.learning_rate_grid else 0.05
+    sub = config.xgboost.subsample_grid[0] if config.xgboost.subsample_grid else 0.8
+    col = config.xgboost.colsample_bytree_grid[0] if config.xgboost.colsample_bytree_grid else 0.8
+    return build_xgboost(
+        n_estimators=n_est,
+        max_depth=max_d,
+        learning_rate=lr,
+        subsample=sub,
+        colsample_bytree=col,
+        scale_pos_weight=1.0,  # placeholder; recomputed downstream
+        reg_alpha=(config.xgboost.reg_alpha_grid[0] if config.xgboost.reg_alpha_grid else 0.0),
+        reg_lambda=(config.xgboost.reg_lambda_grid[0] if config.xgboost.reg_lambda_grid else 1.0),
+        min_child_weight=(
+            config.xgboost.min_child_weight_grid[0] if config.xgboost.min_child_weight_grid else 1
+        ),
+        gamma=config.xgboost.gamma_grid[0] if config.xgboost.gamma_grid else 0.0,
+        tree_method=config.xgboost.tree_method,
+        random_state=random_state,
+        n_jobs=(int(max(1, n_jobs)) if config.xgboost.tree_method != "gpu_hist" else 1),
+    )
+
+
+MODEL_REGISTRY: dict[ModelName, ModelSpec] = {
+    ModelName.LR_EN: ModelSpec(
+        name=ModelName.LR_EN,
+        display_name="Logistic Regression (ElasticNet)",
+        color="#264653",  # dark teal
+        builder=_build_lr_en,
+        is_linear=True,
+        weight_key="lr",
+        hyperparam_family="lr",
+    ),
+    ModelName.LR_L1: ModelSpec(
+        name=ModelName.LR_L1,
+        display_name="Logistic Regression (L1)",
+        color="#287A76",  # teal
+        builder=_build_lr_l1,
+        is_linear=True,
+        weight_key="lr",
+        hyperparam_family="lr",
+    ),
+    ModelName.LinSVM_cal: ModelSpec(
+        name=ModelName.LinSVM_cal,
+        display_name="Linear SVM (L2, calibrated)",
+        color="#e9c46a",  # gold
+        builder=_build_linsvm_l2_cal,
+        is_linear=True,
+        is_already_calibrated=True,
+        weight_key="svm",
+        hyperparam_family="svm",
+    ),
+    ModelName.LinSVM_L1_cal: ModelSpec(
+        name=ModelName.LinSVM_L1_cal,
+        display_name="Linear SVM (L1, calibrated)",
+        color="#b58700",  # darker gold
+        builder=_build_linsvm_l1_cal,
+        is_linear=True,
+        is_already_calibrated=True,
+        weight_key="svm",
+        hyperparam_family="svm",
+    ),
+    ModelName.RF: ModelSpec(
+        name=ModelName.RF,
+        display_name="Random Forest",
+        color="#2a9d8f",  # teal
+        builder=_build_rf,
+        weight_key="rf",
+        hyperparam_family="rf",
+    ),
+    ModelName.XGBoost: ModelSpec(
+        name=ModelName.XGBoost,
+        display_name="XGBoost",
+        color="#f4a261",  # orange
+        builder=_build_xgboost,
+        weight_key="xgboost",
+        hyperparam_family="xgb",
+    ),
+}
+
+
+def get_model_spec(model_name: Any) -> ModelSpec:
+    """Look up the ``ModelSpec`` for ``model_name``.
+
+    Raises:
+        ValueError: If ``model_name`` is not a valid ``ModelName`` value or
+            is not registered in ``MODEL_REGISTRY``.
+    """
+    try:
+        key = model_name if isinstance(model_name, ModelName) else ModelName(model_name)
+    except ValueError as e:
+        raise ValueError(
+            f"Unknown model: {model_name!r}. Valid values: {sorted(m.value for m in MODEL_REGISTRY)}"
+        ) from e
+    if key not in MODEL_REGISTRY:
+        raise ValueError(
+            f"Model {key.value!r} is defined in ModelName but not registered in MODEL_REGISTRY. "
+            f"Registered: {sorted(m.value for m in MODEL_REGISTRY)}"
+        )
+    return MODEL_REGISTRY[key]
+
+
+def is_registered_model(model_name: Any) -> bool:
+    """True if ``model_name`` resolves to an entry in ``MODEL_REGISTRY``."""
+    try:
+        get_model_spec(model_name)
+    except ValueError:
+        return False
+    return True
+
+
+def is_already_calibrated(model_name: Any) -> bool:
+    """True if the model's builder yields a pre-calibrated estimator.
+
+    Calibration strategies consult this to skip double-calibration.
+    Unknown models return False (conservative default).
+    """
+    try:
+        return get_model_spec(model_name).is_already_calibrated
+    except ValueError:
+        return False
+
+
+def is_linear_model(model_name: Any) -> bool:
+    """True if the model is linear in its transformed features.
+
+    Feature-importance, RFE coefficient extraction, and SHAP surrogate paths
+    consult this instead of hardcoding a tuple of names. Unknown models
+    return False.
+    """
+    try:
+        return get_model_spec(model_name).is_linear
+    except ValueError:
+        return False
+
+
+def get_hyperparam_family(model_name: Any) -> str:
+    """Return the hyperparam-dispatch family ("lr", "svm", "rf", "xgb").
+
+    Empty string for unknown models.
+    """
+    try:
+        return get_model_spec(model_name).hyperparam_family
+    except ValueError:
+        return ""
+
+
+def get_registered_model_names() -> list[str]:
+    """Return the string names of every model in ``MODEL_REGISTRY``.
+
+    Canonical replacement for hardcoded lists like
+    ``["LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"]``.
+    """
+    return [m.value for m in MODEL_REGISTRY]
+
+
 def build_models(
     model_name: str,
     config: TrainingConfig,
     random_state: int = 42,
     n_jobs: int = 1,
 ) -> object:
-    """Build a single model estimator.
+    """Build a single model estimator via ``MODEL_REGISTRY`` dispatch.
 
     Args:
-        model_name: Model identifier ('LR_EN', 'LR_L1', 'LinSVM_cal', 'RF', 'XGBoost')
-        config: Training configuration
-        random_state: Random seed
-        n_jobs: CPU cores for RF/XGBoost
+        model_name: Registered model identifier (see ``MODEL_REGISTRY``).
+        config: Training configuration.
+        random_state: Random seed.
+        n_jobs: CPU cores for parallelizable models (RF/XGBoost).
 
     Returns:
-        sklearn-compatible estimator
+        sklearn-compatible estimator.
 
     Raises:
-        ValueError: If model_name is unknown
-        ImportError: If XGBoost requested but not installed
+        ValueError: If ``model_name`` is not in ``MODEL_REGISTRY``.
+        ImportError: If XGBoost is requested but not installed.
     """
-    if model_name == ModelName.LR_EN:
-        return build_logistic_regression(
-            solver=config.lr.solver,
-            C=1.0,
-            max_iter=config.lr.max_iter,
-            tol=1e-4,  # LRConfig doesn't have tol field
-            random_state=random_state,
-            l1_ratio=0.5,
-        )
-
-    elif model_name == ModelName.LR_L1:
-        return build_logistic_regression(
-            solver=config.lr.solver,
-            C=1.0,
-            max_iter=config.lr.max_iter,
-            tol=1e-4,  # LRConfig doesn't have tol field
-            random_state=random_state,
-            l1_ratio=1.0,
-        )
-
-    elif model_name == ModelName.LinSVM_cal:
-        # Map OOF-posthoc method names to sklearn CalibratedClassifierCV terms.
-        # sklearn only accepts "isotonic" or "sigmoid".
-        _SKLEARN_CAL_MAP = {
-            "isotonic": "isotonic",
-            "logistic_full": "sigmoid",
-            "logistic_intercept": "sigmoid",
-            "beta": "sigmoid",
-        }
-        sklearn_cal_method = _SKLEARN_CAL_MAP.get(config.calibration.method, "sigmoid")
-        return build_linear_svm_calibrated(
-            C=1.0,
-            max_iter=config.svm.max_iter,
-            calibration_method=sklearn_cal_method,
-            calibration_cv=config.calibration.cv,
-            random_state=random_state,
-        )
-
-    elif model_name == ModelName.RF:
-        # Get first value from n_estimators_grid list for default model
-        n_est = config.rf.n_estimators_grid[0] if config.rf.n_estimators_grid else 100
-        return build_random_forest(
-            n_estimators=n_est,
-            random_state=random_state,
-            n_jobs=int(max(1, n_jobs)),
-        )
-
-    elif model_name == ModelName.XGBoost:
-        # Get first values from grid lists for default model
-        n_est = config.xgboost.n_estimators_grid[0] if config.xgboost.n_estimators_grid else 100
-        max_d = config.xgboost.max_depth_grid[0] if config.xgboost.max_depth_grid else 5
-        lr = config.xgboost.learning_rate_grid[0] if config.xgboost.learning_rate_grid else 0.05
-        sub = config.xgboost.subsample_grid[0] if config.xgboost.subsample_grid else 0.8
-        col = (
-            config.xgboost.colsample_bytree_grid[0] if config.xgboost.colsample_bytree_grid else 0.8
-        )
-        spw = 1.0  # Default, will be computed later
-        return build_xgboost(
-            n_estimators=n_est,
-            max_depth=max_d,
-            learning_rate=lr,
-            subsample=sub,
-            colsample_bytree=col,
-            scale_pos_weight=spw,
-            reg_alpha=(config.xgboost.reg_alpha_grid[0] if config.xgboost.reg_alpha_grid else 0.0),
-            reg_lambda=(
-                config.xgboost.reg_lambda_grid[0] if config.xgboost.reg_lambda_grid else 1.0
-            ),
-            min_child_weight=(
-                config.xgboost.min_child_weight_grid[0]
-                if config.xgboost.min_child_weight_grid
-                else 1
-            ),
-            gamma=config.xgboost.gamma_grid[0] if config.xgboost.gamma_grid else 0.0,
-            tree_method=config.xgboost.tree_method,
-            random_state=random_state,
-            n_jobs=(int(max(1, n_jobs)) if config.xgboost.tree_method != "gpu_hist" else 1),
-        )
-
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    spec = get_model_spec(model_name)
+    return spec.builder(config, random_state, n_jobs)
 
 
 # ----------------------------

@@ -110,6 +110,7 @@ class ModelName(str, Enum):
     LR_EN = "LR_EN"
     LinSVM = "LinSVM"
     LinSVM_cal = "LinSVM_cal"
+    LinSVM_L1_cal = "LinSVM_L1_cal"
     SVM_rbf = "SVM_rbf"
     SVM_rbf_cal = "SVM_rbf_cal"
     RF = "RF"
@@ -126,7 +127,8 @@ MODEL_DISPLAY_NAMES = {
     ModelName.LR_L2: "Logistic Regression (L2)",
     ModelName.LR_EN: "Logistic Regression (ElasticNet)",
     ModelName.LinSVM: "Linear SVM",
-    ModelName.LinSVM_cal: "Linear SVM (calibrated)",
+    ModelName.LinSVM_cal: "Linear SVM (L2, calibrated)",
+    ModelName.LinSVM_L1_cal: "Linear SVM (L1, calibrated)",
     ModelName.SVM_rbf: "SVM (RBF kernel)",
     ModelName.SVM_rbf_cal: "SVM (RBF, calibrated)",
     ModelName.RF: "Random Forest",

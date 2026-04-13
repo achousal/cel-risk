@@ -19,16 +19,25 @@ from ced_ml.recipes.schema import Manifest
 
 logger = logging.getLogger(__name__)
 
-# Maps model name → config section key for class_weight_options
-_MODEL_WEIGHT_KEY = {
-    "LR_EN": "lr",
-    "LR_L1": "lr",
+# Maps model name → config section key for class_weight_options.
+# Registered models are derived from MODEL_REGISTRY.weight_key; entries here
+# only exist for models not yet in the registry (e.g. LR_L2, bare LinSVM).
+_MODEL_WEIGHT_KEY_EXTRA = {
     "LR_L2": "lr",
-    "LinSVM_cal": "svm",
     "LinSVM": "svm",
-    "XGBoost": "xgboost",
-    "RF": "rf",
 }
+
+
+def _build_model_weight_key() -> dict[str, str]:
+    """Build model→weight-key lookup from MODEL_REGISTRY + legacy extras."""
+    from ced_ml.models.registry import MODEL_REGISTRY
+
+    out = {spec.name.value: spec.weight_key for spec in MODEL_REGISTRY.values() if spec.weight_key}
+    out.update(_MODEL_WEIGHT_KEY_EXTRA)
+    return out
+
+
+_MODEL_WEIGHT_KEY = _build_model_weight_key()
 
 
 def generate_factorial_configs(

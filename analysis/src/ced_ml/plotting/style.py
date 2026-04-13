@@ -81,8 +81,10 @@ LW_SECONDARY = 1.5
 # Maps canonical model names to colorblind-friendly colors
 MODEL_COLORS: dict[str, str] = {
     "LR_EN": "#264653",  # dark teal
+    "LR_L1": "#287A76",  # teal
     "RF": "#2a9d8f",  # teal
-    "LinSVM_cal": "#e9c46a",  # gold
+    "LinSVM_cal": "#e9c46a",  # gold (L2, default)
+    "LinSVM_L1_cal": "#b58700",  # darker gold (L1, sparse)
     "XGBoost": "#f4a261",  # orange
     "ENSEMBLE": "#e76f51",  # coral (drawn last, on top)
 }

@@ -13,7 +13,6 @@ import pandas as pd
 from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 
-from ced_ml.data.schema import ModelName
 from ced_ml.utils.feature_names import extract_protein_name
 
 logger = logging.getLogger(__name__)
@@ -65,8 +64,10 @@ def compute_feature_importance(
         support = pipeline.named_steps["sel"].get_support()
         feature_names = [f for f, s in zip(feature_names, support, strict=False) if s]
 
-    # Strategy 1: Coefficient-based (linear models)
-    if model_name in (ModelName.LR_EN, ModelName.LR_L1, ModelName.LinSVM_cal):
+    # Strategy 1: Coefficient-based (linear models; registry-driven)
+    from ced_ml.models.registry import is_linear_model
+
+    if is_linear_model(model_name):
         importance = _importance_from_coefficients(clf, feature_names, protein_cols, model_name)
         if importance:
             return importance
@@ -89,7 +90,9 @@ def _importance_from_coefficients(
 
     coefs = None
 
-    if model_name == ModelName.LinSVM_cal and hasattr(clf, "calibrated_classifiers_"):
+    from ced_ml.models.registry import is_already_calibrated
+
+    if is_already_calibrated(model_name) and hasattr(clf, "calibrated_classifiers_"):
         coefs_list = []
         for cc in clf.calibrated_classifiers_:
             est = getattr(cc, "estimator", None)

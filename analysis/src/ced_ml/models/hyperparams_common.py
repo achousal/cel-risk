@@ -419,6 +419,9 @@ RFE_TUNE_SPACES: dict[str, dict[str, dict]] = {
     "LinSVM_cal": {
         "clf__estimator__C": {"type": "float", "low": 1e-3, "high": 1.0, "log": True},
     },
+    "LinSVM_L1_cal": {
+        "clf__estimator__C": {"type": "float", "low": 1e-3, "high": 1.0, "log": True},
+    },
     "RF": {
         "clf__max_depth": {"type": "int", "low": 3, "high": 20, "log": False},
         "clf__min_samples_leaf": {"type": "int", "low": 1, "high": 10, "log": False},
@@ -498,20 +501,22 @@ def get_rfe_tune_spaces_from_training_config(
     from ced_ml.models.hyperparams_rf import _get_rf_params_optuna
     from ced_ml.models.hyperparams_svm import _get_svm_params_optuna
     from ced_ml.models.hyperparams_xgb import _get_xgb_params_optuna
+    from ced_ml.models.registry import get_hyperparam_family, get_registered_model_names
 
-    # Default to all supported models
+    # Default to every model in MODEL_REGISTRY
     if model_names is None:
-        model_names = ["LR_EN", "LR_L1", "LinSVM_cal", "RF", "XGBoost"]
+        model_names = get_registered_model_names()
 
     rfe_tune_spaces = {}
     for model_name in model_names:
-        if model_name in ("LR_EN", "LR_L1"):
+        family = get_hyperparam_family(model_name)
+        if family == "lr":
             params = _get_lr_params_optuna(training_config, model_name=model_name)
-        elif model_name == "LinSVM_cal":
+        elif family == "svm":
             params = _get_svm_params_optuna(training_config)
-        elif model_name == "RF":
+        elif family == "rf":
             params = _get_rf_params_optuna(training_config)
-        elif model_name == "XGBoost":
+        elif family == "xgb":
             # XGBoost requires scale_pos_weight calculation
             # Use a reasonable default based on imbalance (will be recomputed per panel size)
             xgb_spw = 10.0  # Placeholder, will be overridden per k
@@ -519,7 +524,7 @@ def get_rfe_tune_spaces_from_training_config(
             # Filter out scale_pos_weight from RFE tuning (computed per panel size)
             params = {k: v for k, v in params.items() if "scale_pos_weight" not in k}
         else:
-            continue  # Skip unknown models
+            continue  # Skip unregistered / unknown models
 
         # Only keep clf__ parameters (exclude feature selector params)
         rfe_params = {k: v for k, v in params.items() if k.startswith("clf__")}

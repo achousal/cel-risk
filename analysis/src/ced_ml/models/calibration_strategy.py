@@ -160,10 +160,10 @@ class PerFoldCalibration:
         return True
 
     def should_skip_for_model(self, model_name: str) -> bool:
-        """Skip for already-calibrated models (LinSVM_cal)."""
-        from ced_ml.data.schema import ModelName
+        """Skip for already-calibrated models (registry-driven)."""
+        from ced_ml.models.registry import is_already_calibrated
 
-        return model_name == ModelName.LinSVM_cal
+        return is_already_calibrated(model_name)
 
     def get_cv_folds(self) -> int:
         """Return the number of CV folds."""
@@ -187,10 +187,10 @@ class PerFoldCalibration:
         Returns:
             Calibrated estimator or original if calibration should be skipped
         """
-        from ced_ml.data.schema import ModelName
+        from ced_ml.models.registry import is_already_calibrated
 
-        # Skip for already-calibrated models
-        if model_name == ModelName.LinSVM_cal:
+        # Skip for already-calibrated models (registry-driven)
+        if is_already_calibrated(model_name):
             return estimator
 
         # Don't double-calibrate
@@ -256,10 +256,10 @@ class OOFPosthocCalibration:
         return False
 
     def should_skip_for_model(self, model_name: str) -> bool:
-        """Skip for already-calibrated models (LinSVM_cal)."""
-        from ced_ml.data.schema import ModelName
+        """Skip for already-calibrated models (registry-driven)."""
+        from ced_ml.models.registry import is_already_calibrated
 
-        return model_name == ModelName.LinSVM_cal
+        return is_already_calibrated(model_name)
 
     def get_cv_folds(self) -> int:
         """Return 0 since per-fold CV is not used."""

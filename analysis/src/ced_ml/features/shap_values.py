@@ -686,9 +686,14 @@ def compute_shap_for_fold(
 
     # Cast dtype
     values = values.astype(config.raw_dtype)
+    # Calibrated linear models (any variant in MODEL_REGISTRY with both
+    # is_linear=True and is_already_calibrated=True) report the averaged
+    # coefficient surrogate state; everything else reports pre-calibration.
+    from ced_ml.models.registry import is_already_calibrated, is_linear_model
+
     explained_model_state = (
         ExplainedModelState.LINEAR_SURROGATE_MEAN_COEF
-        if model_name == ModelName.LinSVM_cal
+        if (is_linear_model(model_name) and is_already_calibrated(model_name))
         else ExplainedModelState.PRE_CALIBRATION
     )
 
@@ -785,9 +790,14 @@ def compute_final_shap(
             model_name=model_name,
             rng=rng,
         )
+    # Calibrated linear models (any variant in MODEL_REGISTRY with both
+    # is_linear=True and is_already_calibrated=True) report the averaged
+    # coefficient surrogate state; everything else reports pre-calibration.
+    from ced_ml.models.registry import is_already_calibrated, is_linear_model
+
     explained_model_state = (
         ExplainedModelState.LINEAR_SURROGATE_MEAN_COEF
-        if model_name == ModelName.LinSVM_cal
+        if (is_linear_model(model_name) and is_already_calibrated(model_name))
         else ExplainedModelState.PRE_CALIBRATION
     )
 
