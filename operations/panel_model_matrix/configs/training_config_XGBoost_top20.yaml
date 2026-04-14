@@ -1,0 +1,8 @@
+_base: ../../../analysis/configs/variants/incident_only_4protein/training_config_ds5.yaml
+
+features:
+  feature_selection_strategy: fixed_panel
+  fixed_panel_csv: "../operations/panel_model_matrix/panels/XGBoost_top20.csv"
+
+optuna:
+  n_trials: 50

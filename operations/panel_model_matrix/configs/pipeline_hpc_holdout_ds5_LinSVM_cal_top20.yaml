@@ -1,0 +1,15 @@
+# Pipeline: panel_model_matrix cell — LinSVM_cal top-20 panel, holdout ds5, incident-only.
+# Off-/on-diagonal cells for this panel are driven by CLI --model selection.
+_base: ../../../analysis/configs/pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_inc_holdout_ds5
+
+configs:
+  training: ../operations/panel_model_matrix/configs/training_config_LinSVM_cal_top20.yaml
+  splits: configs/variants/incident_only_4protein/splits_config_holdout_ds5.yaml
+
+pipeline:
+  optimize_panel: false
+  consensus: false
+  permutation_test: false
