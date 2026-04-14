@@ -44,7 +44,7 @@ for PANEL in "${PANELS[@]}"; do
       -o "$LOGDIR/%J.out"
       -e "$LOGDIR/%J.err")
 
-    CMD="cd $PROJECT_ROOT && module load python/3.12.5 && source analysis/.venv/bin/activate && ced run-pipeline \
+    CMD="cd $PROJECT_ROOT && module load python/3.12.5 && source analysis/.venv/bin/activate && unset PYTHONPATH && ced run-pipeline \
       --pipeline-config $CFG \
       --models $MODEL \
       --experiment panel_model_matrix \
