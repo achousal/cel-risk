@@ -21,7 +21,8 @@ MODELS = ["LinSVM_cal", "LR_EN", "RF", "XGBoost"]
 
 
 def _cell_metrics(panel: str, model: str) -> dict[str, float] | None:
-    metrics_csv = RESULTS / f"pmm_p{panel}_m{model}" / model / "aggregated" / "all_test_metrics.csv"
+    run_id = f"pmm_p{panel}_m{model}"
+    metrics_csv = RESULTS / run_id / f"run_{run_id}" / model / "aggregated" / "all_test_metrics.csv"
     if not metrics_csv.exists():
         return None
     rows = list(csv.DictReader(metrics_csv.open()))
