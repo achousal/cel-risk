@@ -13,7 +13,7 @@ paths:
 # Config files (relative to analysis/)
 configs:
   splits: configs/splits_config.yaml
-  training: configs/training_config.yaml
+  training: configs/training_config_local.yaml
 
 # Pipeline orchestration settings (used by ced run-pipeline)
 pipeline:

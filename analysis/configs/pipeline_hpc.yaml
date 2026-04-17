@@ -1,12 +1,17 @@
 # Pipeline Configuration - HPC Environment
-# Deep-merged on top of pipeline_local.yaml via _base.
-# Only values that differ from local defaults are listed here.
-
-_base: pipeline_local.yaml
+# Standalone HPC config — does not inherit from pipeline_local.yaml.
 
 environment: hpc
 
+# Paths (relative to analysis/)
+paths:
+  infile: ../data/Celiac_dataset_proteomics_w_demo.parquet
+  splits_dir: ../splits
+  results_dir: ../results
+  logs_dir: ../logs
+
 configs:
+  splits: configs/splits_config.yaml
   training: configs/training_config.yaml
 
 pipeline:
