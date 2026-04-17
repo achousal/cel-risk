@@ -255,8 +255,8 @@ def build_job_script(
         Complete bash script string.
 
     Note:
-        Both stdout and stderr are redirected to /dev/null because ced
-        commands create their own structured log files.
+        stdout and stderr are routed to log_dir/<job_name>.{out,err} so that
+        job-level failures (env activation, missing commands) are visible.
     """
     directives = scheduler.build_directives(
         job_name=job_name,
@@ -265,6 +265,8 @@ def build_job_script(
         cores=cores,
         mem_per_core=mem_per_core,
         walltime=walltime,
+        stdout_path=str(log_dir / f"{job_name}.out"),
+        stderr_path=str(log_dir / f"{job_name}.err"),
         dependency=dependency,
     )
     header = "\n".join(directives)
@@ -1185,6 +1187,8 @@ def _submit_orchestrator_pipeline(
         f"Submitting {expected_training_jobs} training jobs "
         f"({len(models)} models x {len(split_seeds)} seeds)..."
     )
+    pipeline_logger.info(f"Scripts dir: {scripts_dir}")
+    pipeline_logger.info(f"Training logs: {run_logs_dir}")
 
     for model in models:
         for split_index, seed in enumerate(split_seeds):
@@ -1213,6 +1217,8 @@ def _submit_orchestrator_pipeline(
                 command=wrapped_command,
                 **job_params,
             )
+
+            _write_job_script(scripts_dir, job_name, submission_script)
 
             if dry_run:
                 pipeline_logger.info(f"  [DRY RUN] Training ({model} s{seed}): {job_name}")
