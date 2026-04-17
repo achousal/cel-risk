@@ -34,7 +34,8 @@ for arg in "$@"; do
     esac
 done
 
-ACTIVATE="cd ${BASEDIR} && unset PYTHONPATH && module load python/3.12.5 && source analysis/venv/bin/activate"
+VENV_SITE="${BASEDIR}/analysis/venv/lib/python3.12/site-packages"
+ACTIVATE="cd ${BASEDIR} && unset PYTHONPATH && module load python/3.12.5 && source analysis/venv/bin/activate && export PYTHONPATH=${VENV_SITE}"
 
 SMOKE_ARGS=""
 if [[ ${SMOKE} -eq 1 ]]; then
