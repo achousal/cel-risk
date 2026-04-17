@@ -544,6 +544,8 @@ def _partial_csv_name(model: str, ordering: str) -> str:
 def phase_run(args) -> None:
     if not args.model or not args.ordering:
         raise SystemExit("--phase run requires --model and --ordering")
+    import io as _io
+    pd.DataFrame({"_": [0]}).to_csv(_io.StringIO())
 
     log.info("CEL_ROOT: %s", CEL_ROOT)
     log.info("Phase: run | Model: %s | Ordering: %s", args.model, args.ordering)
