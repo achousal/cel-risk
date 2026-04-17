@@ -55,7 +55,7 @@ from ced_ml.data.schema import (
 # Config
 # ---------------------------------------------------------------------------
 DATA_PATH = CEL_ROOT / "data" / "Celiac_dataset_proteomics_w_demo.parquet"
-FEATURE_PANEL_PATH = CEL_ROOT / "results" / "incident-validation" / "lr" / "LR_EN" / "feature_panel.csv"
+FEATURE_PANEL_PATH = CEL_ROOT / "results" / "incident-validation" / "lr" / "SVM_L1" / "feature_coefficients.csv"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 PANEL_SIZES = [5, 8, 10, 15, 20, 25, 28, 40, 60, 80, 100, 134]
@@ -169,9 +169,9 @@ def load_and_split(data_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def load_ranked_features(panel_path: Path) -> list[str]:
-    """Return proteins sorted by stability_freq descending."""
+    """Return proteins sorted by stability_freq desc, ties broken by abs_coef desc."""
     panel_df = pd.read_csv(panel_path)
-    panel_df = panel_df.sort_values("stability_freq", ascending=False)
+    panel_df = panel_df.sort_values(["stability_freq", "abs_coef"], ascending=[False, False])
     return panel_df["protein"].tolist()
 
 

@@ -1,0 +1,68 @@
+---
+# Incident-validation run manifest
+# Drives submit_incident_validation.py across models x strategies x weights.
+# Edit this file (not the submit script) to change what runs.
+
+models:
+  - LR_EN
+  - SVM_L1
+  - SVM_L2
+  - RF
+  - XGB
+
+strategies:
+  - incident_only
+  - incident_prevalent
+  - prevalent_only
+
+weights:
+  - none
+  - balanced
+  - sqrt
+  - log
+
+feature_selection:
+  n_bootstrap: 100
+  bootstrap_top_k: 200
+  stability_threshold: 0.50
+  screen_method: wald
+  corr_threshold: 0.85
+  corr_method: spearman
+
+optuna:
+  n_trials: 50
+  n_inner_folds: 3
+
+evaluation:
+  n_outer_folds: 5
+  n_bootstrap_ci: 1000
+  test_frac: 0.20
+  split_seed: 42
+
+# Per-model HPC resource profiles (LSF)
+resources:
+  default:
+    queue: premium
+    project: acc_vascbrain
+    feat_wall: "48:00"
+    cv_wall: "48:00"
+    agg_wall: "02:00"
+    feat_mem: 8000
+    cv_mem: 8000
+    agg_mem: 4000
+    feat_cores: 4
+    cv_cores: 2
+    agg_cores: 2
+  LR_EN: {}
+  SVM_L1: {}
+  SVM_L2: {}
+  RF:
+    cv_mem: 16000
+    feat_mem: 12000
+    cv_cores: 4
+    feat_cores: 4
+  XGB:
+    cv_mem: 16000
+    feat_mem: 12000
+    cv_cores: 4
+    feat_cores: 4
