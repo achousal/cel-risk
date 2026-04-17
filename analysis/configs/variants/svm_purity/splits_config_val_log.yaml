@@ -1,0 +1,13 @@
+# Splits: purity panel, incident-only, no downsampling (pairs with training_config_log.yaml)
+# eval_control_per_case: null → true-prevalence test set (~0.34% natural CeD rate)
+_base: ../../splits_config.yaml
+
+mode: development
+scenarios:
+  - IncidentOnly
+
+n_splits: 11
+seed_start: 20
+
+train_control_per_case: null
+eval_control_per_case: null

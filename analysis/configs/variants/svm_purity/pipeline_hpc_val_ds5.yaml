@@ -1,0 +1,18 @@
+# Pipeline: SVM purity panel, incident-only, ds5 downsampling, val mode
+_base: ../../pipeline_hpc.yaml
+
+paths:
+  splits_dir: ../splits_svm_purity_val_ds5
+
+configs:
+  training: configs/variants/svm_purity/training_config_ds5.yaml
+  splits: configs/variants/svm_purity/splits_config_val_ds5.yaml
+
+pipeline:
+  models:
+    - LinSVM_cal
+    - LinSVM_L1_cal
+  ensemble: false
+  optimize_panel: false
+  consensus: false
+  permutation_test: false
