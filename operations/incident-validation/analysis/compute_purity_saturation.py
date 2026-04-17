@@ -486,8 +486,8 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
                         color=color, alpha=0.12, linewidth=0,
                     )
 
-                ls = marker[-2:] if len(marker) > 1 else "-"
                 mk = marker[0]
+                ls = marker[1:] if len(marker) > 1 else "-"
                 ax.plot(sizes, vals, linestyle=ls, marker=mk, color=color,
                         linewidth=lw, markersize=5, alpha=(0.9 if ordering == "purity" else 0.55),
                         label=label)
