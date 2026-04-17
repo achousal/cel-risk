@@ -94,7 +94,7 @@ class Config:
 
     # Feature selection
     n_bootstrap: int = 100
-    bootstrap_top_k: int = 150
+    bootstrap_top_k: int = 200
     stability_threshold: float = 0.50
     screen_method: str = "wald"
     corr_threshold: float = 0.85
