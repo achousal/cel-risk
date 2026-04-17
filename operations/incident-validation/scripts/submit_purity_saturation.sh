@@ -34,7 +34,7 @@ for arg in "$@"; do
     esac
 done
 
-ACTIVATE="cd ${BASEDIR} && module load anaconda3/2024.06 && source analysis/venv/bin/activate"
+ACTIVATE="cd ${BASEDIR} && module load python/3.12.5 && source analysis/venv/bin/activate"
 
 SMOKE_ARGS=""
 if [[ ${SMOKE} -eq 1 ]]; then
