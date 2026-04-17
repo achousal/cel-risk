@@ -8,18 +8,26 @@ AUPRC vs panel size using the same protocol as compute_saturation.py:
   - 5-fold outer CV, 3-fold inner Optuna (20 trials)
   - median-C refit on full dev set for hold-out test AUPRC
 
+Two-phase execution (for HPC parallelism):
+  --phase run       Run one (model × ordering) combo; saves purity_sat_{model}_{ordering}.csv
+  --phase aggregate Concat partial CSVs; save saturation_all_models.csv + figures
+
 Outputs (under --out)
 ---------------------
-    saturation_all_models.csv            -- numeric results, all models × orderings
-    features_purity.csv                  -- long-format (ordering, panel_size, rank, protein)
+    purity_sat_{model}_{ordering}.csv   -- partial results per run job
+    saturation_all_models.csv           -- combined results (aggregate phase)
+    features_purity.csv                 -- long-format protein lists (aggregate phase)
     features_stability.csv
-    fig_purity_saturation.{pdf,png}      -- 2×3 grid: rows=CV/test, cols=model
+    fig_purity_saturation.{pdf,png}     -- 2x3 grid: rows=CV/test, cols=model
 
 Usage
 -----
-    python operations/incident-validation/analysis/compute_purity_saturation.py
-    python operations/incident-validation/analysis/compute_purity_saturation.py \\
-        --panel-sizes 5 10 28 --out /tmp/sat_smoke
+    # Single combo (run phase):
+    python compute_purity_saturation.py --phase run --model SVM_L1 --ordering purity
+    # Aggregate after all run jobs complete:
+    python compute_purity_saturation.py --phase aggregate
+    # Smoke (3 panel sizes):
+    python compute_purity_saturation.py --phase run --model LR_EN --ordering purity --panel-sizes 5 10 28
 """
 
 from __future__ import annotations
@@ -30,7 +38,6 @@ import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import matplotlib
 matplotlib.use("Agg")
@@ -88,7 +95,6 @@ N_BOOTSTRAP_CI = 1000
 CI_SEED = 123
 CALIBRATION_CV = 5
 
-# Best weight per model from incident-validation report
 BEST_WEIGHT = {"LR_EN": "log", "SVM_L1": "log", "SVM_L2": "none"}
 
 COLORS = {
@@ -97,6 +103,9 @@ COLORS = {
     "SVM_L2": ("#1B9E77", "#A0DFC8"),
 }
 ORDERING_STYLE = {"purity": ("s--", 2.0), "stability": ("o-", 1.5)}
+
+VALID_MODELS   = ("LR_EN", "SVM_L1", "SVM_L2")
+VALID_ORDERINGS = ("purity", "stability")
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +136,7 @@ def _sample_weight(class_weight: dict | None, y: np.ndarray) -> np.ndarray | Non
 @dataclass
 class ModelSpec:
     name: str
-    weight_scheme: str  # "log" or "none"
+    weight_scheme: str
 
     def suggest_params(self, trial: optuna.Trial) -> dict:
         raise NotImplementedError
@@ -175,25 +184,17 @@ class SVMSpec(ModelSpec):
     def build(self, params, class_weight, seed):
         if self.penalty == "l1":
             base = LinearSVC(
-                penalty="l1",
-                dual=False,
-                C=params["C"],
-                class_weight=class_weight,
-                max_iter=5000,
-                random_state=seed,
+                penalty="l1", dual=False, C=params["C"],
+                class_weight=class_weight, max_iter=5000, random_state=seed,
             )
         else:
             base = LinearSVC(
-                penalty="l2",
-                C=params["C"],
-                class_weight=class_weight,
-                max_iter=5000,
-                random_state=seed,
+                penalty="l2", C=params["C"],
+                class_weight=class_weight, max_iter=5000, random_state=seed,
             )
         return CalibratedClassifierCV(base, method="sigmoid", cv=CALIBRATION_CV)
 
     def fit(self, model, X, y, class_weight):
-        # CalibratedClassifierCV handles sample weights via fit_params
         sw = _sample_weight(class_weight, y)
         if sw is not None:
             model.fit(X, y, sample_weight=sw)
@@ -224,10 +225,11 @@ def load_stability_ranked(path: Path) -> list[str]:
 
 
 def save_features_table(proteins: list[str], panel_sizes: list[int], out_path: Path) -> None:
-    rows = []
-    for n in panel_sizes:
-        for rank, protein in enumerate(proteins[:n], start=1):
-            rows.append({"panel_size": n, "rank": rank, "protein": protein})
+    rows = [
+        {"panel_size": n, "rank": rank, "protein": protein}
+        for n in panel_sizes
+        for rank, protein in enumerate(proteins[:n], start=1)
+    ]
     pd.DataFrame(rows).to_csv(out_path, index=False)
     log.info("Saved %s", out_path)
 
@@ -265,8 +267,8 @@ def load_and_split(data_path: Path) -> dict:
 
     return {
         "df": df,
-        "dev_incident_idx": np.array([i for i in df.index[incident_mask] if i not in test_set]),
-        "dev_control_idx":  np.array([i for i in df.index[control_mask]  if i not in test_set]),
+        "dev_incident_idx":  np.array([i for i in df.index[incident_mask] if i not in test_set]),
+        "dev_control_idx":   np.array([i for i in df.index[control_mask]  if i not in test_set]),
         "test_incident_idx": np.array([i for i in df.index[incident_mask] if i in test_set]),
         "test_control_idx":  np.array([i for i in df.index[control_mask]  if i in test_set]),
     }
@@ -294,12 +296,10 @@ def _inner_objective(
         if len(np.unique(y_tr)) < 2 or len(np.unique(y_va)) < 2:
             continue
         scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr)
-        X_va_s = scaler.transform(X_va)
         model = spec.build(params, cw, seed)
         try:
-            spec.fit(model, X_tr_s, y_tr, cw)
-            scores.append(average_precision_score(y_va, model.predict_proba(X_va_s)[:, 1]))
+            spec.fit(model, scaler.fit_transform(X_tr), y_tr, cw)
+            scores.append(average_precision_score(y_va, model.predict_proba(scaler.transform(X_va))[:, 1]))
         except Exception:
             scores.append(0.0)
 
@@ -379,14 +379,13 @@ def evaluate_panel(
     mean_cv = float(np.mean(fold_auprcs))
     std_cv  = float(np.std(fold_auprcs, ddof=1))
 
-    # Median hyperparams for final refit
     median_params = {
         k: float(np.median([p[k] for p in fold_params]))
         for k in fold_params[0]
     }
 
-    dev_idx_arr = np.concatenate([dev_inc, dev_ctl]).astype(int)
-    y_dev       = np.concatenate([np.ones(len(dev_inc)), np.zeros(len(dev_ctl))]).astype(int)
+    dev_idx_arr  = np.concatenate([dev_inc, dev_ctl]).astype(int)
+    y_dev        = np.concatenate([np.ones(len(dev_inc)), np.zeros(len(dev_ctl))]).astype(int)
     test_idx_arr = np.concatenate([test_inc, test_ctl]).astype(int)
     y_test       = np.concatenate([np.ones(len(test_inc)), np.zeros(len(test_ctl))]).astype(int)
 
@@ -419,7 +418,7 @@ def evaluate_panel(
 
 
 # ---------------------------------------------------------------------------
-# Run one (model × ordering) combination
+# Run one (model x ordering) combination
 # ---------------------------------------------------------------------------
 
 def run_combination(
@@ -465,7 +464,7 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
         for col_i, model in enumerate(models):
             ax = axes[row_i][col_i]
             ax.set_facecolor("white")
-            color, light = COLORS[model]
+            color, _ = COLORS[model]
 
             for ordering in ("stability", "purity"):
                 sub = results[(results["model"] == model) & (results["ordering"] == ordering)]
@@ -474,7 +473,9 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
                 sub = sub.sort_values("panel_size")
                 sizes = sub["panel_size"].values
                 vals  = sub[metric].values
-                marker, lw = ORDERING_STYLE[ordering]
+                fmt_str, lw = ORDERING_STYLE[ordering]
+                mk = fmt_str[0]
+                ls = fmt_str[1:] if len(fmt_str) > 1 else "-"
                 label = f"{ordering} rank"
 
                 if std_col and std_col in sub.columns:
@@ -486,10 +487,9 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
                         color=color, alpha=0.12, linewidth=0,
                     )
 
-                mk = marker[0]
-                ls = marker[1:] if len(marker) > 1 else "-"
                 ax.plot(sizes, vals, linestyle=ls, marker=mk, color=color,
-                        linewidth=lw, markersize=5, alpha=(0.9 if ordering == "purity" else 0.55),
+                        linewidth=lw, markersize=5,
+                        alpha=(0.9 if ordering == "purity" else 0.55),
                         label=label)
 
             ax.axvline(28, color="#888888", linestyle=":", linewidth=1.0, alpha=0.6)
@@ -514,47 +514,69 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
     plt.close(fig)
 
 
+def _print_summary(results: pd.DataFrame, models: list[str]) -> None:
+    pivot = results.pivot_table(
+        index=["model", "panel_size"], columns="ordering", values="test_auprc"
+    ).reset_index()
+    pivot["delta"] = pivot["purity"] - pivot["stability"]
+    print("\n=== Delta test AUPRC: purity − stability (positive = purity wins) ===")
+    print(pivot.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    for model_name in models:
+        sub = pivot[pivot["model"] == model_name]
+        if sub.empty:
+            continue
+        best = sub.loc[sub["delta"].idxmax()]
+        print(
+            f"\n{model_name}: largest gain at N={int(best['panel_size'])}, "
+            f"delta={best['delta']:+.4f} "
+            f"(purity={best['purity']:.4f}, stability={best['stability']:.4f})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--out", type=Path,
-        default=CEL_ROOT / "operations/incident-validation/analysis/out",
-    )
-    parser.add_argument(
-        "--models", nargs="+", default=["LR_EN", "SVM_L1", "SVM_L2"],
-        choices=["LR_EN", "SVM_L1", "SVM_L2"],
-    )
-    parser.add_argument("--panel-sizes", nargs="+", type=int, default=PANEL_SIZES)
-    args = parser.parse_args()
-    args.out.mkdir(parents=True, exist_ok=True)
+def _partial_csv_name(model: str, ordering: str) -> str:
+    return f"purity_sat_{model}_{ordering}.csv"
+
+
+def phase_run(args) -> None:
+    if not args.model or not args.ordering:
+        raise SystemExit("--phase run requires --model and --ordering")
 
     log.info("CEL_ROOT: %s", CEL_ROOT)
-    log.info("Models: %s", args.models)
+    log.info("Phase: run | Model: %s | Ordering: %s", args.model, args.ordering)
     log.info("Panel sizes: %s", args.panel_sizes)
 
     purity_proteins    = load_purity_ranked(NOISE_SCORES_PATH)
     stability_proteins = load_stability_ranked(STABILITY_PANEL_PATH)
 
-    log.info("Purity top-5:    %s", purity_proteins[:5])
-    log.info("Stability top-5: %s", stability_proteins[:5])
-
-    save_features_table(purity_proteins,    args.panel_sizes, args.out / "features_purity.csv")
-    save_features_table(stability_proteins, args.panel_sizes, args.out / "features_stability.csv")
+    proteins = purity_proteins if args.ordering == "purity" else stability_proteins
+    log.info("Top-5 %s proteins: %s", args.ordering, proteins[:5])
 
     data = load_and_split(DATA_PATH)
+    df = run_combination(args.model, args.ordering, proteins, args.panel_sizes, data)
 
-    all_results = []
-    for model_name in args.models:
-        for ordering, proteins in [("purity", purity_proteins), ("stability", stability_proteins)]:
-            df = run_combination(model_name, ordering, proteins, args.panel_sizes, data)
-            all_results.append(df)
+    col_order = ["model", "ordering", "panel_size", "n_features_used",
+                 "mean_cv_auprc", "std_cv_auprc",
+                 "test_auprc", "test_auprc_lo", "test_auprc_hi"]
+    df = df[col_order]
 
-    results = pd.concat(all_results, ignore_index=True)
+    out_path = args.out / _partial_csv_name(args.model, args.ordering)
+    df.to_csv(out_path, index=False)
+    log.info("Saved %s", out_path)
 
+
+def phase_aggregate(args) -> None:
+    log.info("Phase: aggregate | Out: %s", args.out)
+
+    partial_files = sorted(args.out.glob("purity_sat_*.csv"))
+    if not partial_files:
+        raise SystemExit(f"No purity_sat_*.csv files found in {args.out}")
+    log.info("Found %d partial CSVs: %s", len(partial_files), [f.name for f in partial_files])
+
+    results = pd.concat([pd.read_csv(f) for f in partial_files], ignore_index=True)
     col_order = ["model", "ordering", "panel_size", "n_features_used",
                  "mean_cv_auprc", "std_cv_auprc",
                  "test_auprc", "test_auprc_lo", "test_auprc_hi"]
@@ -564,24 +586,39 @@ def main() -> None:
     results.to_csv(out_csv, index=False)
     log.info("Saved %s", out_csv)
 
+    # Features tables use all panel sizes present in results
+    panel_sizes = sorted(results["panel_size"].unique().tolist())
+    purity_proteins    = load_purity_ranked(NOISE_SCORES_PATH)
+    stability_proteins = load_stability_ranked(STABILITY_PANEL_PATH)
+    save_features_table(purity_proteins,    panel_sizes, args.out / "features_purity.csv")
+    save_features_table(stability_proteins, panel_sizes, args.out / "features_stability.csv")
+
     plot_all(results, args.out)
 
-    # Summary: delta test AUPRC (purity − stability) per model × panel size
-    pivot = results.pivot_table(
-        index=["model", "panel_size"], columns="ordering", values="test_auprc"
-    ).reset_index()
-    pivot["delta"] = pivot["purity"] - pivot["stability"]
-    print("\n=== Delta test AUPRC: purity − stability (positive = purity wins) ===")
-    print(pivot.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    models = sorted(results["model"].unique().tolist())
+    _print_summary(results, models)
 
-    for model_name in args.models:
-        sub = pivot[pivot["model"] == model_name]
-        best = sub.loc[sub["delta"].idxmax()]
-        print(
-            f"\n{model_name}: largest gain at N={int(best['panel_size'])}, "
-            f"delta={best['delta']:+.4f} "
-            f"(purity={best['purity']:.4f}, stability={best['stability']:.4f})"
-        )
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--phase", choices=["run", "aggregate"], required=True,
+        help="run: compute one (model x ordering) combo; aggregate: concat + plot",
+    )
+    parser.add_argument("--model",    choices=list(MODEL_SPECS.keys()), default=None)
+    parser.add_argument("--ordering", choices=list(VALID_ORDERINGS),    default=None)
+    parser.add_argument(
+        "--out", type=Path,
+        default=CEL_ROOT / "operations/incident-validation/analysis/out",
+    )
+    parser.add_argument("--panel-sizes", nargs="+", type=int, default=PANEL_SIZES)
+    args = parser.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    if args.phase == "run":
+        phase_run(args)
+    else:
+        phase_aggregate(args)
 
 
 if __name__ == "__main__":
