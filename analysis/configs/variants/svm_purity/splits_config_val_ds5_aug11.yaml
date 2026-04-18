@@ -1,0 +1,17 @@
+# Splits: purity panel, incident + prevalent-in-train (1:1 ratio), 1:5 control downsampling.
+# Train positives: ~74 incident + ~75 prevalent (0.5 * 150). Val/test: incident-only.
+# Pairs with training_config_ds5.yaml (no class weight) and pipeline_hpc_val_ds5_aug11_full.yaml.
+_base: ../../splits_config.yaml
+
+mode: development
+scenarios:
+  - IncidentPlusPrevalent
+
+n_splits: 11
+seed_start: 20
+
+prevalent_train_only: true
+prevalent_train_frac: 0.5  # ~75/150 → 1:1 prevalent:incident in train
+
+train_control_per_case: 5
+eval_control_per_case: null
