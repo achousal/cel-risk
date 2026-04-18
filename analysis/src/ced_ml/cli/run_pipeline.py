@@ -406,8 +406,10 @@ def _run_hpc_mode(
         enable_consensus = False
 
     # Load HPC config (returns HPCConfig schema)
-    # When resuming via --run-id, try to recover the original config from run metadata.
-    if hpc_config_file is None and run_id is not None:
+    # When resuming via --run-id, recover any originally-used configs from run metadata.
+    if run_id is not None and any(
+        p is None for p in (hpc_config_file, config_file, splits_config_file)
+    ):
         try:
             import json
 
@@ -417,14 +419,26 @@ def _run_hpc_mode(
             _manifest = _defaults["results"] / f"run_{run_id}" / "run_metadata.json"
             if _manifest.exists():
                 _meta = json.loads(_manifest.read_text())
-                _stored = _meta.get("hpc_config")
-                if _stored:
-                    _candidate = Path(_stored)
-                    if _candidate.exists():
-                        hpc_config_file = _candidate
-                        hpc_logger.info(f"Loaded hpc_config from run metadata: {hpc_config_file}")
+                _stored = _meta.get("configs", {})
+                if hpc_config_file is None and _stored.get("hpc"):
+                    _c = Path(_stored["hpc"])
+                    if _c.exists():
+                        hpc_config_file = _c
+                        hpc_logger.info(f"Loaded hpc config from run metadata: {hpc_config_file}")
+                if config_file is None and _stored.get("training"):
+                    _c = Path(_stored["training"])
+                    if _c.exists():
+                        config_file = _c
+                        hpc_logger.info(f"Loaded training config from run metadata: {config_file}")
+                if splits_config_file is None and _stored.get("splits"):
+                    _c = Path(_stored["splits"])
+                    if _c.exists():
+                        splits_config_file = _c
+                        hpc_logger.info(
+                            f"Loaded splits config from run metadata: {splits_config_file}"
+                        )
         except Exception as _exc:
-            hpc_logger.debug(f"Could not load hpc_config from run metadata: {_exc}")
+            hpc_logger.debug(f"Could not load configs from run metadata: {_exc}")
 
     if hpc_config_file is None:
         hpc_config_file = resolve_pipeline_config_path(hpc=True)
@@ -573,7 +587,15 @@ def _run_hpc_mode(
         permutation_n_jobs=permutation_n_jobs,
         permutation_split_seeds=permutation_split_seeds,
         hpc_config=hpc_config,
-        hpc_config_file=hpc_config_file,
+        configs={
+            k: v
+            for k, v in {
+                "hpc": hpc_config_file,
+                "training": config_file,
+                "splits": splits_config_file,
+            }.items()
+            if v is not None
+        },
         logs_dir=logs_dir,
         dry_run=dry_run,
         pipeline_logger=hpc_logger,
@@ -937,6 +959,14 @@ def run_pipeline(
                 split_dir=split_dir,
             )
             for model_name in models
+        },
+        configs={
+            k: v
+            for k, v in {
+                "training": config_file,
+                "splits": splits_config_file,
+            }.items()
+            if v is not None
         },
     )
     if manifest_changed:

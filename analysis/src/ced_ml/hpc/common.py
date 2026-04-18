@@ -1112,7 +1112,7 @@ def _submit_orchestrator_pipeline(
     permutation_n_jobs: int = -1,
     permutation_split_seeds: list[int] | None = None,
     hpc_config: HPCConfig,
-    hpc_config_file: Path | None = None,
+    configs: dict[str, str | Path] | None = None,
     logs_dir: Path,
     dry_run: bool,
     pipeline_logger: logging.Logger,
@@ -1145,7 +1145,7 @@ def _submit_orchestrator_pipeline(
             )
             for model in models
         },
-        hpc_config=hpc_config_file,
+        configs=configs,
     )
     if metadata_changed:
         pipeline_logger.info(f"Initialized run metadata manifest: {run_metadata_path}")
@@ -1456,7 +1456,7 @@ def submit_hpc_pipeline(
     permutation_n_jobs: int = -1,
     permutation_split_seeds: list[int] | None = None,
     hpc_config: HPCConfig,
-    hpc_config_file: Path | None = None,
+    configs: dict[str, str | Path] | None = None,
     logs_dir: Path,
     dry_run: bool,
     pipeline_logger: logging.Logger,
@@ -1487,7 +1487,7 @@ def submit_hpc_pipeline(
         permutation_n_jobs=permutation_n_jobs,
         permutation_split_seeds=permutation_split_seeds,
         hpc_config=hpc_config,
-        hpc_config_file=hpc_config_file,
+        configs=configs,
         logs_dir=logs_dir,
         dry_run=dry_run,
         pipeline_logger=pipeline_logger,
