@@ -132,6 +132,7 @@ set -euo pipefail
 export CED_JOB_COMMAND_B64="$command_b64"
 export CED_JOB_NAME="$job_name"
 export CED_SENTINEL_DIR="$SENTINEL_DIR"
+${CED_PROJECT_ROOT:+export CED_PROJECT_ROOT="$CED_PROJECT_ROOT"}
 "$WRAPPER_SCRIPT"
 EOF
 )

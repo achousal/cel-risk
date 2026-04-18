@@ -675,16 +675,18 @@ def _build_wrapped_command(
     job_name: str,
     sentinel_dir: Path,
     wrapper_script_path: Path,
+    project_root: Path | None = None,
 ) -> str:
     """Build a per-job command payload that runs through the shared wrapper."""
-    return "\n".join(
-        [
-            f'export CED_JOB_COMMAND_B64="{command_b64}"',
-            f'export CED_JOB_NAME="{job_name}"',
-            f'export CED_SENTINEL_DIR="{sentinel_dir.resolve()}"',
-            f'"{wrapper_script_path.resolve()}"',
-        ]
-    )
+    lines = [
+        f'export CED_JOB_COMMAND_B64="{command_b64}"',
+        f'export CED_JOB_NAME="{job_name}"',
+        f'export CED_SENTINEL_DIR="{sentinel_dir.resolve()}"',
+    ]
+    if project_root is not None:
+        lines.append(f'export CED_PROJECT_ROOT="{project_root.resolve()}"')
+    lines.append(f'"{wrapper_script_path.resolve()}"')
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +867,7 @@ def _build_orchestrator_script(
     consensus_key: str | None,
     consensus_job_name: str | None,
     expected_training_jobs: int,
+    project_root: Path | None = None,
 ) -> str:
     """Build the barrier-orchestrator bash script.
 
@@ -905,6 +908,7 @@ def _build_orchestrator_script(
         f'WRAPPER_SCRIPT="{wrapper_script_path.resolve()}"',
         f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
         f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
+        *([f'CED_PROJECT_ROOT="{project_root.resolve()}"'] if project_root is not None else []),
         # Per-job stdout/stderr land here. Absolutely critical for
         # post-mortem debugging of silent downstream failures.
         f'LSF_OUTPUT_DIR="{(sentinel_dir.parent / "lsf_output").resolve()}"',
@@ -1122,6 +1126,13 @@ def _submit_orchestrator_pipeline(
     env_info = detect_environment(base_dir)
     pipeline_logger.info(f"Python environment: {env_info.env_type}")
 
+    from ced_ml.utils.paths import get_project_root as _get_project_root
+
+    try:
+        _project_root: Path | None = _get_project_root()
+    except RuntimeError:
+        _project_root = None
+
     run_root = logs_dir / f"run_{run_id}"
     run_logs_dir = run_root / "training"
     sentinel_dir = _sentinel_dir(logs_dir, run_id)
@@ -1212,6 +1223,7 @@ def _submit_orchestrator_pipeline(
                 job_name=job_name,
                 sentinel_dir=sentinel_dir,
                 wrapper_script_path=wrapper_script_path,
+                project_root=_project_root,
             )
             submission_script = build_job_script(
                 scheduler=scheduler,
@@ -1394,6 +1406,7 @@ def _submit_orchestrator_pipeline(
         consensus_key=consensus_key,
         consensus_job_name=consensus_job_name if enable_consensus else None,
         expected_training_jobs=expected_training_jobs,
+        project_root=_project_root,
     )
     _write_job_script(scripts_dir, orchestrator_orch_name, orchestrator_script)
 

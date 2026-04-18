@@ -29,6 +29,7 @@ Path resolution:
     - Paths in configs are relative to analysis/ directory
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -51,8 +52,9 @@ def get_project_root() -> Path:
     Get the project root directory (cel-risk/).
 
     Resolution order:
-        1. Current working directory (CWD)
-        2. Walk up from CWD (up to 5 levels) looking for a directory
+        1. ``CED_PROJECT_ROOT`` environment variable (set by HPC job scripts)
+        2. Current working directory (CWD)
+        3. Walk up from CWD (up to 5 levels) looking for a directory
            that contains both ``data/`` and ``analysis/`` subdirectories.
 
     Returns:
@@ -61,6 +63,12 @@ def get_project_root() -> Path:
     Raises:
         RuntimeError: If the project root cannot be found.
     """
+    env_root = os.environ.get("CED_PROJECT_ROOT")
+    if env_root:
+        p = Path(env_root).resolve()
+        if _is_project_root(p):
+            return p
+
     cwd = Path.cwd()
 
     # Fast path: CWD is the project root
