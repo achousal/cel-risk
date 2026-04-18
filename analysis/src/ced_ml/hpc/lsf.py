@@ -186,7 +186,7 @@ EOF
             hist_exit=$(bhist -l "$jid" 2>/dev/null | awk '/Completed <exit>|Exited with exit code/ {print; exit}' || true)
             if [ -n "$hist_exit" ]; then
                 local hjname
-                hjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
+                hjname=$(bhist -l "$jid" 2>/dev/null | sed -n 's/.*Job Name <\\([^>]*\\)>.*/\\1/p' | head -1 || true)
                 echo "[$(date '+%F %T')] FATAL: upstream job $jid ($hjname) EXIT (bhist): $hist_exit"
                 exit 1
             fi
@@ -194,14 +194,14 @@ EOF
             hist_term=$(bhist -l "$jid" 2>/dev/null | awk '/TERM/ {print; exit}' || true)
             if [ -n "$hist_term" ]; then
                 local tjname
-                tjname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
+                tjname=$(bhist -l "$jid" 2>/dev/null | sed -n 's/.*Job Name <\\([^>]*\\)>.*/\\1/p' | head -1 || true)
                 echo "[$(date '+%F %T')] FATAL: upstream job $jid ($tjname) TERM (bhist): $hist_term"
                 exit 1
             fi
             # bjobs returned nothing and bhist found no failure record.
             # Scheduler state is unrecoverable; fall back to sentinel.
             local fname
-            fname=$(bhist -l "$jid" 2>/dev/null | awk '/Job Name/ {print $NF; exit}' | tr -d '<>,;' || true)
+            fname=$(bhist -l "$jid" 2>/dev/null | sed -n 's/.*Job Name <\\([^>]*\\)>.*/\\1/p' | head -1 || true)
             if [ -n "$fname" ] && sentinel_exists "$fname"; then
                 echo "[$(date '+%F %T')] WARNING: upstream job $jid ($fname) no scheduler status; sentinel present -- assuming success"
             elif [ -n "$fname" ] && sentinel_wait_retry "$fname"; then
