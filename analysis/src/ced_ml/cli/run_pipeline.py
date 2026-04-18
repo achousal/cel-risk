@@ -406,6 +406,26 @@ def _run_hpc_mode(
         enable_consensus = False
 
     # Load HPC config (returns HPCConfig schema)
+    # When resuming via --run-id, try to recover the original config from run metadata.
+    if hpc_config_file is None and run_id is not None:
+        try:
+            import json
+
+            from ced_ml.utils.paths import get_default_paths
+
+            _defaults = get_default_paths()
+            _manifest = _defaults["results"] / f"run_{run_id}" / "run_metadata.json"
+            if _manifest.exists():
+                _meta = json.loads(_manifest.read_text())
+                _stored = _meta.get("hpc_config")
+                if _stored:
+                    _candidate = Path(_stored)
+                    if _candidate.exists():
+                        hpc_config_file = _candidate
+                        hpc_logger.info(f"Loaded hpc_config from run metadata: {hpc_config_file}")
+        except Exception as _exc:
+            hpc_logger.debug(f"Could not load hpc_config from run metadata: {_exc}")
+
     if hpc_config_file is None:
         hpc_config_file = resolve_pipeline_config_path(hpc=True)
         if hpc_config_file is None:
@@ -553,6 +573,7 @@ def _run_hpc_mode(
         permutation_n_jobs=permutation_n_jobs,
         permutation_split_seeds=permutation_split_seeds,
         hpc_config=hpc_config,
+        hpc_config_file=hpc_config_file,
         logs_dir=logs_dir,
         dry_run=dry_run,
         pipeline_logger=hpc_logger,

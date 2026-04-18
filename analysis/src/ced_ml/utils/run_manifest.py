@@ -42,6 +42,7 @@ def ensure_run_manifest(
     infile: str | Path,
     split_dir: str | Path,
     model_entries: Mapping[str, Mapping[str, Any]] | None = None,
+    hpc_config: str | Path | None = None,
 ) -> tuple[Path, bool]:
     """Create/update ``run_metadata.json`` with non-destructive semantics.
 
@@ -84,6 +85,9 @@ def ensure_run_manifest(
         changed = True
     if "split_dir" not in metadata:
         metadata["split_dir"] = str(split_dir)
+        changed = True
+    if hpc_config is not None and "hpc_config" not in metadata:
+        metadata["hpc_config"] = str(hpc_config)
         changed = True
 
     models_obj = metadata.get("models")
