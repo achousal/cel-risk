@@ -39,6 +39,13 @@ evaluation:
   test_frac: 0.20
   split_seed: 42
 
+purity_significance:
+  prevalence: 0.003351       # incident / total (148 / 44174); set null to avoid parquet read
+  alpha: 0.05                # BH-FDR threshold for significance vs null
+  n_bootstrap: 1000          # bootstrap samples used in saturation CI (matches evaluation.n_bootstrap_ci)
+  delta: 0.02                # non-inferiority margin for three-criterion size rule (AUPRC units)
+  min_criteria: 2            # criteria that must pass (2 = majority, 3 = unanimous)
+
 # Per-model HPC resource profiles (LSF)
 resources:
   default:
