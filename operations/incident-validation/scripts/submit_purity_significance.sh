@@ -35,7 +35,7 @@ JOB_ID=$(bsub \
     -J "${JOB_NAME}" \
     -o "${LOGDIR}/${JOB_NAME}_%J.stdout" \
     -e "${LOGDIR}/${JOB_NAME}_%J.stderr" \
-    bash -c "${ACTIVATE} && python ${SCRIPT} --out ${OUTDIR} --prevalence 0.003351" \
+    bash -c "${ACTIVATE} && python ${SCRIPT} --out ${OUTDIR} --prevalence 0.003351 --tolerance 0.01" \
     | grep -oP '\d+')
 
 echo "Submitted: ${JOB_NAME} → job ${JOB_ID}"
