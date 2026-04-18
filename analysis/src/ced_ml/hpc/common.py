@@ -1164,6 +1164,7 @@ def _submit_orchestrator_pipeline(
         pipeline_logger.debug(f"Run metadata manifest already initialized: {run_metadata_path}")
 
     default_resources = hpc_config.get_resources("default")
+    postprocessing_resources = hpc_config.get_resources("postprocessing")
     job_params = {
         "project": hpc_config.project,
         "env_activation": env_info.activation_cmd,
@@ -1182,13 +1183,15 @@ def _submit_orchestrator_pipeline(
         *,
         job_name: str,
         command: str,
+        resources: dict[str, str | int] | None = None,
     ) -> dict[str, str | int]:
+        r = resources if resources is not None else default_resources
         return {
             "job_name": job_name,
-            "queue": str(default_resources["queue"]),
-            "cores": int(default_resources["cores"]),
-            "mem_per_core": int(default_resources["mem_per_core"]),
-            "walltime": str(default_resources["walltime"]),
+            "queue": str(r["queue"]),
+            "cores": int(r["cores"]),
+            "mem_per_core": int(r["mem_per_core"]),
+            "walltime": str(r["walltime"]),
             "command_b64": _encode_command_b64(command),
         }
 
@@ -1259,7 +1262,9 @@ def _submit_orchestrator_pipeline(
         agg_job = f"CeD_{run_id}_agg_{model}"
         agg_cmd = _build_aggregation_command(run_id=run_id, model=model)
         agg_key = f"agg_{model}"
-        manifest_jobs[agg_key] = _manifest_entry(job_name=agg_job, command=agg_cmd)
+        manifest_jobs[agg_key] = _manifest_entry(
+            job_name=agg_job, command=agg_cmd, resources=postprocessing_resources
+        )
         agg_job_names.append(agg_job)
         agg_keys.append(agg_key)
 
@@ -1287,7 +1292,9 @@ def _submit_orchestrator_pipeline(
         ensemble_agg_cmd = _build_ensemble_aggregation_command(run_id=run_id)
         ensemble_agg_key = "ensemble_agg"
         manifest_jobs[ensemble_agg_key] = _manifest_entry(
-            job_name=ensemble_agg_job_name, command=ensemble_agg_cmd
+            job_name=ensemble_agg_job_name,
+            command=ensemble_agg_cmd,
+            resources=postprocessing_resources,
         )
 
     # Stage 3b: Permutation tests (parallel per model x seed)
@@ -1325,6 +1332,7 @@ def _submit_orchestrator_pipeline(
             manifest_jobs[perm_agg_key] = _manifest_entry(
                 job_name=perm_agg_job,
                 command=perm_agg_cmd,
+                resources=postprocessing_resources,
             )
             perm_agg_names.append(perm_agg_job)
             perm_agg_keys.append(perm_agg_key)
@@ -1357,6 +1365,7 @@ def _submit_orchestrator_pipeline(
             manifest_jobs[panel_agg_key] = _manifest_entry(
                 job_name=panel_agg_job,
                 command=panel_agg_cmd,
+                resources=postprocessing_resources,
             )
             panel_job_names.append(panel_agg_job)
             panel_agg_names.append(panel_agg_job)
@@ -1370,6 +1379,7 @@ def _submit_orchestrator_pipeline(
         manifest_jobs[consensus_key] = _manifest_entry(
             job_name=consensus_job_name,
             command=consensus_cmd,
+            resources=postprocessing_resources,
         )
 
     manifest_path = scripts_dir / "jobs_manifest.json"
