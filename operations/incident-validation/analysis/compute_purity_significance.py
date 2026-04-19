@@ -155,10 +155,11 @@ def compute_significance(
     delta: float,
     n_bootstrap: int,
     min_criteria: int,
+    ordering: str = "purity",
 ) -> tuple[pd.DataFrame, dict]:
-    purity = df[df["ordering"] == "purity"].copy()
+    purity = df[df["ordering"] == ordering].copy()
     if purity.empty:
-        raise ValueError("No 'purity' rows found in saturation_all_models.csv")
+        raise ValueError(f"No '{ordering}' rows found in saturation_all_models.csv")
 
     purity["se"] = (purity["test_auprc_hi"] - purity["test_auprc_lo"]) / 3.92
     purity["z"] = (purity["test_auprc"] - prevalence) / purity["se"]
@@ -219,6 +220,7 @@ def plot(
     alpha: float,
     delta: float,
     out_dir: Path,
+    ordering: str = "purity",
 ) -> None:
     models = sorted(results["model"].unique())
     n = len(models)
@@ -257,18 +259,18 @@ def plot(
 
         ax.set_xlabel("Panel size (N proteins)", fontsize=10)
         ax.set_ylabel("Test AUPRC (95% CI)", fontsize=10)
-        ax.set_title(f"{model} — purity ordering", fontsize=11)
+        ax.set_title(f"{model} — {ordering} ordering", fontsize=11)
         ax.legend(fontsize=7, loc="lower right")
         ax.grid(True, alpha=0.25, lw=0.5)
 
     fig.suptitle(
-        f"Purity panel: AUPRC significance vs chance (BH-FDR) | 3-criterion δ={delta:.3f}",
+        f"{ordering.capitalize()} panel: AUPRC significance vs chance (BH-FDR) | 3-criterion δ={delta:.3f}",
         fontsize=12, y=1.01,
     )
     fig.tight_layout()
 
     for ext in ("pdf", "png"):
-        p = out_dir / f"fig_purity_significance.{ext}"
+        p = out_dir / f"fig_{ordering}_significance.{ext}"
         fig.savefig(p, dpi=150, bbox_inches="tight")
         log.info("Saved %s", p)
     plt.close(fig)
@@ -295,6 +297,9 @@ def main() -> None:
                         help="Non-inferiority margin for three-criterion rule (overrides config; default 0.02)")
     parser.add_argument("--min-criteria", type=int, default=None, dest="min_criteria",
                         help="Criteria that must pass: 2=majority, 3=unanimous (overrides config; default 2)")
+    parser.add_argument("--ordering", type=str, default="purity",
+                        choices=["purity", "stability", "rfe"],
+                        help="Which ordering to test (default: purity)")
     parser.add_argument("--out", type=Path,
                         default=CEL_ROOT / "operations/incident-validation/analysis/out",
                         help="Output directory")
@@ -319,20 +324,20 @@ def main() -> None:
     log.info("Loading %s", args.sat)
     df = pd.read_csv(args.sat)
 
-    results, audits = compute_significance(df, prevalence, alpha, delta, n_bootstrap, min_criteria)
+    results, audits = compute_significance(df, prevalence, alpha, delta, n_bootstrap, min_criteria, args.ordering)
 
-    out_csv = args.out / "purity_significance.csv"
+    out_csv = args.out / f"{args.ordering}_significance.csv"
     results.to_csv(out_csv, index=False)
     log.info("Saved %s", out_csv)
 
-    audit_path = args.out / "purity_significance_audit.json"
+    audit_path = args.out / f"{args.ordering}_significance_audit.json"
     with open(audit_path, "w") as f:
         json.dump(audits, f, indent=2)
     log.info("Saved %s", audit_path)
 
-    plot(results, prevalence, alpha, delta, args.out)
+    plot(results, prevalence, alpha, delta, args.out, args.ordering)
 
-    print(f"\n=== Purity panel significance "
+    print(f"\n=== {args.ordering.capitalize()} panel significance "
           f"(alpha={alpha}, prevalence={prevalence:.5f}, delta={delta:.4f}) ===")
     print(results[[
         "model", "panel_size", "test_auprc", "p_value", "p_adj",
