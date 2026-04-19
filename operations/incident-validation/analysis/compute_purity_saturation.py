@@ -84,6 +84,9 @@ NOISE_SCORES_PATH = (
 STABILITY_PANEL_PATH = (
     CEL_ROOT / "results/incident-validation/lr/SVM_L1/feature_coefficients.csv"
 )
+RFE_RANK_PATH = (
+    CEL_ROOT / "operations/incident-validation/analysis/out/rfe_protein_ranking.csv"
+)
 
 PANEL_SIZES = [5, 8, 10, 15, 20, 25, 28, 40, 60, 80, 100, 134]
 TEST_FRAC = 0.20
@@ -102,10 +105,10 @@ COLORS = {
     "SVM_L1": ("#E7298A", "#F5A8D0"),
     "SVM_L2": ("#1B9E77", "#A0DFC8"),
 }
-ORDERING_STYLE = {"purity": ("s--", 2.0), "stability": ("o-", 1.5)}
+ORDERING_STYLE = {"purity": ("s--", 2.0), "stability": ("o-", 1.5), "rfe": ("^:", 1.5)}
 
 VALID_MODELS   = ("LR_EN", "SVM_L1", "SVM_L2")
-VALID_ORDERINGS = ("purity", "stability")
+VALID_ORDERINGS = ("purity", "stability", "rfe")
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +224,12 @@ def load_purity_ranked(path: Path) -> list[str]:
 def load_stability_ranked(path: Path) -> list[str]:
     """Return proteins sorted by stability_freq desc, ties broken by abs_coef desc."""
     df = pd.read_csv(path).sort_values(["stability_freq", "abs_coef"], ascending=[False, False])
+    return df["protein"].tolist()
+
+
+def load_rfe_ranked(path: Path) -> list[str]:
+    """Return proteins in RFE addition order (rfe_rank ascending = most important first)."""
+    df = pd.read_csv(path).sort_values("rfe_rank", ascending=True)
     return df["protein"].tolist()
 
 
@@ -466,7 +475,7 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
             ax.set_facecolor("white")
             color, _ = COLORS[model]
 
-            for ordering in ("stability", "purity"):
+            for ordering in ("stability", "purity", "rfe"):
                 sub = results[(results["model"] == model) & (results["ordering"] == ordering)]
                 if sub.empty:
                     continue
@@ -503,7 +512,7 @@ def plot_all(results: pd.DataFrame, out_dir: Path) -> None:
             ax.spines["right"].set_visible(False)
 
     fig.suptitle(
-        "Purity-ranked vs stability-ranked panel ordering — incident_only, model-best weight",
+        "Purity vs stability vs RFE panel ordering — incident_only, model-best weight",
         fontsize=11, y=1.01,
     )
     fig.tight_layout()
@@ -518,19 +527,30 @@ def _print_summary(results: pd.DataFrame, models: list[str]) -> None:
     pivot = results.pivot_table(
         index=["model", "panel_size"], columns="ordering", values="test_auprc"
     ).reset_index()
-    pivot["delta"] = pivot["purity"] - pivot["stability"]
-    print("\n=== Delta test AUPRC: purity − stability (positive = purity wins) ===")
-    print(pivot.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    for model_name in models:
-        sub = pivot[pivot["model"] == model_name]
-        if sub.empty:
+
+    orderings = [o for o in ("purity", "stability", "rfe") if o in pivot.columns]
+    print("\n=== Test AUPRC by ordering ===")
+    print(pivot.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+
+    pairs = [("purity", "stability"), ("purity", "rfe"), ("rfe", "stability")]
+    for a, b in pairs:
+        if a not in pivot.columns or b not in pivot.columns:
             continue
-        best = sub.loc[sub["delta"].idxmax()]
-        print(
-            f"\n{model_name}: largest gain at N={int(best['panel_size'])}, "
-            f"delta={best['delta']:+.4f} "
-            f"(purity={best['purity']:.4f}, stability={best['stability']:.4f})"
-        )
+        pivot[f"delta_{a}_{b}"] = pivot[a] - pivot[b]
+        print(f"\n=== Delta: {a} − {b} (positive = {a} wins) ===")
+        cols = ["model", "panel_size", a, b, f"delta_{a}_{b}"]
+        print(pivot[[c for c in cols if c in pivot.columns]].to_string(
+            index=False, float_format=lambda x: f"{x:+.4f}"
+        ))
+        for model_name in models:
+            sub = pivot[pivot["model"] == model_name]
+            if sub.empty or f"delta_{a}_{b}" not in sub.columns:
+                continue
+            best = sub.loc[sub[f"delta_{a}_{b}"].idxmax()]
+            print(
+                f"  {model_name}: largest {a}-{b} gain at N={int(best['panel_size'])}, "
+                f"delta={best[f'delta_{a}_{b}']:+.4f}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -553,8 +573,22 @@ def phase_run(args) -> None:
 
     purity_proteins    = load_purity_ranked(NOISE_SCORES_PATH)
     stability_proteins = load_stability_ranked(STABILITY_PANEL_PATH)
+    if args.ordering == "rfe":
+        if not RFE_RANK_PATH.exists():
+            raise SystemExit(
+                f"RFE ranking not found: {RFE_RANK_PATH}\n"
+                "Run compute_rfe_ranking.py first."
+            )
+        rfe_proteins = load_rfe_ranked(RFE_RANK_PATH)
+    else:
+        rfe_proteins = None
 
-    proteins = purity_proteins if args.ordering == "purity" else stability_proteins
+    if args.ordering == "purity":
+        proteins = purity_proteins
+    elif args.ordering == "stability":
+        proteins = stability_proteins
+    else:
+        proteins = rfe_proteins
     log.info("Top-5 %s proteins: %s", args.ordering, proteins[:5])
 
     data = load_and_split(DATA_PATH)
@@ -594,6 +628,9 @@ def phase_aggregate(args) -> None:
     stability_proteins = load_stability_ranked(STABILITY_PANEL_PATH)
     save_features_table(purity_proteins,    panel_sizes, args.out / "features_purity.csv")
     save_features_table(stability_proteins, panel_sizes, args.out / "features_stability.csv")
+    if RFE_RANK_PATH.exists():
+        rfe_proteins = load_rfe_ranked(RFE_RANK_PATH)
+        save_features_table(rfe_proteins, panel_sizes, args.out / "features_rfe.csv")
 
     plot_all(results, args.out)
 
@@ -607,8 +644,8 @@ def main() -> None:
         "--phase", choices=["run", "aggregate"], required=True,
         help="run: compute one (model x ordering) combo; aggregate: concat + plot",
     )
-    parser.add_argument("--model",    choices=list(MODEL_SPECS.keys()), default=None)
-    parser.add_argument("--ordering", choices=list(VALID_ORDERINGS),    default=None)
+    parser.add_argument("--model",    choices=list(VALID_MODELS),    default=None)
+    parser.add_argument("--ordering", choices=list(VALID_ORDERINGS), default=None)
     parser.add_argument(
         "--out", type=Path,
         default=CEL_ROOT / "operations/incident-validation/analysis/out",
