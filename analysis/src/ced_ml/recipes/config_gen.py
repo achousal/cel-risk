@@ -345,7 +345,7 @@ def _write_cell_manifest(cells: list[dict[str, Any]], path: Path) -> None:
         return
     fieldnames = list(cells[0].keys())
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(cells)
 
