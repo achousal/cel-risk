@@ -228,6 +228,14 @@ def generate_aggregated_plots(
                     )
 
                 if plot_dca:
+                    _prevalence = float(np.mean(y_true > 0))
+                    _dca_max_pt = float(
+                        np.clip(
+                            np.percentile(y_pred, 99),
+                            a_min=max(3 * _prevalence, 0.01),
+                            a_max=0.40,
+                        )
+                    )
                     plot_dca_curve(
                         y_true=y_true,
                         y_pred=y_pred,
@@ -236,6 +244,7 @@ def generate_aggregated_plots(
                         split_ids=split_ids,
                         meta_lines=model_meta_lines,
                         skip_ci_band=skip_ci_band,
+                        max_pt=_dca_max_pt,
                     )
 
                 if plot_risk_distribution:
