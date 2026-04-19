@@ -226,6 +226,34 @@ def rfe_elimination(
     return result
 
 
+def purity_ordering(
+    proteins_df: pd.DataFrame,
+    *,
+    purity_column: str = "combined_purity_bw",
+) -> list[str]:
+    """Order proteins by pre-diagnostic signal purity score descending.
+
+    Parameters
+    ----------
+    proteins_df : pd.DataFrame
+        Protein table with a purity score column (e.g. prevalent_noise_scores.csv).
+    purity_column : str
+        Column with purity score (higher = more pre-diagnostic signal, less noise).
+
+    Returns
+    -------
+    list[str]
+        Proteins ordered by purity score descending.
+    """
+    df = proteins_df.copy()
+    if purity_column not in df.columns:
+        raise ValueError(f"purity_column '{purity_column}' not found in proteins_df")
+    ordered = df.sort_values(purity_column, ascending=False)
+    result = ordered["protein"].tolist()
+    logger.info("purity_ordering: %d proteins by %s desc", len(result), purity_column)
+    return result
+
+
 def dispatch_ordering(
     ordering_type: str,
     proteins_df: pd.DataFrame,
@@ -262,5 +290,7 @@ def dispatch_ordering(
         return oof_importance(**params)
     elif ordering_type == "rfe_elimination":
         return rfe_elimination(**params)
+    elif ordering_type == "purity_ordering":
+        return purity_ordering(proteins_df, **params)
     else:
         raise ValueError(f"Unknown ordering type: {ordering_type}")
