@@ -787,7 +787,7 @@ def test_submit_orchestrator_dry_run(monkeypatch, tmp_path):
     assert scripts_dir.exists()
     assert (scripts_dir / f"CeD_{run_id}_job_wrapper.sh").exists()
     assert (scripts_dir / f"CeD_{run_id}_orchestrator.sh").exists()
-    assert len(list(scripts_dir.glob("*.sh"))) == 2
+    assert len(list(scripts_dir.glob("*.sh"))) == 4  # wrapper + orchestrator + 1 model x 2 seeds
     assert (scripts_dir / "jobs_manifest.json").exists()
     run_metadata_path = tmp_path / "results" / f"run_{run_id}" / "run_metadata.json"
     assert run_metadata_path.exists()
@@ -869,4 +869,4 @@ def test_submit_orchestrator_manifest_format(monkeypatch, tmp_path):
     assert "RF" in run_metadata["models"]
 
     # With manifest+wrapper approach, script files remain bounded.
-    assert len(list(scripts_dir.glob("*.sh"))) == 2
+    assert len(list(scripts_dir.glob("*.sh"))) == 4  # wrapper + orchestrator + 2 models x 1 seed
