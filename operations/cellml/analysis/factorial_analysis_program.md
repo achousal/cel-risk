@@ -150,7 +150,7 @@ Suggested figures:
 
 Decision rule: "Ensemble gain > δ (0.02) AND full CI above 0 → recommend human review. Otherwise, single model is sufficient. **The human decides** — this level never auto-selects."
 
-Note: "The V6 estimate in validate_tree.R uses averaged base-model AUROCs as a conservative proxy. If V6 flags the ensemble, run a full stacking comparison using OOF prediction files before making the final decision."
+Note: "The V6 estimate in scripts/validate_tree.R uses averaged base-model AUROCs as a conservative proxy. If V6 flags the ensemble, run a full stacking comparison using OOF prediction files before making the final decision."
 
 ### Synthesis
 Compile findings into a final summary:

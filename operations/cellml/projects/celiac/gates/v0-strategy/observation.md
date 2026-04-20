@@ -56,9 +56,9 @@ independently on each model axis).
   directories under `results/` include `run_phase3_holdout_incident_only_ds5/`
   and `run_phase2_val_incident_only_ds5/` but these look like Gen 1 holdout
   artifacts, not the full V0 factorial. The V0 factorial may write to
-  `results/cellml/v0_gate/` once `submit_experiment.sh --experiment v0_gate`
+  `results/cellml/v0_gate/` once `scripts/submit_experiment.sh --experiment v0_gate`
   completes compilation.
-- Compilation tool: `compile_factorial.py --optuna-storage-dir <dir>`. TODO:
+- Compilation tool: `scripts/compile_factorial.py --optuna-storage-dir <dir>`. TODO:
   run this once the V0 namespace is identified and paste the compiled table
   here (or link to `results/<v0-namespace>/factorial_compiled.csv`).
 - Per `SCHEMA.md`, observation.md is normally emitted by the `cellml-reduce`

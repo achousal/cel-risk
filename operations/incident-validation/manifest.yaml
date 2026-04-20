@@ -50,7 +50,7 @@ purity_significance:
 resources:
   default:
     queue: premium
-    project: acc_vascbrain
+    project: acc_Chipuk_Laboratory
     feat_wall: "48:00"
     cv_wall: "48:00"
     agg_wall: "02:00"
