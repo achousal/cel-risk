@@ -1,0 +1,18 @@
+# Training config: purity-ranked 5-protein panel, incident-only, 1:5 downsampled
+# No class weighting — ds5 downsampling (baked into splits) is the imbalance remedy.
+# Pairs with splits_config_val_ds5.yaml (train_control_per_case=5).
+_base: ../../training_config.yaml
+
+features:
+  feature_selection_strategy: fixed_panel
+  fixed_panel_csv: "fixed_panel_svm_purity.csv"
+
+svm:
+  class_weight_options: none
+
+calibration:
+  target_prevalence_source: fixed
+  target_prevalence_fixed: 0.00338  # 148/43810 true CeD prevalence
+
+optuna:
+  n_trials: 50  # Reduced: 5 fixed features, small search space

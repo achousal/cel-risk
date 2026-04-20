@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from ced_ml.metrics.dca import threshold_dca_zero_crossing
@@ -195,6 +196,10 @@ def _generate_validation_plots(
 
     # DCA plot for validation
     if config.output.plot_dca:
+        _prev = float(np.mean(ctx.y_val > 0))
+        _max_pt = float(
+            np.clip(np.percentile(val_y_prob, 99), a_min=max(3 * _prev, 0.01), a_max=0.40)
+        )
         plot_dca_curve(
             y_true=ctx.y_val,
             y_pred=val_y_prob,
@@ -202,6 +207,7 @@ def _generate_validation_plots(
             title=val_title,
             subtitle="Decision Curve Analysis",
             meta_lines=meta_lines,
+            max_pt=_max_pt,
         )
         logger.info("Validation DCA plot saved")
 
@@ -276,6 +282,10 @@ def _generate_test_plots(
         logger.info("Test calibration plot saved")
 
     if config.output.plot_dca:
+        _prev = float(np.mean(ctx.y_test > 0))
+        _max_pt = float(
+            np.clip(np.percentile(test_y_prob, 99), a_min=max(3 * _prev, 0.01), a_max=0.40)
+        )
         plot_dca_curve(
             y_true=ctx.y_test,
             y_pred=test_y_prob,
@@ -283,6 +293,7 @@ def _generate_test_plots(
             title=test_title,
             subtitle="Decision Curve Analysis",
             meta_lines=meta_lines,
+            max_pt=_max_pt,
         )
         logger.info("Test DCA plot saved")
 

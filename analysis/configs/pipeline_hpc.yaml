@@ -29,6 +29,14 @@ hpc:
   walltime: "24:00"  # hours:minutes
   cores: 12
   mem_per_core: 8000  # MB
+  # Per-stage resource overrides — aggregate-splits pools all-seed predictions + SHAP
+  # and peaks past 125 GB on full-cohort runs; 8 × 16 GB = 128 GB headroom.
+  postprocessing:
+    queue: premium
+    cores: 8
+    mem_per_core: 16000  # MB — 8 × 16 GB = 128 GB
+    walltime: "24:00"
+
   orchestrator:
     poll_interval: 60  # sec
     training_timeout: 20.0  # hr
@@ -40,7 +48,5 @@ hpc:
     consensus_timeout: 20.0  # hr
     max_concurrent_submissions: 20
     cores: 8
-    mem_per_core: 16000  # MB — aggregation of large-cohort runs (full-control incident-only)
-                         # pools per-seed predictions + SHAP values and peaks past 125 GB;
-                         # 8 × 16 GB = 128 GB headroom for aggregate-splits and consensus jobs.
+    mem_per_core: 16000  # MB — 8 × 16 GB = 128 GB
     walltime: "72:00"

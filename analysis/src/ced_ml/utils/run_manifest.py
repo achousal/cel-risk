@@ -42,6 +42,7 @@ def ensure_run_manifest(
     infile: str | Path,
     split_dir: str | Path,
     model_entries: Mapping[str, Mapping[str, Any]] | None = None,
+    configs: dict[str, str | Path] | None = None,
 ) -> tuple[Path, bool]:
     """Create/update ``run_metadata.json`` with non-destructive semantics.
 
@@ -85,6 +86,16 @@ def ensure_run_manifest(
     if "split_dir" not in metadata:
         metadata["split_dir"] = str(split_dir)
         changed = True
+    if configs:
+        stored_configs = metadata.get("configs")
+        if not isinstance(stored_configs, dict):
+            stored_configs = {}
+            metadata["configs"] = stored_configs
+            changed = True
+        for key, val in configs.items():
+            if val is not None and key not in stored_configs:
+                stored_configs[key] = str(val)
+                changed = True
 
     models_obj = metadata.get("models")
     if not isinstance(models_obj, dict):

@@ -18,6 +18,10 @@ trunks:
     proteins_csv: "../../../results/_archive/incident-validation-pre-restructure/incident_validation/feature_consistency.csv"
     feature_csv: "../../../results/_archive/incident-validation-pre-restructure/incident_validation/feature_consistency.csv"
 
+  - id: T3_purity
+    description: "Purity-ranked trunk: 134 proteins scored by pre-diagnostic signal purity (combined_purity_bw from prevalent_noise_scores)"
+    proteins_csv: "../../../operations/incident-validation/analysis/out/prevalent_noise_scores.csv"
+
 # ---------------------------------------------------------------------------
 # Recipes: trunk + ordering + size rule → derived panel
 #
@@ -263,6 +267,46 @@ recipes:
       params:
         delta: 0.02
         n_seeds: 30
+
+  # --- R_purity: purity-ranked ordering (pre-diagnostic signal specificity) ---
+  # Proteins ranked by combined_purity_bw: mean of min-max normalized L1/L2
+  # purity scores across incident-only vs. incident+prevalent training conditions.
+  # High score → signal specific to pre-diagnostic risk (low coefficient drift).
+  #
+  # R_purity_sig:       28 core proteins (is_core=True in prevalent_noise_scores.csv);
+  #                     analogous to R1_sig (all-significant panel).
+  # R_purity_criterion: sweep 5..28 via expand_to_core; run factorial on all sub-recipes;
+  #                     then aggregate sweep_csv + switch size_rule to three_criterion.
+  #
+  # Both use fixed size_rule initially (no sweep data yet). After the factorial run:
+  #   1. Aggregate sub-recipe results → purity_sweep.csv
+  #   2. Update R_purity_criterion: sweep_csv: <path>, size_rule: three_criterion
+  #   3. Re-derive (ced derive-recipes) to lock the criterion-optimal size
+
+  - id: R_purity_sig
+    trunk_id: T3_purity
+    description: "Purity-ranked, core set: 28 is_core proteins, fixed panel size"
+    ordering:
+      type: purity_ordering
+      params:
+        purity_column: "combined_purity_bw"
+    size_rule:
+      type: fixed
+      params:
+        panel_size: 28
+
+  - id: R_purity_criterion
+    trunk_id: T3_purity
+    description: "Purity-ranked sweep 5..28p; expand_to_core generates sub-recipes for criterion derivation"
+    expand_to_core: 5
+    ordering:
+      type: purity_ordering
+      params:
+        purity_column: "combined_purity_bw"
+    size_rule:
+      type: fixed
+      params:
+        panel_size: 28  # sweep max; update to three_criterion after factorial run
 
   # --- R3: incident-sparse ---
   - id: R3_incident_sparse

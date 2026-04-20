@@ -255,8 +255,8 @@ def build_job_script(
         Complete bash script string.
 
     Note:
-        Both stdout and stderr are redirected to /dev/null because ced
-        commands create their own structured log files.
+        stdout and stderr are routed to log_dir/<job_name>.{out,err} so that
+        job-level failures (env activation, missing commands) are visible.
     """
     directives = scheduler.build_directives(
         job_name=job_name,
@@ -265,6 +265,8 @@ def build_job_script(
         cores=cores,
         mem_per_core=mem_per_core,
         walltime=walltime,
+        stdout_path=str(log_dir / f"{job_name}.out"),
+        stderr_path=str(log_dir / f"{job_name}.err"),
         dependency=dependency,
     )
     header = "\n".join(directives)
@@ -323,7 +325,7 @@ def submit_job(
         input=script,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
     )
 
     if result.returncode != 0:
@@ -673,16 +675,18 @@ def _build_wrapped_command(
     job_name: str,
     sentinel_dir: Path,
     wrapper_script_path: Path,
+    project_root: Path | None = None,
 ) -> str:
     """Build a per-job command payload that runs through the shared wrapper."""
-    return "\n".join(
-        [
-            f'export CED_JOB_COMMAND_B64="{command_b64}"',
-            f'export CED_JOB_NAME="{job_name}"',
-            f'export CED_SENTINEL_DIR="{sentinel_dir.resolve()}"',
-            f'"{wrapper_script_path.resolve()}"',
-        ]
-    )
+    lines = [
+        f'export CED_JOB_COMMAND_B64="{command_b64}"',
+        f'export CED_JOB_NAME="{job_name}"',
+        f'export CED_SENTINEL_DIR="{sentinel_dir.resolve()}"',
+    ]
+    if project_root is not None:
+        lines.append(f'export CED_PROJECT_ROOT="{project_root.resolve()}"')
+    lines.append(f'"{wrapper_script_path.resolve()}"')
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -863,6 +867,7 @@ def _build_orchestrator_script(
     consensus_key: str | None,
     consensus_job_name: str | None,
     expected_training_jobs: int,
+    project_root: Path | None = None,
 ) -> str:
     """Build the barrier-orchestrator bash script.
 
@@ -903,6 +908,7 @@ def _build_orchestrator_script(
         f'WRAPPER_SCRIPT="{wrapper_script_path.resolve()}"',
         f'SENTINEL_DIR="{sentinel_dir.resolve()}"',
         f'SCRIPTS_DIR="{scripts_dir.resolve()}"',
+        *([f'CED_PROJECT_ROOT="{project_root.resolve()}"'] if project_root is not None else []),
         # Per-job stdout/stderr land here. Absolutely critical for
         # post-mortem debugging of silent downstream failures.
         f'LSF_OUTPUT_DIR="{(sentinel_dir.parent / "lsf_output").resolve()}"',
@@ -1110,6 +1116,7 @@ def _submit_orchestrator_pipeline(
     permutation_n_jobs: int = -1,
     permutation_split_seeds: list[int] | None = None,
     hpc_config: HPCConfig,
+    configs: dict[str, str | Path] | None = None,
     logs_dir: Path,
     dry_run: bool,
     pipeline_logger: logging.Logger,
@@ -1118,6 +1125,13 @@ def _submit_orchestrator_pipeline(
     base_dir = Path.cwd()
     env_info = detect_environment(base_dir)
     pipeline_logger.info(f"Python environment: {env_info.env_type}")
+
+    from ced_ml.utils.paths import get_project_root as _get_project_root
+
+    try:
+        _project_root: Path | None = _get_project_root()
+    except RuntimeError:
+        _project_root = None
 
     run_root = logs_dir / f"run_{run_id}"
     run_logs_dir = run_root / "training"
@@ -1142,6 +1156,7 @@ def _submit_orchestrator_pipeline(
             )
             for model in models
         },
+        configs=configs,
     )
     if metadata_changed:
         pipeline_logger.info(f"Initialized run metadata manifest: {run_metadata_path}")
@@ -1149,6 +1164,7 @@ def _submit_orchestrator_pipeline(
         pipeline_logger.debug(f"Run metadata manifest already initialized: {run_metadata_path}")
 
     default_resources = hpc_config.get_resources("default")
+    postprocessing_resources = hpc_config.get_resources("postprocessing")
     job_params = {
         "project": hpc_config.project,
         "env_activation": env_info.activation_cmd,
@@ -1167,13 +1183,15 @@ def _submit_orchestrator_pipeline(
         *,
         job_name: str,
         command: str,
+        resources: dict[str, str | int] | None = None,
     ) -> dict[str, str | int]:
+        r = resources if resources is not None else default_resources
         return {
             "job_name": job_name,
-            "queue": str(default_resources["queue"]),
-            "cores": int(default_resources["cores"]),
-            "mem_per_core": int(default_resources["mem_per_core"]),
-            "walltime": str(default_resources["walltime"]),
+            "queue": str(r["queue"]),
+            "cores": int(r["cores"]),
+            "mem_per_core": int(r["mem_per_core"]),
+            "walltime": str(r["walltime"]),
             "command_b64": _encode_command_b64(command),
         }
 
@@ -1185,6 +1203,8 @@ def _submit_orchestrator_pipeline(
         f"Submitting {expected_training_jobs} training jobs "
         f"({len(models)} models x {len(split_seeds)} seeds)..."
     )
+    pipeline_logger.info(f"Scripts dir: {scripts_dir}")
+    pipeline_logger.info(f"Training logs: {run_logs_dir}")
 
     for model in models:
         for split_index, seed in enumerate(split_seeds):
@@ -1206,6 +1226,7 @@ def _submit_orchestrator_pipeline(
                 job_name=job_name,
                 sentinel_dir=sentinel_dir,
                 wrapper_script_path=wrapper_script_path,
+                project_root=_project_root,
             )
             submission_script = build_job_script(
                 scheduler=scheduler,
@@ -1213,6 +1234,8 @@ def _submit_orchestrator_pipeline(
                 command=wrapped_command,
                 **job_params,
             )
+
+            _write_job_script(scripts_dir, job_name, submission_script)
 
             if dry_run:
                 pipeline_logger.info(f"  [DRY RUN] Training ({model} s{seed}): {job_name}")
@@ -1239,7 +1262,9 @@ def _submit_orchestrator_pipeline(
         agg_job = f"CeD_{run_id}_agg_{model}"
         agg_cmd = _build_aggregation_command(run_id=run_id, model=model)
         agg_key = f"agg_{model}"
-        manifest_jobs[agg_key] = _manifest_entry(job_name=agg_job, command=agg_cmd)
+        manifest_jobs[agg_key] = _manifest_entry(
+            job_name=agg_job, command=agg_cmd, resources=postprocessing_resources
+        )
         agg_job_names.append(agg_job)
         agg_keys.append(agg_key)
 
@@ -1267,7 +1292,9 @@ def _submit_orchestrator_pipeline(
         ensemble_agg_cmd = _build_ensemble_aggregation_command(run_id=run_id)
         ensemble_agg_key = "ensemble_agg"
         manifest_jobs[ensemble_agg_key] = _manifest_entry(
-            job_name=ensemble_agg_job_name, command=ensemble_agg_cmd
+            job_name=ensemble_agg_job_name,
+            command=ensemble_agg_cmd,
+            resources=postprocessing_resources,
         )
 
     # Stage 3b: Permutation tests (parallel per model x seed)
@@ -1305,6 +1332,7 @@ def _submit_orchestrator_pipeline(
             manifest_jobs[perm_agg_key] = _manifest_entry(
                 job_name=perm_agg_job,
                 command=perm_agg_cmd,
+                resources=postprocessing_resources,
             )
             perm_agg_names.append(perm_agg_job)
             perm_agg_keys.append(perm_agg_key)
@@ -1337,6 +1365,7 @@ def _submit_orchestrator_pipeline(
             manifest_jobs[panel_agg_key] = _manifest_entry(
                 job_name=panel_agg_job,
                 command=panel_agg_cmd,
+                resources=postprocessing_resources,
             )
             panel_job_names.append(panel_agg_job)
             panel_agg_names.append(panel_agg_job)
@@ -1350,6 +1379,7 @@ def _submit_orchestrator_pipeline(
         manifest_jobs[consensus_key] = _manifest_entry(
             job_name=consensus_job_name,
             command=consensus_cmd,
+            resources=postprocessing_resources,
         )
 
     manifest_path = scripts_dir / "jobs_manifest.json"
@@ -1386,6 +1416,7 @@ def _submit_orchestrator_pipeline(
         consensus_key=consensus_key,
         consensus_job_name=consensus_job_name if enable_consensus else None,
         expected_training_jobs=expected_training_jobs,
+        project_root=_project_root,
     )
     _write_job_script(scripts_dir, orchestrator_orch_name, orchestrator_script)
 
@@ -1448,6 +1479,7 @@ def submit_hpc_pipeline(
     permutation_n_jobs: int = -1,
     permutation_split_seeds: list[int] | None = None,
     hpc_config: HPCConfig,
+    configs: dict[str, str | Path] | None = None,
     logs_dir: Path,
     dry_run: bool,
     pipeline_logger: logging.Logger,
@@ -1478,6 +1510,7 @@ def submit_hpc_pipeline(
         permutation_n_jobs=permutation_n_jobs,
         permutation_split_seeds=permutation_split_seeds,
         hpc_config=hpc_config,
+        configs=configs,
         logs_dir=logs_dir,
         dry_run=dry_run,
         pipeline_logger=pipeline_logger,

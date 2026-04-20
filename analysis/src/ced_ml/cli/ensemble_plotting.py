@@ -69,12 +69,17 @@ def generate_validation_plots(
         title="ENSEMBLE - Validation Calibration",
         meta_lines=meta_lines,
     )
+    _prev_val = float(np.mean(y_val_arr > 0))
+    _max_pt_val = float(
+        np.clip(np.percentile(val_proba_arr, 99), a_min=max(3 * _prev_val, 0.01), a_max=0.40)
+    )
     plot_dca_curve(
         y_true=y_val_arr,
         y_pred=val_proba_arr,
         out_path=str(plots_dir / f"ENSEMBLE__val_dca.{plot_format}"),
         title="ENSEMBLE - Validation DCA",
         meta_lines=meta_lines,
+        max_pt=_max_pt_val,
     )
 
     cat_val_arr = (
@@ -149,12 +154,17 @@ def generate_test_plots(
         title="ENSEMBLE - Test Calibration",
         meta_lines=meta_lines,
     )
+    _prev_test = float(np.mean(y_test_arr > 0))
+    _max_pt_test = float(
+        np.clip(np.percentile(test_proba_arr, 99), a_min=max(3 * _prev_test, 0.01), a_max=0.40)
+    )
     plot_dca_curve(
         y_true=y_test_arr,
         y_pred=test_proba_arr,
         out_path=str(plots_dir / f"ENSEMBLE__test_dca.{plot_format}"),
         title="ENSEMBLE - Test DCA",
         meta_lines=meta_lines,
+        max_pt=_max_pt_test,
     )
 
     cat_test_arr = (

@@ -17,6 +17,7 @@ import yaml
 from ced_ml.recipes.ordering_rules import dispatch_ordering
 from ced_ml.recipes.schema import Manifest, RecipeConfig, SizeRuleType, TrunkConfig
 from ced_ml.recipes.size_rules import (
+    derive_size_fixed,
     derive_size_significance_count,
     derive_size_stability,
     derive_size_three_criterion,
@@ -180,6 +181,9 @@ def _derive_single_recipe(
         optimal_size, size_log = derive_size_significance_count(
             proteins_df, **recipe.size_rule.params
         )
+
+    elif recipe.size_rule.type == SizeRuleType.fixed:
+        optimal_size, size_log = derive_size_fixed(**recipe.size_rule.params)
 
     else:
         raise ValueError(f"Unknown size rule type: {recipe.size_rule.type}")

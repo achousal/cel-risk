@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """
-Unified incident validation pipeline: 3 models x 3 strategies x 4 weights.
+Incident validation pipeline: 3 training strategies × 4 class-weight schemes.
+MODEL: LinSVM_cal (LinearSVC + CalibratedClassifierCV, sigmoid calibration)
 
-Models:
-  LR_EN  -- ElasticNet logistic regression (tune C + l1_ratio)
-  SVM_L1 -- LinearSVC L1 + CalibratedClassifierCV (tune C, sparse)
-  SVM_L2 -- LinearSVC L2 + CalibratedClassifierCV (tune C, dense)
+Parallel to run_incident_validation.py (LR_EN) in _gen1_archive.
+Same 3×4 factorial, same feature selection, same CV design — model swapped.
 
 Workflow:
-  1. Load data -> define groups (incident / prevalent / control)
+  1. Load data → define groups (incident / prevalent / control)
   2. Create locked 20% test set (incident + controls, stratified by sex)
-  3. Bootstrap stability feature selection on dev incident + controls
-     (Wald statistic, 100 resamples, top 200/resample, >=70% threshold)
+  3. Bootstrap stability feature selection on dev incident + controls (Wald, 100 resamples)
   4. Correlation pruning (|r| > 0.85, keep more stable feature)
   5. 5-fold CV on dev set (folds defined on incident + controls)
-     - For each (strategy x weight_scheme):
-       inner 3-fold Optuna tunes hyperparams -> AUPRC
+     - For each (strategy × weight_scheme):
+       inner 3-fold Optuna tunes C → AUPRC
        outer fold evaluates on incident + controls
   6. Select best (strategy, weight_scheme) by mean AUPRC
   7. Final refit on full dev set with winning config
@@ -23,25 +21,12 @@ Workflow:
 
 Usage:
   cd cel-risk
-  python operations/incident-validation/scripts/run_lr.py --model LR_EN
-  python operations/incident-validation/scripts/run_lr.py --model SVM_L1
-  python operations/incident-validation/scripts/run_lr.py --model SVM_L2
-  python operations/incident-validation/scripts/run_lr.py --model LR_EN --smoke
-
-Parallel mode (HPC):
-  # Phase 1: feature selection (shared across combos)
-  python run_incident_validation.py --model SVM_L1 --phase features
-
-  # Phase 2: one job per (strategy, weight) combo
-  python run_incident_validation.py --model SVM_L1 --phase cv --strategy incident_only --weight-scheme balanced
-
-  # Phase 3: aggregate combo results, refit, test
-  python run_incident_validation.py --model SVM_L1 --phase aggregate
+  python operations/incident-validation/scripts/run_svm.py
+  python operations/incident-validation/scripts/run_svm.py --smoke
 """
 
 from __future__ import annotations
 
-import abc
 import argparse
 import json
 import logging
@@ -55,18 +40,18 @@ import optuna
 import pandas as pd
 from scipy import stats
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
-    roc_curve,
 )
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 
+# --- ced_ml imports (data loading, schema, feature selection) ---
 from ced_ml.data.io import read_proteomics_file
 from ced_ml.data.schema import (
     CONTROL_LABEL,
@@ -87,24 +72,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     force=True,
 )
-# Unbuffered stderr for LSF/SLURM live progress
-import functools  # noqa: E402
-
-logging.getLogger().handlers[0].stream = open(
-    sys.stderr.fileno(), "w", buffering=1, closefd=False
-)
+# Force unbuffered stderr so LSF bpeek shows live progress
+import functools
+logging.getLogger().handlers[0].stream = open(sys.stderr.fileno(), "w", buffering=1, closefd=False)
 logger = logging.getLogger(__name__)
-
-# Valid model identifiers
-VALID_MODELS = ("LR_EN", "SVM_L1", "SVM_L2")
-
-# Output dir per model — namespaced under results/incident-validation/lr/
-MODEL_OUTPUT_DIRS = {
-    "LR_EN": "results/incident-validation/lr/LR_EN",
-    "SVM_L1": "results/incident-validation/lr/SVM_L1",
-    "SVM_L2": "results/incident-validation/lr/SVM_L2",
-}
-
 
 # ============================================================================
 # Configuration
@@ -113,24 +84,19 @@ MODEL_OUTPUT_DIRS = {
 
 @dataclass
 class Config:
-    """Pipeline configuration -- shared across all models."""
-
     data_path: Path = Path("data/Celiac_dataset_proteomics_w_demo.parquet")
-    output_dir: Path = Path("results/incident-validation/lr/LR_EN")
-    model: str = "LR_EN"
+    output_dir: Path = Path("results/incident-validation/linsvm_cal/l2")
 
-    # Splitting
+    # Splits
     test_frac: float = 0.20
-    n_outer_folds: int = 5
     split_seed: int = 42
+    ci_seed: int = 123
 
-    # Bootstrap stability (LOCKED -- same for all models)
+    # Feature selection
     n_bootstrap: int = 100
     bootstrap_top_k: int = 200
-    stability_threshold: float = 0.70
+    stability_threshold: float = 0.50
     screen_method: str = "wald"
-
-    # Correlation pruning
     corr_threshold: float = 0.85
     corr_method: str = "spearman"
 
@@ -138,171 +104,31 @@ class Config:
     n_optuna_trials: int = 50
     n_inner_folds: int = 3
 
-    # Model-specific defaults (overridden per model)
+    # SVM
     max_iter: int = 2_000
-    solver: str = "saga"  # LR only
-    calibration_cv: int = 5  # SVM only
+    calibration_cv: int = 3       # folds for CalibratedClassifierCV
+    penalty: str = "l2"           # "l1" (dual=False, sparse) or "l2" (default, dense)
 
     # Evaluation
-    n_bootstrap_ci: int = 2_000
-    ci_seed: int = 99
+    n_outer_folds: int = 5
+    n_bootstrap_ci: int = 1_000
 
-    # Strategies and weights
-    strategies: list[str] = field(
-        default_factory=lambda: [
-            "incident_only",
-            "incident_prevalent",
-            "prevalent_only",
-        ]
-    )
-    weight_schemes: list[str] = field(
-        default_factory=lambda: ["none", "balanced", "sqrt", "log"]
-    )
+    # Factorial grid
+    strategies: list = field(default_factory=lambda: [
+        "incident_only", "incident_prevalent", "prevalent_only",
+    ])
+    weight_schemes: list = field(default_factory=lambda: [
+        "none", "log", "sqrt", "balanced",
+    ])
 
     smoke: bool = False
 
     def __post_init__(self):
-        self.data_path = Path(self.data_path)
-        self.output_dir = Path(self.output_dir)
         if self.smoke:
             self.n_bootstrap = 10
             self.bootstrap_top_k = 50
             self.n_optuna_trials = 5
             self.n_bootstrap_ci = 100
-
-
-# ============================================================================
-# Model specifications
-# ============================================================================
-
-
-class ModelSpec(abc.ABC):
-    """Interface for model-specific build, tune, and coefficient extraction."""
-
-    @abc.abstractmethod
-    def suggest_params(self, trial: optuna.Trial) -> dict:
-        """Register Optuna search space and return sampled params."""
-
-    @abc.abstractmethod
-    def build(self, params: dict, class_weight, cfg: Config, seed: int):
-        """Construct a fitted-ready sklearn estimator."""
-
-    @abc.abstractmethod
-    def extract_coefs(self, model) -> np.ndarray:
-        """Extract coefficient vector from a fitted model."""
-
-    @abc.abstractmethod
-    def param_summary(self, params: dict) -> str:
-        """Human-readable summary of hyperparams for the report."""
-
-    @abc.abstractmethod
-    def aggregate_best_params(self, cv_results: pd.DataFrame) -> dict:
-        """Derive final hyperparams from CV results (e.g. median)."""
-
-    @property
-    @abc.abstractmethod
-    def display_name(self) -> str:
-        """Model name for reports."""
-
-
-class LRElasticNetSpec(ModelSpec):
-    """ElasticNet logistic regression."""
-
-    def suggest_params(self, trial):
-        return {
-            "C": trial.suggest_float("C", 1e-4, 100.0, log=True),
-            "l1_ratio": trial.suggest_float("l1_ratio", 0.01, 0.99),
-        }
-
-    def build(self, params, class_weight, cfg, seed):
-        return LogisticRegression(
-            C=params["C"],
-            l1_ratio=params["l1_ratio"],
-            penalty="elasticnet",
-            class_weight=class_weight,
-            solver=cfg.solver,
-            max_iter=cfg.max_iter,
-            random_state=seed,
-        )
-
-    def extract_coefs(self, model):
-        return model.coef_.ravel().copy()
-
-    def param_summary(self, params):
-        return f"C={params['C']:.6f}, l1_ratio={params['l1_ratio']:.4f}"
-
-    def aggregate_best_params(self, cv_results):
-        return {
-            "C": float(cv_results["best_C"].median()),
-            "l1_ratio": float(cv_results["best_l1_ratio"].median()),
-        }
-
-    @property
-    def display_name(self):
-        return "ElasticNet Logistic Regression"
-
-
-class SVMSpec(ModelSpec):
-    """LinearSVC + CalibratedClassifierCV (L1 or L2 penalty)."""
-
-    def __init__(self, penalty: str = "l2"):
-        if penalty not in ("l1", "l2"):
-            raise ValueError(f"penalty must be 'l1' or 'l2', got '{penalty}'")
-        self.penalty = penalty
-
-    def suggest_params(self, trial):
-        return {"C": trial.suggest_float("C", 1e-4, 100.0, log=True)}
-
-    def build(self, params, class_weight, cfg, seed):
-        if self.penalty == "l1":
-            base = LinearSVC(
-                penalty="l1",
-                dual=False,
-                C=params["C"],
-                class_weight=class_weight,
-                max_iter=cfg.max_iter,
-                random_state=seed,
-            )
-        else:
-            base = LinearSVC(
-                penalty="l2",
-                dual=True,
-                C=params["C"],
-                class_weight=class_weight,
-                max_iter=cfg.max_iter,
-                random_state=seed,
-            )
-        return CalibratedClassifierCV(base, method="sigmoid", cv=cfg.calibration_cv)
-
-    def extract_coefs(self, model):
-        return np.mean(
-            [cc.estimator.coef_.ravel() for cc in model.calibrated_classifiers_],
-            axis=0,
-        )
-
-    def param_summary(self, params):
-        return f"C={params['C']:.6f}"
-
-    def aggregate_best_params(self, cv_results):
-        return {"C": float(cv_results["best_C"].median())}
-
-    @property
-    def display_name(self):
-        return f"LinSVM_cal (penalty={self.penalty})"
-
-
-def get_model_spec(model_id: str) -> ModelSpec:
-    """Factory: model ID -> ModelSpec."""
-    if model_id == "LR_EN":
-        return LRElasticNetSpec()
-    elif model_id == "SVM_L1":
-        return SVMSpec(penalty="l1")
-    elif model_id == "SVM_L2":
-        return SVMSpec(penalty="l2")
-    else:
-        raise ValueError(
-            f"Unknown model '{model_id}'. Valid: {', '.join(VALID_MODELS)}"
-        )
 
 
 # ============================================================================
@@ -319,7 +145,6 @@ def load_and_split(cfg: Config) -> dict:
     protein_cols = [c for c in df.columns if c.endswith(PROTEIN_SUFFIX)]
     logger.info("Found %d protein columns", len(protein_cols))
 
-    # Define groups
     incident_mask = df[TARGET_COL] == INCIDENT_LABEL
     prevalent_mask = df[TARGET_COL] == PREVALENT_LABEL
     control_mask = df[TARGET_COL] == CONTROL_LABEL
@@ -329,7 +154,6 @@ def load_and_split(cfg: Config) -> dict:
     n_ctrl = control_mask.sum()
     logger.info("Groups: %d incident, %d prevalent, %d controls", n_inc, n_prev, n_ctrl)
 
-    # Locked test set: 20% of incident + 20% of controls, stratified by sex
     ic_df = df[incident_mask | control_mask].copy()
     ic_df["_binary"] = (ic_df[TARGET_COL] == INCIDENT_LABEL).astype(int)
 
@@ -339,6 +163,8 @@ def load_and_split(cfg: Config) -> dict:
     else:
         logger.warning("'sex' column not found; stratifying by outcome only")
         ic_df["_strat"] = ic_df["_binary"].astype(str)
+
+    from sklearn.model_selection import train_test_split
 
     dev_idx, test_idx = train_test_split(
         ic_df.index,
@@ -356,15 +182,12 @@ def load_and_split(cfg: Config) -> dict:
 
     logger.info(
         "Test set: %d incident + %d controls = %d",
-        len(test_incident_idx),
-        len(test_control_idx),
+        len(test_incident_idx), len(test_control_idx),
         len(test_incident_idx) + len(test_control_idx),
     )
     logger.info(
         "Dev set: %d incident + %d controls + %d prevalent",
-        len(dev_incident_idx),
-        len(dev_control_idx),
-        len(prevalent_idx),
+        len(dev_incident_idx), len(dev_control_idx), len(prevalent_idx),
     )
 
     return {
@@ -395,9 +218,7 @@ def run_feature_selection(cfg: Config, data: dict) -> dict:
     logger.info("=== Feature Selection ===")
     logger.info(
         "Bootstrap stability: %d resamples, top %d per resample, threshold %.0f%%",
-        cfg.n_bootstrap,
-        cfg.bootstrap_top_k,
-        cfg.stability_threshold * 100,
+        cfg.n_bootstrap, cfg.bootstrap_top_k, cfg.stability_threshold * 100,
     )
 
     stable_proteins, selection_freq, bootstrap_log = bootstrap_stability_selection(
@@ -415,8 +236,7 @@ def run_feature_selection(cfg: Config, data: dict) -> dict:
 
     logger.info(
         "Correlation pruning: |r| > %.2f (%s), keep more stable feature",
-        cfg.corr_threshold,
-        cfg.corr_method,
+        cfg.corr_threshold, cfg.corr_method,
     )
     prune_map, pruned_proteins = prune_correlated_proteins(
         df=X_fs,
@@ -445,54 +265,178 @@ def run_feature_selection(cfg: Config, data: dict) -> dict:
 
 
 def compute_class_weight(scheme: str, y: np.ndarray) -> dict | str | None:
-    """Compute sklearn-compatible class_weight for a given scheme."""
+    """Compute sklearn-compatible class_weight for a given scheme.
+
+    Returns None, "balanced", or {0: w0, 1: w1}.
+    """
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+
     if scheme == "none":
         return None
-    if scheme == "balanced":
+    elif scheme == "balanced":
         return "balanced"
-
-    n_pos = int((y == 1).sum())
-    n_neg = int((y == 0).sum())
-    if n_pos == 0:
-        return None
-
-    ratio = n_neg / n_pos
-
-    if scheme == "sqrt":
-        w1 = np.sqrt(ratio)
     elif scheme == "log":
-        w1 = np.log(ratio)
+        if n_pos == 0:
+            return None
+        w1 = np.log(n_neg / n_pos)
+        return {0: 1.0, 1: max(w1, 1.0)}
+    elif scheme == "sqrt":
+        if n_pos == 0:
+            return None
+        w1 = np.sqrt(n_neg / n_pos)
+        return {0: 1.0, 1: max(w1, 1.0)}
     else:
         raise ValueError(f"Unknown weight scheme: {scheme}")
 
-    return {0: 1.0, 1: max(float(w1), 1.0)}
-
-
-# ============================================================================
-# Training helpers
-# ============================================================================
-
 
 def _downsample_controls(
-    X: np.ndarray,
-    y: np.ndarray,
-    max_ratio: int,
-    rng: np.random.Generator,
+    X: np.ndarray, y: np.ndarray, rng: np.random.Generator, ratio: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Downsample controls to max_ratio:1 for faster inner CV fitting."""
-    case_mask = y == 1
-    ctrl_mask = y == 0
-    n_cases = int(case_mask.sum())
-    n_ctrls = int(ctrl_mask.sum())
-    target_ctrls = n_cases * max_ratio
-
-    if max_ratio <= 0 or n_ctrls <= target_ctrls:
+    """Subsample controls to `ratio` × positives for inner CV speed."""
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    if ratio == 0 or len(neg_idx) <= ratio * len(pos_idx):
         return X, y
-
-    ctrl_idx = np.where(ctrl_mask)[0]
-    keep_ctrl = rng.choice(ctrl_idx, size=target_ctrls, replace=False)
-    keep = np.sort(np.concatenate([np.where(case_mask)[0], keep_ctrl]))
+    keep_neg = rng.choice(neg_idx, size=ratio * len(pos_idx), replace=False)
+    keep = np.sort(np.concatenate([pos_idx, keep_neg]))
     return X[keep], y[keep]
+
+
+# ============================================================================
+# SVM helpers
+# ============================================================================
+
+
+def _build_svm(C: float, class_weight, max_iter: int, calibration_cv: int, seed: int, penalty: str = "l2") -> CalibratedClassifierCV:
+    """Build a calibrated LinearSVC.
+
+    penalty='l1': dual=False, loss='squared_hinge' — sparse solutions.
+    penalty='l2': dual=True  (default)             — dense solutions.
+    """
+    if penalty == "l1":
+        base = LinearSVC(
+            penalty="l1",
+            dual=False,
+            C=C,
+            class_weight=class_weight,
+            max_iter=max_iter,
+            random_state=seed,
+        )
+    else:
+        base = LinearSVC(
+            penalty="l2",
+            dual=True,
+            C=C,
+            class_weight=class_weight,
+            max_iter=max_iter,
+            random_state=seed,
+        )
+    return CalibratedClassifierCV(base, method="sigmoid", cv=calibration_cv)
+
+
+def _extract_coefs(model: CalibratedClassifierCV) -> np.ndarray:
+    """Mean LinearSVC coefficients across calibration folds."""
+    return np.mean(
+        [cc.estimator.coef_.ravel() for cc in model.calibrated_classifiers_],
+        axis=0,
+    )
+
+
+# ============================================================================
+# Model fitting (Optuna + outer CV)
+# ============================================================================
+
+
+def _optuna_objective(
+    trial: optuna.Trial,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    class_weight,
+    n_inner_folds: int,
+    max_iter: int,
+    calibration_cv: int,
+    penalty: str,
+    seed: int,
+    inner_ctrl_ratio: int = 0,
+) -> float:
+    """Optuna objective: mean AUPRC across inner CV folds."""
+    C = trial.suggest_float("C", 1e-4, 100.0, log=True)
+
+    rng = np.random.default_rng(seed + trial.number)
+    inner_cv = StratifiedKFold(n_splits=n_inner_folds, shuffle=True, random_state=seed)
+
+    scores = []
+    for tr_idx, va_idx in inner_cv.split(X_train, y_train):
+        X_tr, y_tr = X_train[tr_idx], y_train[tr_idx]
+        X_va, y_va = X_train[va_idx], y_train[va_idx]
+
+        if inner_ctrl_ratio > 0:
+            X_tr, y_tr = _downsample_controls(X_tr, y_tr, rng, inner_ctrl_ratio)
+
+        if len(np.unique(y_tr)) < 2 or len(np.unique(y_va)) < 2:
+            continue
+
+        scaler = StandardScaler()
+        X_tr_s = scaler.fit_transform(X_tr)
+        X_va_s = scaler.transform(X_va)
+
+        model = _build_svm(C, class_weight, max_iter, calibration_cv, seed, penalty)
+        model.fit(X_tr_s, y_tr)
+
+        y_prob = model.predict_proba(X_va_s)[:, 1]
+        scores.append(average_precision_score(y_va, y_prob))
+
+    return float(np.mean(scores)) if scores else 0.0
+
+
+def tune_and_evaluate_fold(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    class_weight,
+    cfg: Config,
+    fold_seed: int,
+) -> dict:
+    """Tune C via inner CV, evaluate on outer validation fold."""
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=fold_seed),
+    )
+    study.optimize(
+        lambda trial: _optuna_objective(
+            trial, X_train, y_train, class_weight,
+            cfg.n_inner_folds, cfg.max_iter, cfg.calibration_cv, cfg.penalty, fold_seed,
+        ),
+        n_trials=cfg.n_optuna_trials,
+        show_progress_bar=False,
+    )
+
+    best_C = study.best_params["C"]
+
+    # Refit on full outer training fold
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_val_s = scaler.transform(X_val)
+
+    model = _build_svm(best_C, class_weight, cfg.max_iter, cfg.calibration_cv, fold_seed, cfg.penalty)
+    model.fit(X_train_s, y_train)
+
+    y_prob = model.predict_proba(X_val_s)[:, 1]
+    auprc = average_precision_score(y_val, y_prob)
+    auroc = roc_auc_score(y_val, y_prob)
+
+    coefs = _extract_coefs(model)
+
+    return {
+        "auprc": auprc,
+        "auroc": auroc,
+        "best_C": best_C,
+        "best_inner_auprc": study.best_value,
+        "n_nonzero_coefs": int(np.sum(np.abs(coefs) > 1e-8)),
+        "coefs": coefs,
+    }
 
 
 def get_training_indices(
@@ -504,153 +448,40 @@ def get_training_indices(
     """Return (indices, binary labels) for a given training strategy."""
     if strategy == "incident_only":
         idx = np.concatenate([fold_train_incident, fold_train_controls])
-        y = np.concatenate([
-            np.ones(len(fold_train_incident)),
-            np.zeros(len(fold_train_controls)),
-        ])
+        y = np.concatenate([np.ones(len(fold_train_incident)), np.zeros(len(fold_train_controls))])
     elif strategy == "incident_prevalent":
-        idx = np.concatenate([fold_train_incident, prevalent_idx, fold_train_controls])
+        idx = np.concatenate([fold_train_incident, fold_train_controls, prevalent_idx])
         y = np.concatenate([
             np.ones(len(fold_train_incident)),
-            np.ones(len(prevalent_idx)),
             np.zeros(len(fold_train_controls)),
+            np.ones(len(prevalent_idx)),
         ])
     elif strategy == "prevalent_only":
         idx = np.concatenate([prevalent_idx, fold_train_controls])
-        y = np.concatenate([
-            np.ones(len(prevalent_idx)),
-            np.zeros(len(fold_train_controls)),
-        ])
+        y = np.concatenate([np.ones(len(prevalent_idx)), np.zeros(len(fold_train_controls))])
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
-
-    return idx.astype(int), y.astype(int)
-
-
-# ============================================================================
-# Optuna tuning + outer fold evaluation
-# ============================================================================
-
-
-def _optuna_objective(
-    trial: optuna.Trial,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    class_weight,
-    model_spec: ModelSpec,
-    cfg: Config,
-    seed: int,
-    inner_ctrl_ratio: int = 0,
-) -> float:
-    """Optuna objective: mean AUPRC across inner CV folds."""
-    params = model_spec.suggest_params(trial)
-    rng = np.random.default_rng(seed + trial.number)
-
-    inner_cv = StratifiedKFold(
-        n_splits=cfg.n_inner_folds, shuffle=True, random_state=seed
-    )
-    scores = []
-
-    for train_ix, val_ix in inner_cv.split(X_train, y_train):
-        X_tr, X_va = X_train[train_ix], X_train[val_ix]
-        y_tr, y_va = y_train[train_ix], y_train[val_ix]
-
-        if inner_ctrl_ratio > 0:
-            X_tr, y_tr = _downsample_controls(X_tr, y_tr, inner_ctrl_ratio, rng)
-
-        if len(np.unique(y_tr)) < 2 or len(np.unique(y_va)) < 2:
-            continue
-
-        scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr)
-        X_va_s = scaler.transform(X_va)
-
-        model = model_spec.build(params, class_weight, cfg, seed)
-        try:
-            model.fit(X_tr_s, y_tr)
-            y_prob = model.predict_proba(X_va_s)[:, 1]
-            scores.append(average_precision_score(y_va, y_prob))
-        except Exception:
-            scores.append(0.0)
-
-    return float(np.mean(scores)) if scores else 0.0
-
-
-def tune_and_evaluate_fold(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-    class_weight,
-    model_spec: ModelSpec,
-    cfg: Config,
-    fold_seed: int,
-) -> dict:
-    """Tune hyperparams via inner CV, evaluate on outer validation fold."""
-    study = optuna.create_study(
-        direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=fold_seed),
-    )
-    study.optimize(
-        lambda trial: _optuna_objective(
-            trial, X_train, y_train, class_weight, model_spec, cfg, fold_seed,
-        ),
-        n_trials=cfg.n_optuna_trials,
-        show_progress_bar=False,
-    )
-
-    best_params = study.best_params
-
-    # Refit on full outer training fold
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_val_s = scaler.transform(X_val)
-
-    model = model_spec.build(best_params, class_weight, cfg, fold_seed)
-    model.fit(X_train_s, y_train)
-
-    y_prob = model.predict_proba(X_val_s)[:, 1]
-    auprc = average_precision_score(y_val, y_prob)
-    auroc = roc_auc_score(y_val, y_prob)
-
-    coefs = model_spec.extract_coefs(model)
-
-    result = {
-        "auprc": auprc,
-        "auroc": auroc,
-        "best_C": best_params["C"],
-        "best_inner_auprc": study.best_value,
-        "n_nonzero_coefs": int(np.sum(np.abs(coefs) > 1e-8)),
-        "coefs": coefs,
-    }
-    # LR_EN also has l1_ratio
-    if "l1_ratio" in best_params:
-        result["best_l1_ratio"] = best_params["l1_ratio"]
-
-    return result
+    return idx, y.astype(int)
 
 
 # ============================================================================
-# Cross-validation loop
+# Cross-validation
 # ============================================================================
 
 
-def run_cv(
-    cfg: Config, data: dict, features: dict, model_spec: ModelSpec
-) -> tuple[pd.DataFrame, list]:
-    """Run 5-fold CV for all (strategy x weight) combinations."""
+def run_cv(cfg: Config, data: dict, features: dict) -> tuple[pd.DataFrame, list]:
+    """Run 5-fold CV for all (strategy × weight) combinations."""
     df = data["df"]
     protein_panel = features["pruned_proteins"]
     dev_incident_idx = data["dev_incident_idx"]
     dev_control_idx = data["dev_control_idx"]
     prevalent_idx = data["prevalent_idx"]
 
-    logger.info("=== Cross-Validation (%s) ===", cfg.model)
+    logger.info("=== Cross-Validation ===")
     logger.info("Panel: %d proteins", len(protein_panel))
     logger.info("Strategies: %s", cfg.strategies)
     logger.info("Weight schemes: %s", cfg.weight_schemes)
 
-    # CV folds defined on incident + controls
     dev_ic_idx = np.concatenate([dev_incident_idx, dev_control_idx])
     dev_ic_labels = np.concatenate([
         np.ones(len(dev_incident_idx)),
@@ -675,7 +506,6 @@ def run_cv(
                 fold_train_ic = dev_ic_idx[train_pos]
                 fold_val_ic = dev_ic_idx[val_pos]
 
-                # Separate incident and controls in training fold
                 fold_train_incident = np.array(
                     [i for i in fold_train_ic if i in set(dev_incident_idx)]
                 )
@@ -683,18 +513,12 @@ def run_cv(
                     [i for i in fold_train_ic if i in set(dev_control_idx)]
                 )
 
-                # Training data depends on strategy
                 train_idx, y_train = get_training_indices(
                     strategy, fold_train_incident, fold_train_controls, prevalent_idx,
                 )
 
-                # Validation: always incident + controls
-                val_incident = np.array(
-                    [i for i in fold_val_ic if i in set(dev_incident_idx)]
-                )
-                val_controls = np.array(
-                    [i for i in fold_val_ic if i in set(dev_control_idx)]
-                )
+                val_incident = np.array([i for i in fold_val_ic if i in set(dev_incident_idx)])
+                val_controls = np.array([i for i in fold_val_ic if i in set(dev_control_idx)])
                 val_idx = np.concatenate([val_incident, val_controls])
                 y_val = np.concatenate([
                     np.ones(len(val_incident)),
@@ -708,7 +532,7 @@ def run_cv(
 
                 fold_seed = cfg.split_seed + fold_i
                 result = tune_and_evaluate_fold(
-                    X_train, y_train, X_val, y_val, cw, model_spec, cfg, fold_seed,
+                    X_train, y_train, X_val, y_val, cw, cfg, fold_seed,
                 )
                 result["fold"] = fold_i
                 result["strategy"] = strategy
@@ -756,51 +580,47 @@ def final_refit_and_test(
     data: dict,
     features: dict,
     cv_results: pd.DataFrame,
-    model_spec: ModelSpec,
 ) -> dict:
     """Refit winning config on full dev set, evaluate on locked test set."""
-    logger.info("=== Final Model Selection (%s) ===", cfg.model)
-
-    # Aggregation columns depend on model
-    agg_dict = {
-        "mean_auprc": ("auprc", "mean"),
-        "std_auprc": ("auprc", "std"),
-        "mean_auroc": ("auroc", "mean"),
-        "std_auroc": ("auroc", "std"),
-        "median_C": ("best_C", "median"),
-    }
-    if "best_l1_ratio" in cv_results.columns:
-        agg_dict["median_l1"] = ("best_l1_ratio", "median")
+    logger.info("=== Final Model Selection ===")
 
     summary = (
         cv_results.groupby(["strategy", "weight_scheme"])
-        .agg(**agg_dict)
+        .agg(
+            mean_auprc=("auprc", "mean"),
+            std_auprc=("auprc", "std"),
+            mean_auroc=("auroc", "mean"),
+            std_auroc=("auroc", "std"),
+            median_C=("best_C", "median"),
+        )
         .reset_index()
-        .sort_values("mean_auprc", ascending=False)
     )
+    summary = summary.sort_values("mean_auprc", ascending=False)
 
-    logger.info("\n%s", summary.to_string(index=False))
+    logger.info("Strategy × weight comparison (mean AUPRC):")
+    for _, row in summary.iterrows():
+        logger.info(
+            "  %s + %s: AUPRC=%.4f ± %.4f, AUROC=%.4f ± %.4f, median C=%.6f",
+            row["strategy"], row["weight_scheme"],
+            row["mean_auprc"], row["std_auprc"],
+            row["mean_auroc"], row["std_auroc"],
+            row["median_C"],
+        )
 
     best_row = summary.iloc[0]
     best_strategy = best_row["strategy"]
     best_weight = best_row["weight_scheme"]
-    best_params = model_spec.aggregate_best_params(
-        cv_results[
-            (cv_results["strategy"] == best_strategy)
-            & (cv_results["weight_scheme"] == best_weight)
-        ]
-    )
+    best_C = float(best_row["median_C"])
 
     logger.info(
-        "\nBest: %s + %s (mean AUPRC=%.4f)",
+        "Winner: %s + %s (mean AUPRC=%.4f)",
         best_strategy, best_weight, best_row["mean_auprc"],
     )
-    logger.info("  Median hyperparams: %s", model_spec.param_summary(best_params))
+    logger.info("  Median hyperparams: C=%.6f", best_C)
 
+    # Re-run feature selection on full dev set for reproducibility
     protein_panel = features["pruned_proteins"]
-    df = data["df"]
 
-    # Build full dev training set
     dev_incident_idx = data["dev_incident_idx"]
     dev_control_idx = data["dev_control_idx"]
     prevalent_idx = data["prevalent_idx"]
@@ -809,20 +629,20 @@ def final_refit_and_test(
         best_strategy, dev_incident_idx, dev_control_idx, prevalent_idx,
     )
 
+    df = data["df"]
     X_train = df.loc[train_idx, protein_panel].to_numpy(dtype=float)
     cw = compute_class_weight(best_weight, y_train)
 
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
 
-    final_model = model_spec.build(best_params, cw, cfg, cfg.split_seed)
+    final_model = _build_svm(best_C, cw, cfg.max_iter, cfg.calibration_cv, cfg.split_seed, cfg.penalty)
     final_model.fit(X_train_s, y_train)
 
-    coefs = model_spec.extract_coefs(final_model)
+    coefs = _extract_coefs(final_model)
     logger.info(
         "Final model: %d/%d features with |coef| > 1e-8",
-        int(np.sum(np.abs(coefs) > 1e-8)),
-        len(protein_panel),
+        int(np.sum(np.abs(coefs) > 1e-8)), len(protein_panel),
     )
 
     # === Locked test evaluation ===
@@ -842,6 +662,8 @@ def final_refit_and_test(
 
     test_auprc = average_precision_score(y_test, y_prob)
     test_auroc = roc_auc_score(y_test, y_prob)
+
+    from sklearn.metrics import roc_curve
 
     fpr, tpr, thresholds = roc_curve(y_test, y_prob)
     j_scores = tpr - fpr
@@ -877,23 +699,21 @@ def final_refit_and_test(
     logger.info("  AUPRC 95%% CI: [%.4f, %.4f]", *auprc_ci)
     logger.info("  AUROC 95%% CI: [%.4f, %.4f]", *auroc_ci)
 
-    # Feature coefficients
     coef_df = pd.DataFrame({
         "protein": protein_panel,
         "coefficient": coefs,
         "abs_coef": np.abs(coefs),
-        "stability_freq": [
-            features["selection_freq"].get(p, 0.0) for p in protein_panel
-        ],
+        "stability_freq": [features["selection_freq"].get(p, 0.0) for p in protein_panel],
     }).sort_values("abs_coef", ascending=False)
 
+    # For L2-SVM all coefs are non-zero; report top by magnitude
     nonzero_df = coef_df[coef_df["abs_coef"] > 1e-8].copy()
 
     return {
         "summary": summary,
         "best_strategy": best_strategy,
         "best_weight": best_weight,
-        "best_params": best_params,
+        "best_C": best_C,
         "test_auprc": test_auprc,
         "test_auroc": test_auroc,
         "auprc_ci": auprc_ci,
@@ -914,15 +734,7 @@ def final_refit_and_test(
 # ============================================================================
 
 
-def save_results(
-    cfg: Config,
-    data: dict,
-    features: dict,
-    cv_results: pd.DataFrame,
-    final: dict,
-    fold_coefs: list,
-    model_spec: ModelSpec,
-):
+def save_results(cfg: Config, data: dict, features: dict, cv_results: pd.DataFrame, final: dict, fold_coefs: list):
     """Save all outputs to disk."""
     out = cfg.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -954,8 +766,7 @@ def save_results(
     panel_df = pd.DataFrame({
         "protein": features["pruned_proteins"],
         "stability_freq": [
-            features["selection_freq"].get(p, 0.0)
-            for p in features["pruned_proteins"]
+            features["selection_freq"].get(p, 0.0) for p in features["pruned_proteins"]
         ],
     })
     panel_df.to_csv(out / "feature_panel.csv", index=False)
@@ -985,11 +796,7 @@ def save_results(
     y_prob = final["final_model"].predict_proba(X_test_s)[:, 1]
 
     preds_df = pd.DataFrame({
-        "eid": (
-            data["df"].loc[test_idx, ID_COL].values
-            if ID_COL in data["df"].columns
-            else test_idx
-        ),
+        "eid": data["df"].loc[test_idx, ID_COL].values if ID_COL in data["df"].columns else test_idx,
         "y_true": y_test,
         "y_prob": y_prob,
         "y_pred": (y_prob >= final["threshold"]).astype(int),
@@ -997,30 +804,23 @@ def save_results(
     preds_df.to_csv(out / "test_predictions.csv", index=False)
 
     # 8. Summary report
-    report = _build_report(cfg, data, features, cv_results, final, model_spec)
+    report = _build_report(cfg, data, features, cv_results, final)
     (out / "summary_report.md").write_text(report)
     logger.info("Saved: %s", out / "summary_report.md")
 
     # 9. Config snapshot
-    config_dict = {
-        k: str(v) if isinstance(v, Path) else v for k, v in cfg.__dict__.items()
-    }
+    config_dict = {k: str(v) if isinstance(v, Path) else v for k, v in cfg.__dict__.items()}
     (out / "config.json").write_text(json.dumps(config_dict, indent=2))
 
     logger.info("All outputs saved to %s", out)
 
 
 def _build_report(
-    cfg: Config,
-    data: dict,
-    features: dict,
-    cv_results: pd.DataFrame,
-    final: dict,
-    model_spec: ModelSpec,
+    cfg: Config, data: dict, features: dict, cv_results: pd.DataFrame, final: dict,
 ) -> str:
     """Build markdown summary report."""
     lines = [
-        f"# Incident Validation Report ({cfg.model})",
+        "# Incident Validation Report (LinSVM_cal)",
         "",
         "## Dataset",
         f"- Total samples: {len(data['df'])}",
@@ -1047,12 +847,10 @@ def _build_report(
         "",
         "## Locked Test Set Results",
         "",
-        "| Metric | Value | 95% CI |",
-        "|--------|-------|--------|",
-        f"| **AUPRC** (primary) | {final['test_auprc']:.4f} "
-        f"| [{final['auprc_ci'][0]:.4f}, {final['auprc_ci'][1]:.4f}] |",
-        f"| AUROC | {final['test_auroc']:.4f} "
-        f"| [{final['auroc_ci'][0]:.4f}, {final['auroc_ci'][1]:.4f}] |",
+        f"| Metric | Value | 95% CI |",
+        f"|--------|-------|--------|",
+        f"| **AUPRC** (primary) | {final['test_auprc']:.4f} | [{final['auprc_ci'][0]:.4f}, {final['auprc_ci'][1]:.4f}] |",
+        f"| AUROC | {final['test_auroc']:.4f} | [{final['auroc_ci'][0]:.4f}, {final['auroc_ci'][1]:.4f}] |",
         f"| Sensitivity | {final['sensitivity']:.4f} | - |",
         f"| Specificity | {final['specificity']:.4f} | - |",
         f"| Precision | {final['precision']:.4f} | - |",
@@ -1060,10 +858,9 @@ def _build_report(
         f"Threshold: {final['threshold']:.4f} (Youden's J)",
         "",
         "## Final Model",
-        f"- Model: {model_spec.display_name}",
-        f"- Hyperparams: {model_spec.param_summary(final['best_params'])}",
-        f"- Features with |coef| > 1e-8: "
-        f"{len(final['nonzero_features'])}/{len(features['pruned_proteins'])}",
+        f"- Model: LinSVM_cal (LinearSVC penalty={cfg.penalty} + CalibratedClassifierCV sigmoid, cv={cfg.calibration_cv})",
+        f"- C = {final['best_C']:.6f}",
+        f"- Features with |coef| > 1e-8: {len(final['nonzero_features'])}/{len(features['pruned_proteins'])}",
         "",
         "### Top Features (by |coefficient|)",
         "",
@@ -1072,6 +869,7 @@ def _build_report(
         "## Hyperparameters",
         f"- Optuna trials: {cfg.n_optuna_trials}",
         f"- Inner CV folds: {cfg.n_inner_folds}",
+        f"- Calibration CV folds: {cfg.calibration_cv}",
         f"- max_iter: {cfg.max_iter}",
         f"- Bootstrap CIs: {cfg.n_bootstrap_ci}",
         "",
@@ -1092,10 +890,7 @@ def _save_features(cfg: Config, data: dict, features: dict):
 
     panel_df = pd.DataFrame({
         "protein": features["pruned_proteins"],
-        "stability_freq": [
-            features["selection_freq"].get(p, 0.0)
-            for p in features["pruned_proteins"]
-        ],
+        "stability_freq": [features["selection_freq"].get(p, 0.0) for p in features["pruned_proteins"]],
     })
     panel_df.to_csv(out / "feature_panel.csv", index=False)
 
@@ -1104,9 +899,7 @@ def _save_features(cfg: Config, data: dict, features: dict):
     prune_df = pd.DataFrame(features["prune_map"])
     prune_df.to_csv(out / "corr_prune_map.csv", index=False)
 
-    cfg_dict = {
-        k: str(v) if isinstance(v, Path) else v for k, v in cfg.__dict__.items()
-    }
+    cfg_dict = {k: str(v) if isinstance(v, Path) else v for k, v in cfg.__dict__.items()}
     (out / "config.json").write_text(json.dumps(cfg_dict, indent=2))
 
     logger.info("Feature selection artifacts saved to %s", out)
@@ -1119,22 +912,10 @@ def _load_features(cfg: Config) -> dict:
     pruned_proteins = panel_df["protein"].tolist()
     selection_freq = dict(zip(panel_df["protein"], panel_df["stability_freq"]))
 
-    bootstrap_log = (
-        pd.read_csv(out / "bootstrap_log.csv")
-        if (out / "bootstrap_log.csv").exists()
-        else pd.DataFrame()
-    )
-    prune_map = (
-        pd.read_csv(out / "corr_prune_map.csv").to_dict("records")
-        if (out / "corr_prune_map.csv").exists()
-        else []
-    )
+    bootstrap_log = pd.read_csv(out / "bootstrap_log.csv") if (out / "bootstrap_log.csv").exists() else pd.DataFrame()
+    prune_map = pd.read_csv(out / "corr_prune_map.csv").to_dict("records") if (out / "corr_prune_map.csv").exists() else []
 
-    logger.info(
-        "Loaded feature panel: %d proteins from %s",
-        len(pruned_proteins),
-        out / "feature_panel.csv",
-    )
+    logger.info("Loaded feature panel: %d proteins from %s", len(pruned_proteins), out / "feature_panel.csv")
 
     return {
         "stable_proteins": pruned_proteins,
@@ -1151,62 +932,40 @@ def _load_features(cfg: Config) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Unified incident validation pipeline (LR_EN / SVM_L1 / SVM_L2)"
-    )
+    parser = argparse.ArgumentParser(description="Incident validation pipeline (LinSVM_cal)")
+    parser.add_argument("--smoke", action="store_true", help="Reduced params for quick test")
+    parser.add_argument("--output-dir", type=str, default=None, help="Override output directory")
+    parser.add_argument("--data-path", type=str, default=None, help="Override data path")
+
     parser.add_argument(
-        "--model",
-        type=str,
-        required=True,
-        choices=VALID_MODELS,
-        help="Model to run: LR_EN, SVM_L1, or SVM_L2",
-    )
-    parser.add_argument(
-        "--smoke", action="store_true", help="Reduced params for quick test"
-    )
-    parser.add_argument(
-        "--output-dir", type=str, default=None, help="Override output directory"
-    )
-    parser.add_argument(
-        "--data-path", type=str, default=None, help="Override data path"
-    )
-    parser.add_argument(
-        "--phase",
-        type=str,
-        default="all",
+        "--phase", type=str, default="all",
         choices=["all", "features", "cv", "aggregate"],
-        help="Pipeline phase: all (sequential), features, cv, aggregate",
+        help="Pipeline phase: all (sequential), features (step 1-2), cv (step 3), aggregate (step 4-5)",
     )
+    parser.add_argument("--strategy", type=str, default=None, help="Single strategy for --phase=cv")
+    parser.add_argument("--weight-scheme", type=str, default=None, help="Single weight scheme for --phase=cv")
     parser.add_argument(
-        "--strategy", type=str, default=None, help="Single strategy for --phase=cv"
-    )
-    parser.add_argument(
-        "--weight-scheme",
-        type=str,
-        default=None,
-        help="Single weight scheme for --phase=cv",
+        "--penalty", type=str, default="l2", choices=["l1", "l2"],
+        help="SVM penalty: l1 (sparse, dual=False) or l2 (dense, default)",
     )
 
     args = parser.parse_args()
 
-    cfg = Config(smoke=args.smoke, model=args.model)
+    cfg = Config(smoke=args.smoke)
+    cfg.penalty = args.penalty
 
-    # Set default output dir per model
+    # Auto-derive output dir from penalty unless explicitly overridden
     if args.output_dir:
         cfg.output_dir = Path(args.output_dir)
     else:
-        cfg.output_dir = Path(MODEL_OUTPUT_DIRS[args.model])
+        cfg.output_dir = Path(f"results/incident-validation/linsvm_cal/{args.penalty}")
 
     if args.data_path:
         cfg.data_path = Path(args.data_path)
 
-    model_spec = get_model_spec(args.model)
-
     t0 = time.time()
     logger.info("=" * 60)
-    logger.info(
-        "INCIDENT VALIDATION PIPELINE -- %s (phase=%s)", args.model, args.phase
-    )
+    logger.info("INCIDENT VALIDATION PIPELINE - LinSVM_cal penalty=%s (phase=%s)", cfg.penalty, args.phase)
     logger.info("=" * 60)
     if cfg.smoke:
         logger.info("*** SMOKE TEST MODE ***")
@@ -1214,9 +973,9 @@ def main():
     if args.phase == "all":
         data = load_and_split(cfg)
         features = run_feature_selection(cfg, data)
-        cv_results, fold_coefs = run_cv(cfg, data, features, model_spec)
-        final = final_refit_and_test(cfg, data, features, cv_results, model_spec)
-        save_results(cfg, data, features, cv_results, final, fold_coefs, model_spec)
+        cv_results, fold_coefs = run_cv(cfg, data, features)
+        final = final_refit_and_test(cfg, data, features, cv_results)
+        save_results(cfg, data, features, cv_results, final, fold_coefs)
 
     elif args.phase == "features":
         data = load_and_split(cfg)
@@ -1232,7 +991,7 @@ def main():
 
         data = load_and_split(cfg)
         features = _load_features(cfg)
-        cv_results, fold_coefs = run_cv(cfg, data, features, model_spec)
+        cv_results, fold_coefs = run_cv(cfg, data, features)
 
         combo_tag = f"{args.strategy}_{args.weight_scheme}"
         combo_dir = cfg.output_dir / "combos"
@@ -1250,9 +1009,7 @@ def main():
                     "protein": p,
                     "coefficient": entry["coefs"][i],
                 })
-        pd.DataFrame(coef_rows).to_csv(
-            combo_dir / f"coefs_{combo_tag}.csv", index=False
-        )
+        pd.DataFrame(coef_rows).to_csv(combo_dir / f"coefs_{combo_tag}.csv", index=False)
 
         logger.info("Saved combo results to %s", combo_dir)
 
@@ -1267,25 +1024,17 @@ def main():
         if not cv_parts:
             raise FileNotFoundError(f"No cv_*.csv files in {combo_dir}")
 
-        cv_results = pd.concat(
-            [pd.read_csv(f) for f in cv_parts], ignore_index=True
-        )
-        logger.info(
-            "Merged %d combo files -> %d CV rows", len(cv_parts), len(cv_results)
-        )
+        cv_results = pd.concat([pd.read_csv(f) for f in cv_parts], ignore_index=True)
+        logger.info("Merged %d combo files → %d CV rows", len(cv_parts), len(cv_results))
 
-        fold_coefs_df = pd.concat(
-            [pd.read_csv(f) for f in coef_parts], ignore_index=True
-        )
+        fold_coefs_df = pd.concat([pd.read_csv(f) for f in coef_parts], ignore_index=True)
 
         data = load_and_split(cfg)
         features = _load_features(cfg)
-        final = final_refit_and_test(cfg, data, features, cv_results, model_spec)
+        final = final_refit_and_test(cfg, data, features, cv_results)
 
         fold_coefs_list = []
-        for (fold, strat, wt), grp in fold_coefs_df.groupby(
-            ["fold", "strategy", "weight_scheme"]
-        ):
+        for (fold, strat, wt), grp in fold_coefs_df.groupby(["fold", "strategy", "weight_scheme"]):
             grp_sorted = grp.set_index("protein").loc[features["pruned_proteins"]]
             fold_coefs_list.append({
                 "fold": fold,
@@ -1294,9 +1043,7 @@ def main():
                 "coefs": grp_sorted["coefficient"].values,
             })
 
-        save_results(
-            cfg, data, features, cv_results, final, fold_coefs_list, model_spec
-        )
+        save_results(cfg, data, features, cv_results, final, fold_coefs_list)
 
     elapsed = time.time() - t0
     logger.info("Phase '%s' complete in %.1f minutes", args.phase, elapsed / 60)

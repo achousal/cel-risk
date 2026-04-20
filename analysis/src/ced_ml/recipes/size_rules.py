@@ -284,6 +284,31 @@ def derive_size_significance_count(
     return panel_size, audit
 
 
+def derive_size_fixed(
+    *,
+    panel_size: int,
+) -> tuple[int, dict[str, Any]]:
+    """Fixed panel size — no statistical derivation.
+
+    Used as a bootstrap size rule when sweep data are not yet available.
+    Replace with three_criterion after the factorial run produces sweep results.
+
+    Parameters
+    ----------
+    panel_size : int
+        Hard-coded panel size to use.
+
+    Returns
+    -------
+    panel_size : int
+    audit_log : dict
+    """
+    if panel_size < 1:
+        raise ValueError(f"panel_size must be >= 1, got {panel_size}")
+    audit: dict[str, Any] = {"rule": "fixed", "panel_size": panel_size}
+    return panel_size, audit
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

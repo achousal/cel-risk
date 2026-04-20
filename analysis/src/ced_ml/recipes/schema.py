@@ -25,6 +25,7 @@ class OrderingType(str, Enum):
     abs_coefficient_descending = "abs_coefficient_descending"
     oof_importance = "oof_importance"
     rfe_elimination = "rfe_elimination"
+    purity_ordering = "purity_ordering"
 
 
 class SizeRuleType(str, Enum):
@@ -34,6 +35,7 @@ class SizeRuleType(str, Enum):
     three_criterion_unanimous = "three_criterion_unanimous"
     stability = "stability"
     significance_count = "significance_count"
+    fixed = "fixed"
 
 
 # ---------------------------------------------------------------------------

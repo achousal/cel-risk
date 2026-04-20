@@ -1,0 +1,64 @@
+# Full cellml template — the big one.
+#
+# 2 panels (1 derived + 1 fixed_csv) x 5 models x 3 cal x 3 wt x 3 ds x 2 scenarios
+#   = 2 x 5 x 3 x 3 x 3 x 2 = 540 cells.
+#
+# Warning: 540 cells x 20 seeds x 200 Optuna trials is a large compute
+# footprint. Review axes before submit; consider trimming for first pass.
+name: full_template
+description: "2 panels, all 5 models, full factorial, both scenarios."
+
+base_configs:
+  training: analysis/configs/training_config.yaml
+  pipeline: analysis/configs/pipeline_hpc.yaml
+  splits: analysis/configs/splits_config.yaml
+
+trunks:
+  - id: T1_consensus
+    description: "Consensus operating trunk"
+    proteins_csv: results/_archive/gen1/rra_universe_sensitivity/rra_significance_corrected.csv
+    sweep_csv: results/_archive/gen1/compiled/compiled_results_aggregated.csv
+
+panels:
+  - id: R1_sig
+    source: derived
+    trunk_id: T1_consensus
+    ordering:
+      type: consensus_score_descending
+      params:
+        score_column: observed_rra
+        q_column: bh_adjusted_p
+        q_threshold: 0.05
+    size_rule:
+      type: significance_count
+      params:
+        q_threshold: 0.05
+  - id: custom_panel
+    source: fixed_csv
+    csv: operations/cellml/panels/custom_panel.csv
+
+axes:
+  model: [LinSVM_cal, LinSVM_L1_cal, LR_EN, RF, XGBoost]
+  calibration: [logistic_intercept, beta, isotonic]
+  weighting: [log, sqrt, none]
+  downsampling: [1.0, 2.0, 5.0]
+  scenario:
+    - name: IncidentOnly
+      scenarios: [IncidentOnly]
+      prevalent_train_only: true
+    - name: IncidentPlusPrevalent_0.5
+      scenarios: [IncidentPlusPrevalent]
+      prevalent_train_only: true
+      prevalent_train_frac: 0.5
+  feature_selection: [fixed_panel]
+  control_ratio: [5]
+
+seeds: {start: 100, end: 119}
+optuna: {n_trials: 200}
+
+resources:
+  wall: "48:00"
+  cores: 12
+  mem_mb_per_core: 8000
+  queue: premium
+  project: acc_vascbrain

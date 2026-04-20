@@ -1,0 +1,18 @@
+# Training config: purity-ranked 5-protein panel, incident-only, log class weight
+# Log weight computed per CV fold on full-cohort imbalance (~295:1 → log(295) ≈ 5.69).
+# Pairs with splits_config_val_log.yaml (no control downsampling).
+_base: ../../training_config.yaml
+
+features:
+  feature_selection_strategy: fixed_panel
+  fixed_panel_csv: "fixed_panel_svm_purity.csv"
+
+svm:
+  class_weight_options: log
+
+calibration:
+  target_prevalence_source: fixed
+  target_prevalence_fixed: 0.00338  # 148/43810 true CeD prevalence
+
+optuna:
+  n_trials: 50  # Reduced: 5 fixed features, small search space

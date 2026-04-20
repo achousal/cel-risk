@@ -45,6 +45,8 @@ def generate_factorial_configs(
     recipe_panels: dict[str, Path],
     output_dir: Path,
     pinned_models: dict[str, str | None] | None = None,
+    scenarios: list[Any] | None = None,
+    feature_selection: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Generate YAML config pairs for all recipes × factorial cells.
 
@@ -65,6 +67,16 @@ def generate_factorial_configs(
     pinned_models : dict[str, str | None], optional
         Mapping recipe_id → pinned model name (or None for shared).
         Includes expanded nested recipes not in the manifest.
+    scenarios : list[TrainingStrategy] | None, optional
+        If provided, promotes training strategy to a full factorial axis.
+        Each cell gets its own splits_config.yaml overlay (same mechanism
+        as ``generate_v0_configs``), and the pipeline config's
+        ``configs.splits`` is pointed at that per-cell file. When None,
+        behavior is unchanged — no scenarios axis, no per-cell splits.
+    feature_selection : list[str] | None, optional
+        Feature selection strategies to cross. v1 only supports
+        ``['fixed_panel']``; any other value raises NotImplementedError.
+        When None, defaults to ``['fixed_panel']`` (current behavior).
 
     Returns
     -------
@@ -75,9 +87,22 @@ def generate_factorial_configs(
     all_cells: dict[str, list[dict[str, Any]]] = {}
     global_cell_id = 0
 
+    # v1 feature_selection validation — wired for v2, rejected now.
+    fs_values = feature_selection if feature_selection is not None else ["fixed_panel"]
+    for value in fs_values:
+        if value != "fixed_panel":
+            raise NotImplementedError(
+                f"feature_selection={value!r} is a v2 feature (only 'fixed_panel' is supported in v1)"
+            )
+
+    # Scenario axis placeholder: [None] means "no scenario axis" (legacy).
+    scenario_axis: list[Any] = list(scenarios) if scenarios else [None]
+
     # Pre-load base configs once (with full _base chain resolution)
     base_training = load_yaml(manifest.base_training_config)
     base_pipeline = load_yaml(manifest.base_pipeline_config)
+    # Only load splits base when we actually need per-cell overlays.
+    base_splits = load_yaml(manifest.base_splits_config) if scenarios else None
 
     # Build pinned_model lookup: manifest recipes + any overrides
     recipe_lookup = {r.id: r.pinned_model for r in manifest.recipes}
@@ -97,14 +122,16 @@ def generate_factorial_configs(
         else:
             models = factorial.models
 
-        for model, cal, weight, ds in itertools.product(
+        for model, cal, weight, ds, scenario in itertools.product(
             models,
             factorial.calibration,
             factorial.weighting,
             factorial.downsampling,
+            scenario_axis,
         ):
             global_cell_id += 1
-            cell_name = _cell_dir_name(model, cal, weight, ds)
+            scenario_name = scenario.name if scenario is not None else None
+            cell_name = _cell_dir_name(model, cal, weight, ds, scenario=scenario_name)
             cell_dir = recipe_dir / cell_name
             cell_dir.mkdir(parents=True, exist_ok=True)
 
@@ -129,22 +156,39 @@ def generate_factorial_configs(
                 base=base_pipeline,
                 model=model,
             )
+
+            # Per-cell splits overlay when scenarios axis is active.
+            # Same mechanism as generate_v0_configs — reuse to_splits_overlay().
+            splits_path: Path | None = None
+            if scenario is not None:
+                splits_overlay = scenario.to_splits_overlay()
+                cell_splits = _deep_merge(base_splits or {}, splits_overlay)
+                splits_path = cell_dir / "splits_config.yaml"
+                _write_yaml(cell_splits, splits_path)
+                pipeline_cfg.setdefault("configs", {})["splits"] = str(splits_path.resolve())
+
             pipeline_path = cell_dir / "pipeline_hpc.yaml"
             _write_yaml(pipeline_cfg, pipeline_path)
 
-            cells.append(
-                {
-                    "cell_id": global_cell_id,
-                    "recipe_id": recipe_id,
-                    "model": model,
-                    "calibration": cal,
-                    "weighting": weight,
-                    "downsampling": ds,
-                    "cell_name": cell_name,
-                    "training_config": str(training_path),
-                    "pipeline_config": str(pipeline_path),
-                }
-            )
+            cell_entry: dict[str, Any] = {
+                "cell_id": global_cell_id,
+                "recipe_id": recipe_id,
+                "model": model,
+                "calibration": cal,
+                "weighting": weight,
+                "downsampling": ds,
+                "cell_name": cell_name,
+                "training_config": str(training_path),
+                "pipeline_config": str(pipeline_path),
+            }
+            # Only include scenario/feature_selection columns when active —
+            # preserves backcompat with callers that snapshot the column set.
+            if scenarios is not None:
+                cell_entry["scenario"] = scenario_name
+                cell_entry["splits_config"] = str(splits_path) if splits_path else ""
+            if feature_selection is not None:
+                cell_entry["feature_selection"] = fs_values[0]
+            cells.append(cell_entry)
 
         # Write cell manifest CSV
         manifest_csv = recipe_dir / "cell_manifest.csv"
@@ -167,10 +211,23 @@ def generate_factorial_configs(
     return all_cells
 
 
-def _cell_dir_name(model: str, calibration: str, weighting: str, downsampling: float) -> str:
-    """Generate cell directory name: {model}_{calibration}_{weight}_ds{ratio}."""
+def _cell_dir_name(
+    model: str,
+    calibration: str,
+    weighting: str,
+    downsampling: float,
+    scenario: str | None = None,
+) -> str:
+    """Generate cell directory name.
+
+    Legacy (scenario=None): ``{model}_{calibration}_{weight}_ds{ratio}``.
+    With scenario: ``{model}_{calibration}_{weight}_ds{ratio}_{scenario}``.
+    """
     ds_str = f"ds{downsampling:g}"
-    return f"{model}_{calibration}_{weighting}_{ds_str}"
+    base = f"{model}_{calibration}_{weighting}_{ds_str}"
+    if scenario is None:
+        return base
+    return f"{base}_{scenario}"
 
 
 def _build_training_config(
@@ -288,7 +345,7 @@ def _write_cell_manifest(cells: list[dict[str, Any]], path: Path) -> None:
         return
     fieldnames = list(cells[0].keys())
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(cells)
 

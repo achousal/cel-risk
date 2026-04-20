@@ -1,0 +1,14 @@
+{
+  "columns": [
+    "calibration",
+    "cell_id",
+    "cell_name",
+    "downsampling",
+    "model",
+    "pipeline_config",
+    "recipe_id",
+    "training_config",
+    "weighting"
+  ],
+  "total_cells": 2700
+}
