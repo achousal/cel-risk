@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellml-advisor"
+version = "0.1.0"
+description = "LLM advisor CLI for the CellML factorial gate workflow (scaffold)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Chowell Lab" }]
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+cellml-advisor = "cellml_advisor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cellml_advisor*"]
+exclude = ["tests*"]
