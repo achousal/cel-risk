@@ -1,8 +1,8 @@
 ---
 gate: v0-strategy
 project: celiac
-rulebook_snapshot: "rb-v0.0.0-unfinalized"  # TODO: rebind to rb-v0.1.0 after ADR -> condensate migration and first rulebook tag
-dataset_fingerprint: "TODO: sha256 over splits/seed_*.csv once hash computed (see dataset/fingerprint.yaml)"
+rulebook_snapshot: "rb-v0.1.0"
+dataset_fingerprint: "sha256:8c02e33cc693edfb361a4d901113cd3d5d79c8c43193919440305d84c278c0e9"
 created: "2026-04-20"
 author: retrospective
 ---
@@ -54,9 +54,7 @@ seed-split confirmation. These advance to V1-V5.
 
 ## Cited rulebook entries
 
-Slugs resolved against the rulebook as of the retrospective date (see
-rulebook-snapshot; the current placeholder `rb-v0.0.0-unfinalized` will
-rebind to `rb-v0.1.0` after the first tag cut).
+Slugs resolved against the rulebook at `rb-v0.1.0` (see rulebook-snapshot).
 
 - `[[condensates/downsample-preserves-discrimination-cuts-compute]]` — claim
   that `control_ratio=5` preserves discrimination (AUROC) while reducing

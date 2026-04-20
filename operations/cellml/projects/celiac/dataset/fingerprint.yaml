@@ -1,6 +1,8 @@
 project: celiac
 created: "2026-04-20"
-hash: "TODO: sha256 over concatenation of splits/seed_*.csv; run shasum -a 256 splits/seed_*.csv | shasum"
+hash: "sha256:8c02e33cc693edfb361a4d901113cd3d5d79c8c43193919440305d84c278c0e9"
+hash_source: "data/Celiac_dataset_proteomics_w_demo.parquet"
+hash_computed: "2026-04-20"
 n_cases: 148
 n_controls: 43662
 prevalence: 0.00337
