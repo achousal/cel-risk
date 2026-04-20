@@ -1,7 +1,7 @@
 # `ced cellml` CLI
 
 Experiment-level factorial orchestration. Wraps the existing
-`ced derive-recipes` / `submit_experiment.sh` machinery behind a single
+`ced derive-recipes` / `scripts/submit_experiment.sh` machinery behind a single
 experiment-oriented CLI group. Additive — old workflow still works.
 
 ## Quick start

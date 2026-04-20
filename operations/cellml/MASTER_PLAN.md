@@ -17,11 +17,12 @@ Single index for the CellML experiment (formerly: optimal-setup/factorial). Gen 
 operations/cellml/                         # this experiment (formerly optimal-setup/factorial)
 ├── MASTER_PLAN.md                          # this file — the single index
 ├── DESIGN.md                               # scientific design + recipe definitions
-├── submit_experiment.sh                    # LSF array orchestrator (V0 gate + factorial)
-├── compile_factorial.py                    # cells -> results table
-├── validate_tree.R                         # V1-V5 statistical tests
-├── extract_scout_params.py                 # extract top-K params from scout for warm-start
-├── monitor_factorial.py                    # live progress monitoring via JournalStorage
+├── scripts/                                # executables (Python, shell, R)
+│   ├── submit_experiment.sh                # LSF array orchestrator (V0 gate + factorial)
+│   ├── compile_factorial.py                # cells -> results table
+│   ├── validate_tree.R                     # V1-V5 statistical tests
+│   ├── extract_scout_params.py             # extract top-K params from scout for warm-start
+│   └── monitor_factorial.py                # live progress monitoring via JournalStorage
 ├── analysis/                               # post-hoc analysis scripts
 │   ├── factorial_analysis_program.md       # V1-V5 analysis instructions
 │   ├── _theme_factorial.R                  # R theme: RECIPE_COLORS, factorial palettes
@@ -83,7 +84,7 @@ results/                                    # all outputs (not archived — shar
 | V0 Gate | **Ready to submit** | Optuna storage + warm-start infra built; splits overlay still needed |
 | Recipe Derivation | Blocked on V0 | 216 cells generated (R1, R3 only); full derivation pending |
 | Main Factorial | Blocked on V0 | 1,566 cells; SLURM array + two-phase warm-start ready |
-| Validation | Blocked on factorial | validate_tree.R + factorial analysis program ready |
+| Validation | Blocked on factorial | scripts/validate_tree.R + factorial analysis program ready |
 | Holdout Confirmation | Blocked on validation | Fresh run with factorial winner |
 | Post-Factorial | **Infra ready** | Adaptive sweep runner (`ced sweep`) operational |
 
@@ -218,27 +219,27 @@ manifest.yaml
     │        each cell: training_config.yaml (with storage/study_name/user_attrs)
     │
     ├──> PHASE 1: SCOUT (warm-start)
-    │    ├──> bash submit_experiment.sh --experiment cellml_scout --manifest scout_manifest.csv --results-root results/cellml/scout --seeds 100-119
-    │    ├──> monitor_factorial.py --storage-dir <dir>      (live progress)
-    │    ├──> extract_scout_params.py ──> scout_top_params.json
+    │    ├──> bash scripts/submit_experiment.sh --experiment cellml_scout --manifest scout_manifest.csv --results-root results/cellml/scout --seeds 100-119
+    │    ├──> scripts/monitor_factorial.py --storage-dir <dir>      (live progress)
+    │    ├──> scripts/extract_scout_params.py ──> scout_top_params.json
     │    └──> Re-run config_gen.py with warm_start_params ──> full cell configs
     │
     ├──> PHASE 2: MAIN FACTORIAL
-    │    ├──> bash submit_experiment.sh --experiment cellml_main --manifest cell_manifest.csv --results-root results/cellml/main --seeds 100-129
+    │    ├──> bash scripts/submit_experiment.sh --experiment cellml_main --manifest cell_manifest.csv --results-root results/cellml/main --seeds 100-129
     │    │        each task: ced run-pipeline --pipeline-config <cell> --split-seeds 100-129
     │    │        Optuna studies persist to JournalStorage (per-recipe files)
     │    │        Studies tagged with factorial metadata via user_attrs
     │    │        Per-fold AUROC/Brier variance stored as trial attrs
-    │    └──> monitor_factorial.py --storage-dir <dir>      (live progress)
+    │    └──> scripts/monitor_factorial.py --storage-dir <dir>      (live progress)
     │
-    ├──> compile_factorial.py
+    ├──> scripts/compile_factorial.py
     │        --optuna-storage-dir <dir>    (preferred: loads from storage directly)
     │        --manifest <csv> --results-dir <dir>  (fallback: filesystem glob)
     │
     ├──> factorial_analysis_program.md ──> agent-driven V1-V5 analysis
     │        runner.py executes R scripts, logs artifacts to analysis_log.json
     │
-    └──> validate_tree.R ──> results/factorial_validation_v[1-5]_*.csv
+    └──> scripts/validate_tree.R ──> results/factorial_validation_v[1-5]_*.csv
                                   │
                                   └──> LOCKED CONFIGURATION
                                             │
@@ -287,8 +288,8 @@ manifest.yaml
 | Cell manifest | `operations/cellml/configs/recipes/cell_manifest.csv` | `ced derive-recipes` |
 | Derived panels | `operations/cellml/configs/recipes/{recipe_id}/panel.csv` | `ced derive-recipes` |
 | Size audit logs | `operations/cellml/configs/recipes/{recipe_id}/size_derivation.json` | `ced derive-recipes` |
-| Compiled results | `results/factorial_compiled.csv` | `compile_factorial.py` |
-| V1-V5 validation | `results/factorial_validation_v[1-5]_*.csv` | `validate_tree.R` |
+| Compiled results | `results/factorial_compiled.csv` | `scripts/compile_factorial.py` |
+| V1-V5 validation | `results/factorial_validation_v[1-5]_*.csv` | `scripts/validate_tree.R` |
 | Gen 2 holdout | `results/factorial_holdout/` | post-validation |
 
 ### Stale (do not use)
@@ -328,8 +329,8 @@ Post-factorial analyses. Independent of the main decision tree. P0 (time-stratif
 
 1. ~~Extend `config_gen.py` with splits overlay support~~ (still needed for V0 splits)
 2. Generate V0 configs: 120 cells (`ced generate-v0 --manifest configs/manifest.yaml`)
-3. Submit V0 batch: `bash submit_experiment.sh --experiment v0_gate --manifest analysis/configs/recipes/v0/v0_cell_manifest.csv --results-root results/v0_gate --seeds 100-119`
-4. Monitor: `python monitor_factorial.py --storage-dir <dir>`
+3. Submit V0 batch: `bash scripts/submit_experiment.sh --experiment v0_gate --manifest analysis/configs/recipes/v0/v0_cell_manifest.csv --results-root results/v0_gate --seeds 100-119`
+4. Monitor: `python scripts/monitor_factorial.py --storage-dir <dir>`
 5. Analyze: does strategy winner vary by model?
 6. Decision: lock strategy or promote to full factor
 
@@ -337,19 +338,19 @@ Post-factorial analyses. Independent of the main decision tree. P0 (time-stratif
 
 1. `ced derive-recipes --manifest configs/manifest.yaml --data-path <parquet>`
 2. Verify panels, size derivations, audit logs
-3. Extract scout params: `python extract_scout_params.py --storage-dir <dir> --output scout_top_params.json`
+3. Extract scout params: `python scripts/extract_scout_params.py --storage-dir <dir> --output scout_top_params.json`
 4. Re-run `config_gen.py` with `warm_start_params: scout_top_params.json` → full cell configs (1,566 or 4,698)
 
 ### Phase 3: Main Factorial
 
-1. `bash submit_experiment.sh --experiment cellml_main --manifest operations/cellml/configs/recipes/cell_manifest.csv --results-root results/cellml/main --seeds 100-129`
-2. Monitor progress: `python monitor_factorial.py --storage-dir <dir> [--detail]`
-3. Compile: `python compile_factorial.py --optuna-storage-dir <dir> --output results/factorial_compiled.csv`
+1. `bash scripts/submit_experiment.sh --experiment cellml_main --manifest operations/cellml/configs/recipes/cell_manifest.csv --results-root results/cellml/main --seeds 100-129`
+2. Monitor progress: `python scripts/monitor_factorial.py --storage-dir <dir> [--detail]`
+3. Compile: `python scripts/compile_factorial.py --optuna-storage-dir <dir> --output results/factorial_compiled.csv`
 
 ### Phase 4: Analysis + Validation
 
 1. Run factorial analysis program (agent-driven V1-V5 via `runner.py` + R scripts)
-2. `Rscript validate_tree.R --input factorial_compiled.csv`
+2. `Rscript scripts/validate_tree.R --input factorial_compiled.csv`
 3. Review V1-V5 outputs
 4. Lock winner
 
@@ -371,20 +372,20 @@ Five enhancements to the Optuna integration, implemented 2026-04-08. All backwar
 
 | # | Enhancement | Files Changed | Status |
 |---|---|---|---|
-| 1 | **Warm-start via `enqueue_trial`** — scout cells first, extract top-K params, seed sibling cells | `schema.py`, `config_gen.py`, `optuna_search.py`, `extract_scout_params.py`, `submit_experiment.sh` | Built |
+| 1 | **Warm-start via `enqueue_trial`** — scout cells first, extract top-K params, seed sibling cells | `schema.py`, `config_gen.py`, `optuna_search.py`, `scripts/extract_scout_params.py`, `scripts/submit_experiment.sh` | Built |
 | 2 | **`study.user_attrs` metadata** — tag each study with recipe_id, model, calibration, weighting, downsampling, cell_id | `cv_schema.py`, `config_gen.py`, `optuna_search.py`, `nested_cv.py` | Built |
 | 3 | **JournalStorage backend** — per-recipe `.optuna.journal` files, per-cell study names with `{seed}` template + `__r{repeat}_f{fold}` suffix | `schema.py`, `cv_schema.py`, `config_gen.py`, `optuna_search.py`, `nested_cv.py` | Built |
 | 4 | **Fold-level trial attrs** — `fold_aurocs`, `fold_briers`, `auroc_std`, `brier_std` stored per trial | `optuna_search.py` | Built |
-| 5 | **`study.trials_dataframe()` compilation** — `compile_factorial.py --optuna-storage-dir` loads studies directly | `compile_factorial.py`, `monitor_factorial.py` | Built |
+| 5 | **`study.trials_dataframe()` compilation** — `scripts/compile_factorial.py --optuna-storage-dir` loads studies directly | `scripts/compile_factorial.py`, `scripts/monitor_factorial.py` | Built |
 
 ### Warm-Start Workflow
 
 ```
 config_gen.py (warm_start_params=null) → scout_manifest.csv (4 cells, 1 per model)
-    → PHASE=scout sbatch submit_experiment.sh
-    → extract_scout_params.py --storage-dir <dir> → scout_top_params.json
+    → PHASE=scout sbatch scripts/submit_experiment.sh
+    → scripts/extract_scout_params.py --storage-dir <dir> → scout_top_params.json
     → config_gen.py (warm_start_params=scout_top_params.json) → full cell_manifest.csv
-    → sbatch submit_experiment.sh
+    → sbatch scripts/submit_experiment.sh
 ```
 
 ### Storage Partitioning

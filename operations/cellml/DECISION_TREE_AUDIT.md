@@ -33,7 +33,7 @@ V2, V3, and V5 make decisions on point estimates without testing whether differe
 
 ### 1.3 V1 SE Measures the Wrong Thing (CRITICAL)
 
-In `validate_tree.R:72-80`, V1 computes SE as:
+In `scripts/validate_tree.R:72-80`, V1 computes SE as:
 
 ```r
 auroc_se = sd(summary_auroc_mean) / sqrt(n_cells)

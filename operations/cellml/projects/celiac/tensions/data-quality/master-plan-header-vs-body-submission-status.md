@@ -31,7 +31,7 @@ The header of `MASTER_PLAN.md` (line 4) claims V0 has already been submitted to 
 - `operations/cellml/MASTER_PLAN.md` §"Execution Roadmap" Phase 1 (lines 327-331):
   "1. ~~Extend `config_gen.py` with splits overlay support~~ (still needed for V0 splits)
    2. Generate V0 configs: 120 cells ...
-   3. Submit V0 batch: `bash submit_experiment.sh --experiment v0_gate ...`"
+   3. Submit V0 batch: `bash scripts/submit_experiment.sh --experiment v0_gate ...`"
 
   Only step 1 has a strikethrough (and even that is annotated "still needed"); steps 2 and 3 have no completion mark.
 
