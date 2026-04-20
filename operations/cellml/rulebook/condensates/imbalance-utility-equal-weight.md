@@ -131,6 +131,7 @@ stakeholder interviews.
 
 ## Related
 
+- [[condensates/v3-utility-provenance-chain]] — shared invariant this claim participates in
 - [[protocols/v3-imbalance]] — protocol that cited this gap (Known
   tension T-V3.4 "0.5/0.5 utility weighting is a choice, not a derived
   rule"; §2.3 utility function)

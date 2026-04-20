@@ -114,6 +114,7 @@ multiplicative composition.
 
 ## Related
 
+- [[condensates/v3-utility-provenance-chain]] — shared invariant this claim participates in
 - [[protocols/v3-imbalance]] — protocol that cited this gap (Known tension
   T-V3.1; §2.2 reiteration of axis semantics; §5.4 extreme-composite-imbalance
   flag uses `r_eff > 25`)

@@ -64,6 +64,7 @@ ADR-003 notes "requires prevalence adjustment" as a consequence but does not spe
 
 ## Related
 
+- [[condensates/v3-utility-provenance-chain]] — shared invariant this claim participates in
 - [[equations/case-control-ratio-downsampling]] — the prevalence-shift math this adjustment undoes
 - [[condensates/downsample-preserves-discrimination-cuts-compute]] — the reason downsampling is used at all; this condensate is the required follow-up
 - [[condensates/three-way-split-prevents-threshold-leakage]] — calibration must be fit on VAL, under corrected probabilities

@@ -105,6 +105,7 @@ outputs: ["locks: [training_strategy, control_ratio]"]
 axes_explored: ["incident_only", "train_control_per_case"]
 axes_deferred: ["model", "calibration", "weighting"]
 depends_on: ["[[condensates/...]]", "[[equations/...]]"]
+informational: false                  # OPTIONAL — set true for non-locking gates
 metric_overrides:                     # OPTIONAL — see "Per-protocol metric overrides"
   REL:
     direction_margin: 0.005
@@ -120,6 +121,20 @@ Body:
 3. **Success criteria** — uses fixed falsifier rubric below
 4. **Fallbacks** — when no axis value satisfies the rubric
 5. **Post-conditions** — what locks, what advances to next gate
+
+### Informational gates
+
+A protocol with `informational: true` reports a verdict but does NOT lock axes.
+Differences from locking protocols:
+
+- `outputs` describes a report (e.g., `report: ensemble_verdict`), not locks
+- Downstream gates do NOT propagate state from informational gates
+- Success criteria may still use the fixed falsifier rubric, but "satisfying the
+  criterion" changes the verdict ("informationally_preferred" vs "baseline_retained"),
+  not the lock state
+- Locking language in body text is a rulebook violation for informational protocols
+
+Canonical example: `protocols/v6-ensemble-comparison.md`.
 
 ---
 

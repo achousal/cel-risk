@@ -21,6 +21,7 @@ depends_on:
   - "[[condensates/calib-per-fold-leakage]]"
   - "[[condensates/calib-parsimony-order]]"
   - "[[condensates/parsimony-tiebreaker-when-equivalence]]"
+  - "[[condensates/v3-utility-provenance-chain]]"
   - "[[equations/case-control-ratio-downsampling]]"
   - "[[equations/brier-decomp]]"
 ---
@@ -178,6 +179,12 @@ per-fold calibration introduces. Specifically, V3's REL is computed on
 prevalence-adjusted OOF predictions aggregated across the 20 selection seeds
 — NOT on per-fold-calibrated VAL predictions. This keeps V3's utility
 orthogonal to V4's calibration-strategy decision.
+
+**Substrate invariant.** Utility is computed on the prevalence-adjusted
+OOF-posthoc substrate per [[condensates/v3-utility-provenance-chain]]; raw
+within-training score substrate is forbidden. Both the AUPRC half and the
+REL half of `U_{(w, d)}` consume this substrate; `observation.md` MUST
+report the substrate used (see §5).
 
 ### 2.4 Cell count
 

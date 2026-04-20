@@ -130,6 +130,7 @@ datasets." PLOS ONE 10(3): e0118432 (2015).
 
 ## Related
 
+- [[condensates/v3-utility-provenance-chain]] — shared invariant this claim participates in
 - [[protocols/v3-imbalance]] — protocol that cited this gap (§2.3 AUPRC
   choice rationale, T-V3.3 "AUPRC not formalized in a rulebook equation"
   flags both a missing equation and a missing condensate; this file
