@@ -24,7 +24,7 @@ weights:
 feature_selection:
   n_bootstrap: 100
   bootstrap_top_k: 200
-  stability_threshold: 0.50
+  stability_threshold: 0.70
   screen_method: wald
   corr_threshold: 0.85
   corr_method: spearman

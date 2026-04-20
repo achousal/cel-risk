@@ -52,7 +52,7 @@ class Config:
     max_iter: int = 2_000
     solver: str = "saga"
     calibration_cv: int = 5
-    n_bootstrap_ci: int = 2_000
+    n_bootstrap_ci: int = 1_000
     ci_seed: int = 99
     strategies: list[str] = field(default_factory=lambda: [
         "incident_only", "incident_prevalent", "prevalent_only"])
