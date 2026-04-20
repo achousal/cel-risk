@@ -1,0 +1,17 @@
+project: celiac
+created: "2026-04-20"
+hash: "TODO: sha256 over concatenation of splits/seed_*.csv; run shasum -a 256 splits/seed_*.csv | shasum"
+n_cases: 148
+n_controls: 43662
+prevalence: 0.00337
+n_features: 2920
+missingness_profile:
+  pct_features_gt_10pct_missing: "TODO: compute from source parquet"
+cohort: "UK Biobank incident celiac"
+platform: "Olink Explore 3072"
+# Additional context (documented, not in SCHEMA.md):
+#   - prevalent_cases_available: 150 (used only for IncidentPlusPrevalent training
+#     strategies; not counted in n_cases above, which reflects incident-only)
+#   - split_scheme: 50/25/25 stratified (TRAIN/VAL/TEST) per ADR-001
+#   - total_subjects_documented: 43960 (README.md). Discrepancy with
+#     n_cases + n_controls = 43810 noted in discrepancies log.
