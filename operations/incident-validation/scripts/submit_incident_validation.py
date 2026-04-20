@@ -23,7 +23,7 @@ import yaml
 
 REPO_ROOT = Path("/sc/arion/projects/vascbrain/andres/cel-risk")
 MANIFEST_PATH = REPO_ROOT / "operations/incident-validation/manifest.yaml"
-SCRIPT_PATH = REPO_ROOT / "operations/incident-validation/scripts/run_lr.py"
+SCRIPT_PATH = REPO_ROOT / "operations/incident-validation/scripts/run_incident_validation.py"
 DATAFILE = REPO_ROOT / "data/Celiac_dataset_proteomics_w_demo.parquet"
 LOGDIR = REPO_ROOT / "logs/incident-validation"
 
@@ -221,7 +221,7 @@ def main() -> int:
     else:
         models = all_models
 
-    # Pre-create log dir (run_lr.py creates per-model results dirs itself)
+    # Pre-create log dir (run_incident_validation.py creates per-model results dirs itself)
     LOGDIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Manifest: {args.manifest}")
