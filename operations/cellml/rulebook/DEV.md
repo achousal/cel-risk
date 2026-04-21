@@ -4,7 +4,7 @@ Companion to [SCHEMA.md](SCHEMA.md). SCHEMA.md is normative (what must be true);
 this doc is practical (how to work with the system). Read this if you are
 picking up rulebook or advisor work in a later session.
 
-**Last substantive update**: 2026-04-20 (rb-v0.1.0 cut).
+**Last substantive update**: 2026-04-21 (rb-v0.2.0 cut — Strategy C: V0 becomes imbalance-family probe gate; V3 becomes a branching protocol conditional on V0's family lock). See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
@@ -70,6 +70,17 @@ outputs**; it never writes into cellml state.
 **Falsifier rubric** (governs every claim): Direction / Equivalence / Dominance
 / Inconclusive. See [SCHEMA.md § Fixed falsifier rubric](SCHEMA.md).
 
+**Two-stage imbalance cascade (rb-v0.2.0).** V0 and V3 form a coupled two-gate
+decision for imbalance handling: V0 probes the three imbalance-handling
+families (`none`, `downsample`, `weight`) at one representative level each
+and locks the **family** (categorical). V3 then branches on V0's
+`imbalance_family` lock and refines the **level** within the locked family
+(Branch A = skip if `none`; Branch B = `control_ratio ∈ {2, 5}` if
+`downsample`; Branch C = `class_weight ∈ {sqrt, log, balanced}` if `weight`;
+Branch D = legacy 3×3 fallback grid on Inconclusive). See
+[condensates/imbalance-two-stage-decision.md](condensates/imbalance-two-stage-decision.md)
+for the information-efficiency rationale.
+
 ---
 
 ## 3. Where things are
@@ -111,40 +122,47 @@ operations/cellml/
 
 ---
 
-## 4. Current state (as of rb-v0.1.0)
+## 4. Current state (as of rb-v0.2.0)
 
 | Area | Status |
 |---|---|
 | SCHEMA.md | Stable. Covers equations, condensates, protocols, gate lifecycle, falsifier rubric, per-protocol metric overrides, informational gates |
-| Equations (12) | Migrated from ADRs 001-011 |
-| Condensates (24) | All at `status: provisional, confirmations: 1`. Promotion to `established` requires ≥3 non-overlapping cohorts |
-| Protocols (7) | v0-strategy through v5-confirmation (locking) + v6-ensemble-comparison (informational) |
-| Celiac V0 | Retrospective ledger/observation/decision/tensions. Rulebook-snapshot bound to `rb-v0.1.0` |
-| Celiac V1 | **Live advisor dry-run ledger only**. No observation.md yet — awaiting V1 execution via cellml |
+| [CHANGELOG.md](CHANGELOG.md) | Rulebook version history — rb-v0.2.0 is the active tag |
+| Equations (12) | Migrated from ADRs 001-011; unchanged in rb-v0.2.0 |
+| Condensates (27) | All at `status: provisional, confirmations: 1` (including 3 new user-authored ones). `imbalance-two-stage-decision.md` is the new meta-condensate justifying the V0/V3 cascade. Promotion to `established` requires ≥3 non-overlapping cohorts |
+| Protocols (7) | v0-strategy (rb-v0.2.0: now imbalance-family probe, not `control_ratio` lock) through v5-confirmation (locking) + v6-ensemble-comparison (informational). v3-imbalance (rb-v0.2.0: now branching on V0's `imbalance_family`, with a V0-Inconclusive fallback to the legacy 3×3 grid) |
+| Celiac V0 | Retrospective ledger/observation/decision/tensions refreshed to new axis per CHANGELOG rb-v0.2.0 "Affected". Rulebook-snapshot pinned to `rb-v0.2.0` |
+| Celiac V1 | **Live advisor dry-run ledger only**. Ledger inherits new V0 lock structure (training_strategy + imbalance_family). No observation.md yet — awaiting V1 execution via cellml |
 | Advisor CLI | Scaffold — all function bodies raise `NotImplementedError("scaffold: implement in v0.2")` |
-| Tag `rb-v0.1.0` | Pushed to origin, anchors at commit `fd8796e` |
+| Active tag | `rb-v0.2.0` (prior: `rb-v0.1.0`, anchored at `fd8796e`); rb-v0.2.0 cut commit `707e91e` |
 | Merge to main | `cellml-cli` merged via `--no-ff` commit; pushed |
 
 ---
 
 ## 5. Action items (priority order)
 
-### Tier 1 — Unblock V1 execution
+### Tier 1 — Unblock V0 → V1 execution under rb-v0.2.0
 
-- [ ] **Run V1 gate via cellml** on the celiac (recipe × calibration × weighting × downsampling) axes per `protocols/v1-recipe.md` §2. Produces `projects/celiac/gates/v1-recipe/observation.md`
-- [ ] **Compute missingness profile** for `fingerprint.yaml` (currently `TODO: compute from source parquet`). One parquet query
+- [ ] **Run V0 first** (under rb-v0.2.0 design: `imbalance_family` probe gate) on celiac. V1 follows once V0 locks both `training_strategy` and `imbalance_family`. Produces `projects/celiac/gates/v0-strategy/observation.md` and `decision.md`.
+- [ ] **Phase 2 code alignment.** Verify `ced_ml.cellml.generate` emits the new V0 axis `imbalance_probe ∈ {none, downsample_5, cw_log}` (replacing the old `control_ratio` axis). **Status (checked 2026-04-21):** not yet implemented — `analysis/src/ced_ml/cellml/*.py` still references `control_ratio`; no `imbalance_probe` or `imbalance_family` fields present. Parallel agent task.
+- [ ] **Run V1 gate via cellml** on the celiac (recipe × calibration × weighting × downsampling) axes per `protocols/v1-recipe.md` §2, conditional on V0 locks. Produces `projects/celiac/gates/v1-recipe/observation.md`.
+- [ ] **Compute missingness profile** for `fingerprint.yaml` (currently `TODO: compute from source parquet`). One parquet query.
 
 ### Tier 2 — User review of data-quality tensions
 
-Five files under `projects/celiac/tensions/data-quality/`. Each has a
-`## Proposed resolution` section. Sorted by severity:
+Files under `projects/celiac/tensions/data-quality/`. Each has a
+`## Proposed resolution` section. Sorted by severity. The
+`control-ratio-semantics-double-use` HIGH-severity tension is **resolved by rb-v0.2.0**:
+V0 no longer locks a split-generation ratio — it probes the family and V3
+refines within the locked family (no double-use). Retained in the table for
+provenance; mark resolved on next pass.
 
 | Severity | File | Action |
 |---|---|---|
-| HIGH | `control-ratio-semantics-double-use.md` | Sharpen ADR-003 to disambiguate V0 split-gen vs V3 training-dynamics ratios |
+| ~~HIGH~~ RESOLVED | `control-ratio-semantics-double-use.md` | Resolved by rb-v0.2.0 (V0 locks family, V3 locks level within family — no multiplicative V0/V3 composition outside the V0-Inconclusive fallback branch). Mark resolved on next pass. |
 | MED | `adr002-vs-v0-prevalent-frac-spec.md` | Update ADR-002 to list {0.25, 0.5, 1.0} |
 | MED | `adr007-vs-v6-restructure-stacking-status.md` | Add Superseded/Revisited note to ADR-007 |
-| MED | `master-plan-header-vs-body-submission-status.md` | Reconcile MASTER_PLAN header vs body |
+| MED | `master-plan-header-vs-body-submission-status.md` | Reconciled in rb-v0.2.0 MASTER_PLAN update — header corrected to note the V0 gate is "not yet submitted; awaiting deployment". Mark resolved on next pass. |
 | LOW | `readme-vs-adr003-total.md` | Accept 43,810 or clarify 43,960 |
 
 ### Tier 3 — Rulebook PATCH revisions
@@ -182,7 +200,7 @@ Replace `tests/test_smoke.py` with real coverage at each step.
 
 ### Tier 5 — Multi-cohort promotion (long horizon)
 
-- [ ] 24 condensates at `provisional`. Need ≥3 non-overlapping cohorts to
+- [ ] 27 condensates at `provisional` (as of rb-v0.2.0). Need ≥3 non-overlapping cohorts to
       promote to `established`. Run rulebook-driven pipeline on a second
       dataset (IBD, T1D, MI, or similar)
 - [ ] Each promotion wave bumps `rb-v0.x.y` at MINOR level
@@ -307,10 +325,17 @@ Workflow:
   forbids this at the claim level.
 - **V1 SE bug is mandated-fixed.** `protocols/v1-recipe.md` §3.3 forbids
   cell-averaged SE; must use paired bootstrap over outer-fold seeds.
-- **V0 control_ratio ≠ V3 downsampling.** V0 locks split-generation ratio;
-  V3 explores within-training downsampling. They compose multiplicatively.
-  See `condensates/nested-downsampling-composition.md` and the HIGH-severity
-  data-quality tension
+- **V0 locks the imbalance FAMILY, not the level (rb-v0.2.0).** V0 probes
+  `imbalance_probe ∈ {none, downsample_5, cw_log}` — one representative
+  level per family — and locks `imbalance_family` (categorical). The level
+  within the family is V3's job (Branch B refines `control_ratio`; Branch C
+  refines `class_weight`). **Multiplicative composition of V0 and V3**
+  (per `condensates/nested-downsampling-composition.md`) applies ONLY in
+  the V3 Inconclusive-fallback branch (Branch D, legacy 3×3 grid). In the
+  default rb-v0.2.0 flow, V0 does not carry a residual level into V3, so
+  there is no multiplicative composition to track. The prior
+  "control_ratio ≠ V3 downsampling" HIGH-severity data-quality tension is
+  resolved by this redesign.
 - **V6 is informational only.** Any protocol change that adds locking to V6
   is a schema violation (`informational: true` constraint)
 - **All condensates are provisional until promotion.** Never treat a

@@ -1,7 +1,10 @@
 # Master Plan: CellML Experiment
 
-**Updated:** 2026-04-12
-**Status:** V0 gate submitted (job IDs 237012328–237012447). Vanillamax discovery (10 seeds) running.
+**Updated:** 2026-04-21
+**Status:** V0 gate — not yet submitted; design at `rb-v0.2.0` (Strategy C — imbalance-family probe); awaiting deployment. Vanillamax discovery (10 seeds) running.
+**Rulebook version:** active snapshot `rb-v0.2.0`. Change history: [`rulebook/CHANGELOG.md`](rulebook/CHANGELOG.md). Active protocols: [`rulebook/protocols/v0-strategy.md`](rulebook/protocols/v0-strategy.md), [`rulebook/protocols/v3-imbalance.md`](rulebook/protocols/v3-imbalance.md). The rb-v0.2.0 cut converted V0 from a `control_ratio` lock to an `imbalance_family` lock and made V3 a family-conditional branching protocol; see `rulebook/condensates/imbalance-two-stage-decision.md` for the two-stage justification.
+
+> **Provenance note on the prior status line.** An earlier version of this header claimed "V0 gate submitted (job IDs 237012328–237012447)". That submission did not occur (the job IDs are not present in Minerva LSF history per `bhist`), and the line has been corrected above. Preserved for audit history.
 
 ---
 
@@ -93,10 +96,14 @@ results/                                    # all outputs (not archived — shar
 ## Decision Architecture
 
 ```
-V0: Training Strategy (pre-gate)
+V0: Training Strategy + Imbalance Family (pre-gate, rb-v0.2.0)
 │   Replicates incident validation across models + representative recipes
-│   Lock: strategy + prevalent handling before main factorial
-│   Prevalent fraction levels: 0.25, 0.5, 1.0 (expanded from 0.5, 1.0)
+│   Locks TWO axes:
+│     1. training_strategy ∈ {IncidentOnly, IncidentPlusPrevalent(0.25|0.5|1.0), PrevalentOnly}
+│     2. imbalance_family ∈ {none, downsample, weight}  (categorical — NOT a level)
+│   Axes probed: training_strategy × imbalance_probe × model × recipe
+│     where imbalance_probe ∈ {none, downsample_5, cw_log} — one representative level per family
+│   V0 does NOT lock imbalance LEVEL; that is V3's job (see imbalance-two-stage-decision condensate).
 │
 V1: Recipe (main factorial — stratified comparison)
 │   Within-type: shared vs shared, MS vs MS (seed-level SE)
@@ -108,9 +115,14 @@ V1: Recipe (main factorial — stratified comparison)
 │   Bootstrap CIs; robustly dominated eliminated
 │   Parsimony: LR_EN < LinSVM_cal < RF < XGBoost
 │
-├── V3: Imbalance (JOINT weighting × downsampling)
-│   3×3 grid, normalized utility (AUPRC + calibration)
-│   CI overlaps parsimony default → prefer (none, 1.0)
+├── V3: Imbalance LEVEL (branching on V0's imbalance_family lock)
+│   Branch A — family=none:         SKIP (V3 is a no-op; inherit imbalance=none)
+│   Branch B — family=downsample:   refine control_ratio ∈ {2, 5}   (parsimony baseline: 2)
+│   Branch C — family=weight:       refine class_weight ∈ {sqrt, log, balanced}  (parsimony baseline: sqrt)
+│   Branch D — family=Inconclusive: FALLBACK — full 3×3 weighting × downsampling grid
+│                                   (legacy rb-v0.1.x behavior; multiplicative V0/V3 composition
+│                                    applies only in this branch per nested-downsampling-composition)
+│   Utility: 0.5·AUPRC + 0.5·(1 - REL) on prevalence-adjusted OOF-posthoc substrate.
 │
 ├── V4: Calibration (post-hoc, applied last)
 │   Brier reliability + bootstrap CI overlap
@@ -143,16 +155,16 @@ The discovery phase identifies protein-disease associations. Its job is **sensit
 6. Full-universe BH correction — most conservative significance
 
 The factorial then tests which **restrictions** improve the model:
-- V0: training strategy + control ratio
+- V0: training strategy + imbalance family (one representative level per family; rb-v0.2.0)
 - V1: panel composition + ordering
-- V3: class weighting + downsampling
+- V3: imbalance level within the V0-locked family (branches on V0 output)
 
 ### Separation of Concerns
 
 ```
 Discovery (vanillamax) → WHICH proteins are associated? (biology)
-V0 gate               → WHICH data partitioning works best? (methodology)
-V1-V4 factorial        → WHICH model configuration is optimal? (engineering)
+V0 gate               → WHICH data partitioning + imbalance FAMILY works best? (methodology — rb-v0.2.0)
+V1-V4 factorial        → WHICH model configuration is optimal? (engineering; V3 refines imbalance LEVEL within V0's family)
 V5 confirmation        → DOES the winner generalize? (validation)
 ```
 
@@ -172,7 +184,7 @@ Gen 1 experiments produced the data the factorial consumes. Their scientific rat
 | 8-10p operating range | Sweep saturation data | 3-criterion size rules in manifest | Moderate — boundary could shift under vanillamax |
 | Pathway order preferred | 5% AUROC variance from order | Consensus vs stream-balanced comparison (R1 vs R2) | Low — ordering is a ranking question, not a selection question |
 | LinSVM_cal Pareto-optimal | Dominates AUROC-Brier frontier | Tested across all recipes in V2 | Low — V2 re-tests under locked strategy |
-| Incident-only + log weights | AUPRC 0.215, AUROC 0.867 | V0 gate prior; factorial locks or revises | N/A — this IS what V0 revisits |
+| Incident-only + log weights + `r=5` downsampling | AUPRC 0.215, AUROC 0.867 | V0 gate prior; under rb-v0.2.0 Gen 1's operating point is interpreted as `training_strategy = IncidentOnly` + `imbalance_probe = downsample_5` (downsample family, representative level). V0 probes whether the `downsample` family dominates `none` and `cw_log` (weight family representative); V3 then refines the level within the locked family. | N/A — this IS what V0 revisits |
 | OOF/RFE importance rankings | Per-model feature orderings | MS_* model-specific recipe orderings | Moderate — rankings from restricted training |
 | Bootstrap stability features | T2 trunk feature list | R3_incident_sparse recipe | Low — incident-only by design |
 
@@ -180,21 +192,26 @@ Gen 1 experiments produced the data the factorial consumes. Their scientific rat
 
 ## Factorial Scope
 
-### V0: Training Strategy Gate
+### V0: Training Strategy + Imbalance Family Gate (rb-v0.2.0)
 
-**Purpose:** Confirm incident-only + log weights generalizes before committing 1,566 cells.
+**Purpose:** Lock two axes before committing the main factorial:
+  1. `training_strategy` (partitioning decision)
+  2. `imbalance_family` (categorical: `none` | `downsample` | `weight`)
+
+V0 probes the three imbalance-handling families at a single representative level each; the **level** within the locked family is deferred to V3 (see `rulebook/condensates/imbalance-two-stage-decision.md`).
 
 | Factor | Levels |
 |---|---|
-| Training strategy | IncidentOnly, IncidentPlusPrevalent, PrevalentOnly |
-| Prevalent fraction | 0.25, 0.5, 1.0 (only for IncidentPlusPrevalent) |
+| Training strategy | IncidentOnly, IncidentPlusPrevalent(0.25), IncidentPlusPrevalent(0.5), IncidentPlusPrevalent(1.0), PrevalentOnly (5 levels) |
+| Imbalance probe | `none` (baseline, family=none), `downsample_5` (family=downsample representative), `cw_log` (family=weight representative) — 3 levels |
 | Model | LR_EN, LinSVM_cal, XGBoost, RF |
 
 **Recipe scope:** 2 representative shared recipes (R1_sig at 4p, R1_plateau at 8p).
-**Cell count:** 5 strategies × 3 control ratios × 4 models × 2 recipes = 120 cells (+ 20 selection seeds each).
-**Decision rule:** If the strategy+control winner is the same across all 4 models, lock both. If not, promote to full factorial factor.
+**Cell count:** 5 strategies × 3 imbalance probes × 4 models × 2 recipes = 120 cells (+ 20 selection seeds each). Cell count preserved from the prior spec; the `control_ratio ∈ {1, 2, 5}` axis has been replaced 1:1 by `imbalance_probe ∈ {none, downsample_5, cw_log}`.
+**Decision rule:** Two independent Dominance claims — one for `training_strategy` (against the `IncidentOnly` baseline), one for `imbalance_family` (against the `none` baseline under the `none ≺ weight ≺ downsample` parsimony order per `rulebook/condensates/parsimony-tiebreaker-when-equivalence.md`). Each axis locks independently; joint Dominance is not required. V0 MUST NOT lock `imbalance_level` — that is a rubric violation (see protocol §3.2 anti-pattern).
+**Fallback:** `training_strategy` Inconclusive → widen Optuna budget, then promote to V1 factor. `imbalance_family` Inconclusive → parsimony-default to `none` AND set `v3_expansion_required: true` (V3 Branch D runs the legacy 3×3 weighting × downsampling grid).
 
-**Infrastructure:** Extend `config_gen.py` to accept a `splits_overlay` dict and emit per-cell `splits_config.yaml`. Add `training_strategy` and `prevalent_frac` fields to manifest factorial section.
+**Infrastructure:** Extend `config_gen.py` to accept a `splits_overlay` dict and emit per-cell `splits_config.yaml`. Add `training_strategy` and `imbalance_probe` fields to manifest factorial section. The `imbalance_probe` field drives a categorical dispatch over `{class_weight, train_control_per_case}` at config-gen time (`none` → `(None, 1)`; `downsample_5` → `(None, 5)`; `cw_log` → `(log, 1)`).
 
 ### V1-V5: Main Factorial
 
@@ -254,7 +271,7 @@ manifest.yaml
 |---|---|---|
 | ADR-001 | 50/25/25 split | No — structural |
 | ADR-002 | Prevalent train-only, frac=0.5 | **Yes** — V0 gate |
-| ADR-003 | Control downsampling | **Yes** — V5 tests 1.0/2.0/5.0 |
+| ADR-003 | Control downsampling | **Partially superseded by rb-v0.2.0.** V0 now probes `downsample_5` as the representative of the downsample family (not a pre-gate lock); V3 Branch B refines `control_ratio ∈ {2, 5}` within the locked family. ADR-003's compute-savings arithmetic remains valid at V3. |
 | ADR-004 | 4-strategy feature selection | Superseded by manifest recipe system |
 | ADR-005 | Nested CV | No — structural |
 | ADR-006 | Optuna HPO | No — budget updated to 200 |
@@ -430,8 +447,8 @@ Key properties: `baseline_value: null` mode for dataset-agnostic operation, dyna
 
 ## Open Questions
 
-1. **V0 scope:** Should V0 also test control ratio (train_control_per_case: 1, 5, 10), or keep that as supplementary sweep #9?
+1. **V0 scope — RESOLVED under rb-v0.2.0.** V0 no longer tests control ratio directly; instead it locks `imbalance_family` (categorical) from three probes (`none`, `downsample_5`, `cw_log`). V3 refines the level within the locked family per `rulebook/condensates/imbalance-two-stage-decision.md`. Supplementary sweep #9 remains a post-factorial exploration option.
 2. **Old 2x2x2:** Sample-size sensitivity (n_cases=50 vs 149) not covered by any active stream. Still relevant?
 3. **Optuna budget:** V0 at 50 trials (gate, not final). Main factorial at 200. Acceptable?
 4. **Seed split:** 20/10 seed split means 33% fewer seeds for selection. Is 20 seeds sufficient for stable V1–V4 decisions?
-5. **V0 expanded:** 120 cells (5 strategies × 3 control ratios × 4 models × 2 recipes). ~2-3 days on Minerva at 100 trials/cell.
+5. **V0 cell count:** 120 cells (5 strategies × 3 imbalance probes × 4 models × 2 recipes). ~2-3 days on Minerva at 100 trials/cell.
