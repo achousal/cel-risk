@@ -1,7 +1,7 @@
 ---
 gate: v1-recipe
 project: celiac
-rulebook_snapshot: "rb-v0.1.0"
+rulebook_snapshot: "rb-v0.2.0"
 dataset_fingerprint: "sha256:8c02e33cc693edfb361a4d901113cd3d5d79c8c43193919440305d84c278c0e9"
 created: "2026-04-20"
 author: llm-advisor
@@ -11,9 +11,14 @@ author: llm-advisor
 > has executed. Predictions are pre-run (falsifiable against a future
 > `observation.md`). It inherits V0 locks from
 > [[projects/celiac/gates/v0-strategy/decision.md]] (retrospective) and
-> complies with [[protocols/v1-recipe]] under `rulebook_snapshot: rb-v0.1.0`.
-> No TEST partition is consulted at any point in V1 (50/25/25 TRAIN/VAL/TEST
-> from ADR-001 holds; TEST quarantine preserved).
+> complies with [[protocols/v1-recipe]] under `rulebook_snapshot: rb-v0.2.0`.
+> Under rb-v0.2.0, the V0 imbalance-handling axis was redefined: V1 now
+> inherits `imbalance_family = downsample` (categorical family lock, probed
+> at level `downsample_5` as the Gen 1 placeholder) instead of
+> `train_control_per_case = 5` (numeric ratio lock). V3 refines the
+> within-family level downstream. No TEST partition is consulted at any
+> point in V1 (50/25/25 TRAIN/VAL/TEST from ADR-001 holds; TEST quarantine
+> preserved).
 
 ---
 
@@ -21,7 +26,9 @@ author: llm-advisor
 
 V1 asks which **recipe** — a composition of (trunk × ordering × size) — is
 the best discrimination vehicle on the V0-locked cell configuration
-(IncidentOnly × control_ratio=5). The recipe-family hypothesis is:
+(IncidentOnly × `imbalance_family = downsample`, probed at level
+`downsample_5` as the Gen 1 placeholder until V3 refines the within-family
+level). The recipe-family hypothesis is:
 
 > **Under the V0-locked strategy and the Stage-1/stability pre-filter chain
 > mandated by [[condensates/feature-selection-needs-model-gate]] and
@@ -160,7 +167,7 @@ settle the ladder before the sub-sizes run.
 
 All slugs verified present at `rulebook/condensates/` and
 `rulebook/equations/` on disk at gate entry (ls-check against the
-`rb-v0.1.0` snapshot).
+`rb-v0.2.0` snapshot).
 
 ### Condensates
 
