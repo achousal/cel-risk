@@ -10,10 +10,38 @@ Auto-populated tensions (delta between ledger predictions and observation
 metrics) do not apply here — this is a retrospective reconstruction with no
 formal pre-registered predictions. Instead, this file lists V0-relevant
 architectural tensions logged in `operations/cellml/DECISION_TREE_AUDIT.md`
-that bear on V0 decisions or on how V0 outputs propagate downstream.
+that bear on V0 decisions or on how V0 outputs propagate downstream, plus
+the rb-v0.2.0 axis-redefinition tension introduced by the Strategy C
+rulebook rewrite.
 
 Each bullet is a summary + reference. Do not duplicate full tension text;
 see `DECISION_TREE_AUDIT.md` for the authoritative record.
+
+## Rulebook-version tensions
+
+- **V0 axis redefinition (rb-v0.1.0 → rb-v0.2.0).** The V0 imbalance-handling
+  axis was redefined from `control_ratio ∈ {1, 2, 5}` (numeric level within
+  the downsample family) to `imbalance_probe ∈ {none, downsample_5, cw_log}`
+  (categorical probe across three families: none / downsample / weight).
+  V0's output lock is now `imbalance_family` (categorical), not a numeric
+  ratio. This retrospective ledger, decision, and observation were
+  originally written against `rb-v0.1.0` axis semantics; they have been
+  updated in place to reflect rb-v0.2.0.
+
+  **Claim-level consequence.** Level-specific claims from Gen 1 (e.g.,
+  "`control_ratio = 5` preserves AUROC while cutting compute") are now
+  re-interpreted as FAMILY-level claims (e.g., "the `downsample` family
+  preserves AUROC at the `downsample_5` probe point"). The numeric level
+  within the downsample family (1 vs 2 vs 5) is NO LONGER a V0 output; it
+  is deferred to V3. Downstream gates (V1-V6) that previously inherited a
+  numeric `train_control_per_case = 5` lock now inherit a categorical
+  `imbalance_family = downsample` lock and operate at the Gen 1 probe
+  level (`downsample_5`) as a placeholder until V3 refines it.
+
+  **Source.** `rulebook/CHANGELOG.md` rb-v0.2.0 entry. Route candidate:
+  `tensions/rulebook-version/` (new category for rulebook-version-driven
+  axis redefinitions; if the category does not yet exist, promote to
+  `tensions/rule-vs-observation/` pending a schema revision).
 
 ## V0-relevant tensions from DECISION_TREE_AUDIT.md
 
@@ -34,7 +62,7 @@ see `DECISION_TREE_AUDIT.md` for the authoritative record.
 
 - **§1.2 Statistical rigor inconsistent** — V0 as specified in
   `MASTER_PLAN.md` does not explicitly require bootstrap CIs on the
-  strategy × control_ratio comparison. If V0 is to be re-run under the
+  strategy × imbalance-probe comparison. If V0 is to be re-run under the
   current SCHEMA rubric, it inherits the requirement for 1000-resample
   bootstrap CIs on AUROC/PR-AUC/Brier per `rulebook/SCHEMA.md` "Fixed
   falsifier rubric" section. See `DECISION_TREE_AUDIT.md` §1.2. Route
