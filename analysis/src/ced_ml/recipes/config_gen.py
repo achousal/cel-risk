@@ -2,6 +2,16 @@
 
 For each recipe, generates 108 cell directories, each containing a
 fully-merged training_config.yaml and pipeline_hpc.yaml (no _base chains).
+
+V0 note (rb-v0.2.0): the V0 gate generator (:func:`generate_v0_configs`)
+crosses the training strategy axis with the new ``imbalance_probes`` axis
+(categorical family representatives) in place of the retired numeric
+``control_ratios`` axis. Each probe name is translated into a
+``(class_weight, train_control_per_case)`` pair via
+:data:`V0_IMBALANCE_PROBES` at the generator entry point; downstream
+(:meth:`TrainingStrategy.to_splits_overlay`) remains generic and still
+accepts a ``control_ratio`` argument — it is unaware of probe semantics.
+See ``operations/cellml/rulebook/protocols/v0-strategy.md`` §2.2.
 """
 
 from __future__ import annotations
@@ -15,9 +25,32 @@ from typing import Any
 import yaml
 
 from ced_ml.config.loader import _deep_merge, load_yaml
-from ced_ml.recipes.schema import Manifest
+from ced_ml.recipes.schema import ImbalanceProbe, Manifest
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# V0 imbalance-probe translation table (rb-v0.2.0)
+# ---------------------------------------------------------------------------
+
+#: Exhaustive, fixed mapping from V0 ``imbalance_probe`` name to the
+#: ``(class_weight, train_control_per_case)`` pair it enforces.
+#:
+#: The probe OWNS weighting at V0 — it specifies BOTH fields jointly. V0 does
+#: NOT vary class_weight and control_ratio independently; that is V3's job
+#: within the locked family. See
+#: ``operations/cellml/rulebook/protocols/v0-strategy.md`` §2.2.
+#:
+#: - ``class_weight``: ``None`` means no per-model class weighting; the string
+#:   ``"log"`` corresponds to the existing ``factorial.weighting`` ``"log"``
+#:   enum (logarithmic prevalence weighting, the Gen 1 default).
+#: - ``train_control_per_case``: integer control-per-case ratio used when
+#:   overlaying the V0 splits_config.
+V0_IMBALANCE_PROBES: dict[ImbalanceProbe, dict[str, Any]] = {
+    "none": {"class_weight": None, "train_control_per_case": 1},
+    "downsample_5": {"class_weight": None, "train_control_per_case": 5},
+    "cw_log": {"class_weight": "log", "train_control_per_case": 1},
+}
 
 # Maps model name → config section key for class_weight_options.
 # Registered models are derived from MODEL_REGISTRY.weight_key; entries here
@@ -391,16 +424,28 @@ def generate_v0_configs(
     base_pipeline = load_yaml(manifest.base_pipeline_config)
     base_splits = load_yaml(manifest.base_splits_config)
 
-    # Default downstream factors for V0 (not the focus — use sensible defaults)
+    # Default downstream factors for V0 (not the focus — use sensible defaults).
+    # NB: weighting is NOT defaulted here — the imbalance probe owns it jointly
+    # with train_control_per_case per rb-v0.2.0. See V0_IMBALANCE_PROBES.
     default_cal = factorial.calibration[0]  # logistic_intercept
-    default_weight = factorial.weighting[-1]  # none
     default_ds = factorial.downsampling[0]  # 1.0
 
     cells: list[dict[str, Any]] = []
     cell_id = 0
 
     for strategy in v0.strategies:
-        for control_ratio in v0.control_ratios:
+        for probe in v0.imbalance_probes:
+            # Translate the probe name into its (class_weight, control_ratio)
+            # pair. The probe drives weighting at V0; V3 refines level within
+            # the locked family (v0-strategy.md §2.2).
+            probe_cfg = V0_IMBALANCE_PROBES[probe]
+            probe_weight_raw = probe_cfg["class_weight"]
+            # _build_training_config expects weighting as a string; "none" is
+            # the canonical string form of class_weight=None (matches
+            # factorial.weighting enum; see _build_training_config mapping).
+            probe_weighting = "none" if probe_weight_raw is None else probe_weight_raw
+            probe_control_ratio: int = probe_cfg["train_control_per_case"]
+
             for model in factorial.models:
                 for recipe_id in v0.representative_recipes:
                     if recipe_id not in recipe_panels:
@@ -408,24 +453,27 @@ def generate_v0_configs(
                         continue
 
                     cell_id += 1
-                    cell_name = f"{strategy.name}_ctrl{control_ratio}_{model}"
+                    cell_name = f"{strategy.name}_{probe}_{model}"
                     cell_dir = output_dir / recipe_id / cell_name
                     cell_dir.mkdir(parents=True, exist_ok=True)
 
-                    # 1. Per-cell splits_config.yaml: base + strategy overlay + control ratio
-                    splits_overlay = strategy.to_splits_overlay(control_ratio=control_ratio)
+                    # 1. Per-cell splits_config.yaml: base + strategy overlay +
+                    #    the probe-derived control ratio. to_splits_overlay
+                    #    stays generic — it does not know about probe names.
+                    splits_overlay = strategy.to_splits_overlay(control_ratio=probe_control_ratio)
                     cell_splits = _deep_merge(base_splits, splits_overlay)
                     splits_path = cell_dir / "splits_config.yaml"
                     _write_yaml(cell_splits, splits_path)
 
-                    # 2. Training config (same as factorial, with gate Optuna budget)
+                    # 2. Training config (same as factorial, with gate Optuna
+                    #    budget). Weighting is set from the probe.
                     training_cfg = _build_training_config(
                         base=base_training,
                         manifest=manifest,
                         panel_csv_path=recipe_panels[recipe_id],
                         model=model,
                         calibration=default_cal,
-                        weighting=default_weight,
+                        weighting=probe_weighting,
                         downsampling=default_ds,
                         recipe_id=recipe_id,
                         cell_name=cell_name,
@@ -434,10 +482,14 @@ def generate_v0_configs(
                     # Override Optuna budget for gate
                     if "optuna" in training_cfg:
                         training_cfg["optuna"]["n_trials"] = v0.optuna_n_trials
-                    # Add V0-specific user_attrs
+                    # Add V0-specific user_attrs (rb-v0.2.0: v0_control_ratio
+                    # replaced by v0_imbalance_probe — the probe name is the
+                    # V0-native axis identifier; (class_weight, control_ratio)
+                    # are derived metadata already captured via weighting and
+                    # the splits overlay).
                     if "optuna" in training_cfg and "user_attrs" in training_cfg["optuna"]:
                         training_cfg["optuna"]["user_attrs"]["v0_strategy"] = strategy.name
-                        training_cfg["optuna"]["user_attrs"]["v0_control_ratio"] = control_ratio
+                        training_cfg["optuna"]["user_attrs"]["v0_imbalance_probe"] = probe
                         training_cfg["optuna"]["user_attrs"]["v0_gate"] = True
 
                     training_path = cell_dir / "training_config.yaml"
@@ -461,10 +513,10 @@ def generate_v0_configs(
                             "cell_id": cell_id,
                             "recipe_id": recipe_id,
                             "strategy": strategy.name,
-                            "control_ratio": control_ratio,
+                            "imbalance_probe": probe,
                             "model": model,
                             "calibration": default_cal,
-                            "weighting": default_weight,
+                            "weighting": probe_weighting,
                             "downsampling": default_ds,
                             "cell_name": cell_name,
                             "training_config": str(training_path),

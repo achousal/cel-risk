@@ -2,6 +2,10 @@
 
 The manifest declares how panels are derived (trunk, ordering, size rule)
 and which factorial factors to cross for cell tuning.
+
+V0 gate note (rb-v0.2.0): the V0 axis ``control_ratios`` was retired in favor
+of ``imbalance_probes``. See ``operations/cellml/rulebook/protocols/v0-strategy.md``
+§2.2 and the ``rb-v0.2.0`` entry in ``operations/cellml/rulebook/CHANGELOG.md``.
 """
 
 from __future__ import annotations
@@ -11,6 +15,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+# ---------------------------------------------------------------------------
+# V0 imbalance-probe axis (rb-v0.2.0)
+# ---------------------------------------------------------------------------
+
+#: Canonical probe name type — one of three categorical family representatives.
+ImbalanceProbe = Literal["none", "downsample_5", "cw_log"]
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -217,21 +228,43 @@ class TrainingStrategy(BaseModel):
 
 
 class V0GateConfig(BaseModel):
-    """V0 gate configuration: training strategy comparison before main factorial."""
+    """V0 gate configuration: training strategy × imbalance-probe comparison.
+
+    rb-v0.2.0 restructure: the prior ``control_ratios`` axis (numeric
+    ``train_control_per_case`` levels crossed with strategies) has been
+    replaced by ``imbalance_probes`` — a three-level categorical axis that
+    probes the three imbalance-handling families (``none``, ``downsample``,
+    ``weight``) at a single representative level each. V0 locks the
+    imbalance FAMILY; V3 refines the within-family level. See
+    ``rulebook/protocols/v0-strategy.md`` §2.2 and the rb-v0.2.0 CHANGELOG
+    entry.
+
+    Each probe jointly specifies ``(class_weight, train_control_per_case)``
+    via :data:`V0_IMBALANCE_PROBES`. The probe name alone determines both
+    settings — V0 does not vary weighting and control ratio independently
+    (that is V3's job, conditional on the locked family).
+    """
 
     strategies: list[TrainingStrategy] = Field(
         description="Training strategies to compare",
     )
-    control_ratios: list[int] = Field(
-        default=[5],
-        description="Control-per-case ratios to test (e.g. [1, 5, 10]). Crosses with strategies.",
+    imbalance_probes: list[ImbalanceProbe] = Field(
+        default=["none", "downsample_5", "cw_log"],
+        description=(
+            "Imbalance-family probe levels to test (crosses with strategies). "
+            "Each probe name maps to a (class_weight, train_control_per_case) "
+            "pair via V0_IMBALANCE_PROBES. See v0-strategy.md §2.2."
+        ),
     )
     representative_recipes: list[str] = Field(
         description="Recipe IDs to test (e.g. ['R1_sig', 'R1_plateau'])",
     )
     optuna_n_trials: int = Field(
-        default=100,
-        description="Optuna budget for gate (sweep-level, not final)",
+        default=50,
+        description=(
+            "Optuna budget for gate (sweep-level, not final). "
+            "V0 scout budget is 50 per v0-strategy.md §1 pre-conditions."
+        ),
     )
 
 

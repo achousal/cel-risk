@@ -3,6 +3,11 @@ Recipe derivation and factorial config generation commands.
 
 Commands:
   - derive-recipes: Derive panels from manifest and generate factorial cell configs
+  - generate-v0: Generate V0 gate configs (strategy × imbalance-probe × model × recipe)
+
+V0 gate note (rb-v0.2.0): ``generate-v0`` now crosses strategies with the
+``imbalance_probes`` axis instead of the retired ``control_ratios`` axis.
+See ``operations/cellml/rulebook/protocols/v0-strategy.md``.
 """
 
 import logging
@@ -199,17 +204,17 @@ def generate_v0(ctx, manifest, data_path, output_dir, dry_run):
 
     v0 = manifest_obj.v0_gate
     n_strategies = len(v0.strategies)
-    n_ratios = len(v0.control_ratios)
+    n_probes = len(v0.imbalance_probes)
     n_models = len(manifest_obj.factorial.models)
     n_recipes = len(v0.representative_recipes)
-    n_cells = n_strategies * n_ratios * n_models * n_recipes
+    n_cells = n_strategies * n_probes * n_models * n_recipes
 
     click.echo(
-        f"V0 gate: {n_strategies} strategies × {n_ratios} control ratios × "
+        f"V0 gate: {n_strategies} strategies × {n_probes} imbalance probes × "
         f"{n_models} models × {n_recipes} recipes = {n_cells} cells"
     )
     click.echo(f"Optuna budget: {v0.optuna_n_trials} trials/cell (sweep-level)")
-    click.echo(f"Control ratios: {v0.control_ratios}")
+    click.echo(f"Imbalance probes: {v0.imbalance_probes}")
 
     for s in v0.strategies:
         click.echo(
