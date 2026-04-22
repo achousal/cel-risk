@@ -4,7 +4,9 @@ severity: medium
 category: data-quality
 discovered: 2026-04-20
 discovered_by: celiac-scaffold-agent
-status: open
+resolved: 2026-04-22
+resolved_by: strategy-c-alignment-commit
+status: resolved
 affects:
   - "operations/cellml/projects/celiac/gates/v0-strategy/ledger.md"
   - "operations/cellml/projects/celiac/gates/v0-strategy/observation.md"
@@ -57,4 +59,25 @@ Do not edit either ADR files — the contradiction is entirely within MASTER_PLA
 
 ## Status
 
-Open — awaiting human adjudication.
+Resolved 2026-04-22. Under the rb-v0.2.0 Strategy C alignment commit, the
+MASTER_PLAN header was rewritten to state "V0 gate — not yet submitted;
+design at `rb-v0.2.0` (Strategy C — imbalance-family probe); awaiting
+deployment." This matches the body's "Pre-execution" / "Ready to submit"
+framing. A provenance note was added immediately beneath the header
+acknowledging the earlier fabricated-job-IDs line and preserving it for
+audit history.
+
+Canonical path chosen: **path 2** from the proposed resolution (body was
+authoritative; header was aspirational/stale). Job IDs 237012328–237012447
+were verified absent from Minerva LSF history (`bhist`) and removed; they
+were not relocated to any other submission because no submission produced
+them.
+
+Downstream consequence for LLM advisor routing: the live V0 TODO is now
+"implement splits overlay (done in analysis/src/ced_ml/recipes/config_gen.py
+via V0_IMBALANCE_PROBES), generate V0 configs via
+`ced derive-recipes --manifest operations/cellml/configs/manifest.yaml`,
+submit via `bash scripts/submit_experiment.sh --experiment v0_gate`".
+The rulebook_snapshot bound to the V0 gate's future ledger.md is
+`rb-v0.2.0`, not `rb-v0.1.0` — the Strategy C cut happened before V0
+entry.
