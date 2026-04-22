@@ -368,16 +368,21 @@ v0_gate:
       prevalent_train_only: true
       prevalent_train_frac: 1.00
 
-  control_ratios:    # train_control_per_case levels (crosses with strategies)
-    - 1              # 1:1 control:case
-    - 5              # 5:1 (current default)
-    - 10             # 10:1
+  # rb-v0.2.0: categorical probes of the three imbalance-handling families
+  # (none, downsample, weight) at one representative level each. V0 locks the
+  # FAMILY; V3 refines the within-family level. See
+  # operations/cellml/rulebook/protocols/v0-strategy.md §2.2.
+  imbalance_probes:
+    - none          # baseline: class_weight=None, train_control_per_case=1
+    - downsample_5  # family=downsample: class_weight=None, r=5 (ADR-003 default)
+    - cw_log        # family=weight: class_weight=log, r=1 (Gen 1 default)
 
   representative_recipes:
     - R1_sig       # 4p (smallest shared panel)
     - R1_plateau   # 8p (largest shared panel)
 
-  optuna_n_trials: 100  # Sweep-level budget (main factorial uses 200)
+  optuna_n_trials: 50   # V0 scout budget per v0-strategy.md §1 pre-conditions
+                         # (main factorial uses 200)
 
 # Base splits config for V0 overlay
 base_splits_config: "../../../analysis/configs/splits_config.yaml"
