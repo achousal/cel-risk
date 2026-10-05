@@ -135,9 +135,9 @@ All commands use YAML configs in `analysis/configs/`:
 | Document | Description |
 |----------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Project overview |
-| [ARCHITECTURE.md](analysis/docs/ARCHITECTURE.md) | Technical architecture + code pointers |
-| [ADRs](analysis/docs/adr/) | Architectural decisions (split strategy, calibration, ensembles, etc.) |
-| [ARTIFACTS.md](analysis/docs/reference/ARTIFACTS.md) | Output structure |
+| [architecture.md](docs/architecture.md) | Technical architecture + code pointers |
+| [ADRs](docs/adr/) | Architectural decisions (split strategy, calibration, ensembles, etc.) |
+| [artifacts.md](docs/artifacts.md) | Output structure |
 
 ---
 

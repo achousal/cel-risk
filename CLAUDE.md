@@ -100,7 +100,7 @@ ced consensus-panel --run-id <RUN_ID> --models LR_EN,RF
 - Nested RFECV (during training): RFECV per fold with consensus aggregation
 - Fixed Panel (validation): Train on predetermined panel
 
-**For detailed documentation, see [docs/reference/FEATURE_SELECTION.md](analysis/docs/reference/FEATURE_SELECTION.md)**
+**For detailed documentation, see [docs/reference/FEATURE_SELECTION.md](docs/reference/FEATURE_SELECTION.md)**
 
 ### 4. Train Ensemble
 ```bash
@@ -180,7 +180,7 @@ cel-risk/
 
 ## CLI Reference
 
-For complete CLI documentation, see [analysis/docs/reference/CLI_REFERENCE.md](analysis/docs/reference/CLI_REFERENCE.md)
+For complete CLI documentation, see [docs/reference/CLI_REFERENCE.md](docs/reference/CLI_REFERENCE.md)
 
 ### CLI Commands
 | Command | Module | Purpose |
@@ -206,7 +206,7 @@ pytest tests/ -v
 
 ## Package Architecture
 
-For detailed architecture with code pointers, see [docs/ARCHITECTURE.md](analysis/docs/ARCHITECTURE.md).
+For detailed architecture with code pointers, see [docs/architecture.md](docs/architecture.md).
 
 ### Library Modules
 | Layer | Modules | Purpose |
@@ -219,35 +219,35 @@ For detailed architecture with code pointers, see [docs/ARCHITECTURE.md](analysi
 | Evaluation | `predict`, `reports`, `holdout` | Prediction and reporting |
 | Plotting | `roc_pr`, `calibration`, `risk_dist`, `dca`, `learning_curve`, `oof`, `optuna_plots`, `panel_curve`, `ensemble` | Visualization |
 
-For output structure details, see [docs/reference/ARTIFACTS.md](analysis/docs/reference/ARTIFACTS.md).
+For output structure details, see [docs/artifacts.md](docs/artifacts.md).
 
 ---
 
 ## Key Architecture Decisions
 
-The [docs/adr/](analysis/docs/adr/) directory contains 11 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
+The [docs/adr/](docs/adr/) directory contains 11 Architecture Decision Records documenting critical statistical and methodological design choices, organized by pipeline stage:
 
 **Stage 1: Data Preparation**
-- [ADR-001](analysis/docs/adr/ADR-001-split-strategy.md): 50/25/25 train/val/test split strategy
-- [ADR-002](analysis/docs/adr/ADR-002-prevalent-train-only.md): Prevalent cases in training only
-- [ADR-003](analysis/docs/adr/ADR-003-control-downsampling.md): Control downsampling ratio
+- [ADR-001](docs/adr/ADR-001-split-strategy.md): 50/25/25 train/val/test split strategy
+- [ADR-002](docs/adr/ADR-002-prevalent-train-only.md): Prevalent cases in training only
+- [ADR-003](docs/adr/ADR-003-control-downsampling.md): Control downsampling ratio
 
 **Stage 2: Feature Selection**
-- [ADR-004](analysis/docs/adr/ADR-004-four-strategy-feature-selection.md): Three-stage feature selection and consensus workflow (model gate, evidence, RRA)
+- [ADR-004](docs/adr/ADR-004-four-strategy-feature-selection.md): Three-stage feature selection and consensus workflow (model gate, evidence, RRA)
 
 **Stage 3: Model Training & Ensembling**
-- [ADR-005](analysis/docs/adr/ADR-005-nested-cv.md): Nested cross-validation structure
-- [ADR-006](analysis/docs/adr/ADR-006-optuna-hyperparameter-optimization.md): Optuna Bayesian hyperparameter optimization
-- [ADR-007](analysis/docs/adr/ADR-007-oof-stacking-ensemble.md): Out-of-fold stacking ensemble (implemented 2026-01-22)
+- [ADR-005](docs/adr/ADR-005-nested-cv.md): Nested cross-validation structure
+- [ADR-006](docs/adr/ADR-006-optuna-hyperparameter-optimization.md): Optuna Bayesian hyperparameter optimization
+- [ADR-007](docs/adr/ADR-007-oof-stacking-ensemble.md): Out-of-fold stacking ensemble (implemented 2026-01-22)
 
 **Stage 4: Calibration**
-- [ADR-008](analysis/docs/adr/ADR-008-oof-posthoc-calibration.md): OOF-posthoc calibration strategy
+- [ADR-008](docs/adr/ADR-008-oof-posthoc-calibration.md): OOF-posthoc calibration strategy
 
 **Stage 5: Evaluation & Thresholds**
-- [ADR-009](analysis/docs/adr/ADR-009-threshold-on-val.md): Threshold optimization on validation set
-- [ADR-010](analysis/docs/adr/ADR-010-fixed-spec.md): Fixed specificity 0.95 for high-specificity screening
+- [ADR-009](docs/adr/ADR-009-threshold-on-val.md): Threshold optimization on validation set
+- [ADR-010](docs/adr/ADR-010-fixed-spec.md): Fixed specificity 0.95 for high-specificity screening
 
 **Stage 6: Significance Testing**
-- [ADR-011](analysis/docs/adr/ADR-011-permutation-testing.md): Label permutation testing for model significance
+- [ADR-011](docs/adr/ADR-011-permutation-testing.md): Label permutation testing for model significance
 
 ---
