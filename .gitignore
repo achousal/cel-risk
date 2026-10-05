@@ -158,3 +158,8 @@ data/**
 .gitignore_global
 splits/
 docs/dev/
+
+# Top-level local-only dirs
+/operations/
+/tests/
+/experiments/
